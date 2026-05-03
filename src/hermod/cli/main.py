@@ -120,7 +120,7 @@ def _require_ssl_context(server_url: str) -> ssl.SSLContext:
 
 @app.command()
 def serve(
-    port: Annotated[int, typer.Option("--port", "-p", help="Bind port.")] = 8765,
+    port: Annotated[int, typer.Option("--port", "-p", help="Bind port.")] = 8786,
     host: Annotated[
         str, typer.Option("--host", "-h", help="Bind interface.")
     ] = "0.0.0.0",

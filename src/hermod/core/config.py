@@ -58,8 +58,8 @@ class HermodConfig:
     separate certificate files are written to disk.
     """
 
-    server: str = "wss://localhost:4430"
-    port: int = 4430
+    server: str = "wss://localhost:8786"
+    port: int = 8786
     host: str = "0.0.0.0"
     db_path: str = field(default_factory=_default_db_path)
     dest_dir: str = field(default_factory=_default_dest_dir)
@@ -104,8 +104,8 @@ def load_config(
     """
     # 1. Start with defaults
     cfg: dict[str, Any] = {
-        "server": "wss://localhost:4430",
-        "port": 4430,
+        "server": "wss://localhost:8786",
+        "port": 8786,
         "host": "0.0.0.0",
         "db_path": _default_db_path(),
         "dest_dir": _default_dest_dir(),

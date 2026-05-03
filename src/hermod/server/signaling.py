@@ -105,7 +105,7 @@ class SignalingServer:
     async def start(
         self,
         host: str = "0.0.0.0",
-        port: int = 8765,
+        port: int = 8786,
         ssl_context=None,
     ) -> Server:
         """Start the WebSocket server; return the :class:`Server` handle."""
@@ -374,7 +374,7 @@ class SignalingServer:
 
 async def run_server(
     host: str = "0.0.0.0",
-    port: int = 8765,
+    port: int = 8786,
     db_path: str = ":memory:",
     ttl: int = DEFAULT_TTL,
     ssl_context=None,

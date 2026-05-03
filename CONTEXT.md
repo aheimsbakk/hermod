@@ -25,7 +25,7 @@ NAT traversal with STUN candidate gathering and a three-layer hybrid key exchang
 | Server: Rate Limiting | `src/hermod/server/rate_limit.py` | ✅ Complete |
 | Server: TLS | `src/hermod/server/tls.py` | ✅ Complete |
 | Server: Signaling | `src/hermod/server/signaling.py` | ✅ Complete |
-| Core: Config | `src/hermod/core/config.py` | ✅ Complete (default port 4430) |
+| Core: Config | `src/hermod/core/config.py` | ✅ Complete (default port 8786) |
 | Core: Trust Store | `src/hermod/core/trust.py` | ✅ Complete |
 | Core: Streaming | `src/hermod/core/streaming.py` | ✅ Complete |
 | Core: Transfer Code | `src/hermod/core/transfer_code.py` | ✅ Complete |
@@ -98,7 +98,7 @@ Legacy read fallback: `{"ip": "...", "port": N}` → single host candidate.
 - `ice_connect(listener, peer_candidates, probe_timeout, total_timeout)` — asyncio task race
 
 ### Default Port
-Changed from `8765` → `4430` in `core/config.py` (both `HermodConfig` dataclass and `load_config` defaults dict).
+Changed from `8765` → `8786` in `core/config.py` (both `HermodConfig` dataclass and `load_config` defaults dict), `server/signaling.py` (`start()` and `run_server()` signatures), and `cli/main.py` (`serve` command default).
 
 ### CLI Aliases
 `hermod send` → `hermod tx` (same function); `hermod receive` → `hermod rx` (same function).

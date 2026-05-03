@@ -184,7 +184,7 @@ The `__init__.py` exposes high-level, asynchronous classes (e.g., `P2PClient`, `
 **Command: `serve`**
 | Parameter / Flag | Short | Default | Description |
 | :--- | :--- | :--- | :--- |
-| `--port` | `-p` | `443` | Server bind port. |
+| `--port` | `-p` | `8786` | Server bind port. |
 | `--host` | `-h` | `0.0.0.0` | Bind interface. |
 | `--db` | `-d` | `~/.hermod/signaling.db` | SQLite database path. |
 | `--ttl` | `-T` | `3600` | TTL in seconds for channels. |
@@ -194,7 +194,7 @@ The `__init__.py` exposes high-level, asynchronous classes (e.g., `P2PClient`, `
 | :--- | :--- | :--- | :--- |
 | `--file` | `-f` | None | Path to local file. |
 | `--text` | `-t` | None | Literal text. Accepts `-` for `stdin`. |
-| `--server` | `-s` | `wss://localhost:4430` | Signaling server URL. |
+| `--server` | `-s` | `wss://localhost:8786` | Signaling server URL. |
 | `--verify` | `-v` | `False` | Enforce SAS verification. |
 
 **Command: `rx` | `receive`**
@@ -202,7 +202,7 @@ The `__init__.py` exposes high-level, asynchronous classes (e.g., `P2PClient`, `
 | :--- | :--- | :--- | :--- |
 | `code` | N/A | Req. | Transfer code. |
 | `--destination`| `-d` | `./` | Output directory/file path. |
-| `--server` | `-s` | `wss://localhost:4430` | Signaling server URL. |
+| `--server` | `-s` | `wss://localhost:8786` | Signaling server URL. |
 | `--verify` | `-v` | `False` | Enforce SAS verification. |
 | `--yes` | `-y` | `False` | Auto-accept prompts. |
 
