@@ -76,6 +76,8 @@ class SignalingDB:
         """Open the database and run DDL migrations."""
         if self._db is not None:
             return
+        if self._path != ":memory:":
+            Path(self._path).parent.mkdir(parents=True, exist_ok=True)
         db = await aiosqlite.connect(self._path)
         self._db = db
         await db.executescript(_DDL)
