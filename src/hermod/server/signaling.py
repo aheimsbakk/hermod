@@ -378,15 +378,26 @@ class _SuppressTrustProbe(logging.Filter):
     """Drop the expected EOF error logged by websockets when ``hermod trust``
     connects via raw TLS to read the certificate and closes immediately.
 
-    The trust command never sends an HTTP request, so websockets logs:
-      "opening handshake failed … connection closed while reading HTTP
-       request line"
-    at ERROR level.  This is intentional behaviour, not a fault.
+    The trust command never sends an HTTP request, so websockets logs an
+    ERROR with message ``"opening handshake failed"`` whose exception chain
+    contains an ``EOFError: connection closed while reading HTTP request
+    line``.  This is intentional behaviour, not a fault.
+
+    websockets logs the top-level message as ``"opening handshake failed"``
+    and attaches the exception via ``exc_info``.  We must walk the exception
+    chain — ``record.getMessage()`` only returns the top-level message and
+    would never match the nested ``EOFError`` text.
     """
 
     _MARKER = "connection closed while reading HTTP request line"
 
     def filter(self, record: logging.LogRecord) -> bool:
+        if record.exc_info:
+            exc: BaseException | None = record.exc_info[1]
+            while exc is not None:
+                if self._MARKER in str(exc):
+                    return False
+                exc = exc.__cause__ or exc.__context__
         return self._MARKER not in record.getMessage()
 
 

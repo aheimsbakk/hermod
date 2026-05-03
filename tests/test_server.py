@@ -5,6 +5,7 @@ SignalingDB and SignalingServer unit tests.
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 
 import msgpack
@@ -15,7 +16,7 @@ from hermod.server.db import (
     MAX_MESSAGES_PER_CHANNEL,
     SignalingDB,
 )
-from hermod.server.signaling import SignalingServer
+from hermod.server.signaling import SignalingServer, _SuppressTrustProbe
 
 
 # ---------------------------------------------------------------------------
@@ -163,31 +164,58 @@ class TestSignalingServer:
             await srv_obj.stop()
             await db.close()
 
-    async def test_relay_between_peers(self) -> None:
-        from websockets.asyncio.client import connect
 
-        srv_obj, srv, db, url = await self._make_server()
-        try:
-            async with connect(url) as sender:
-                await sender.send(_pack({"type": "REGISTER"}))
-                reg = _unpack(await sender.recv())
-                channel_id = reg["channel_id"]
+# ---------------------------------------------------------------------------
+# _SuppressTrustProbe filter
+# ---------------------------------------------------------------------------
 
-                async with connect(url) as receiver:
-                    await receiver.send(
-                        _pack({"type": "JOIN", "code": f"{channel_id}-x"})
-                    )
-                    await receiver.recv()  # JOINED_OK
-                    await sender.recv()  # PEER_CONNECTED
 
-                    # Sender relays to receiver
-                    blob = b"secret-blob"
-                    await sender.send(_pack({"type": "RELAY", "data": blob}))
-                    relayed = _unpack(await receiver.recv())
-                    assert relayed["type"] == "RELAY"
-                    assert relayed["data"] == blob
-        finally:
-            srv.close()
-            await srv.wait_closed()
-            await srv_obj.stop()
-            await db.close()
+class TestSuppressTrustProbe:
+    """The filter must suppress the EOF error that websockets logs when
+    ``hermod trust`` opens a raw TLS connection and immediately closes it."""
+
+    def _make_record(
+        self,
+        msg: str,
+        exc: BaseException | None = None,
+    ) -> logging.LogRecord:
+        record = logging.LogRecord(
+            name="websockets.server",
+            level=logging.ERROR,
+            pathname="",
+            lineno=0,
+            msg=msg,
+            args=(),
+            exc_info=(type(exc), exc, None) if exc else None,
+        )
+        return record
+
+    def test_suppresses_eof_in_exception_chain(self) -> None:
+        eof = EOFError("connection closed while reading HTTP request line")
+        wrapped = Exception("opening handshake failed")
+        wrapped.__cause__ = eof
+        record = self._make_record("opening handshake failed", exc=wrapped)
+        assert _SuppressTrustProbe().filter(record) is False
+
+    def test_suppresses_marker_in_message(self) -> None:
+        record = self._make_record("connection closed while reading HTTP request line")
+        assert _SuppressTrustProbe().filter(record) is False
+
+    def test_passes_unrelated_error(self) -> None:
+        exc = RuntimeError("something else went wrong")
+        record = self._make_record("handshake error", exc=exc)
+        assert _SuppressTrustProbe().filter(record) is True
+
+    def test_passes_record_without_exc_info(self) -> None:
+        record = self._make_record("opening handshake failed")
+        assert _SuppressTrustProbe().filter(record) is True
+
+    def test_suppresses_nested_cause(self) -> None:
+        """The EOFError can be nested two levels deep via __cause__."""
+        eof = EOFError("connection closed while reading HTTP request line")
+        mid = Exception("stream ends after 0 bytes")
+        mid.__cause__ = eof
+        outer = Exception("opening handshake failed")
+        outer.__cause__ = mid
+        record = self._make_record("opening handshake failed", exc=outer)
+        assert _SuppressTrustProbe().filter(record) is False

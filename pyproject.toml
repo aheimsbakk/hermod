@@ -1,6 +1,6 @@
 [project]
 name = "hermod-p2p"
-version = "0.5.2"
+version = "0.5.3"
 description = "Secure peer-to-peer file and text transfer with hybrid post-quantum cryptography"
 requires-python = ">=3.12"
 dependencies = [
