@@ -68,6 +68,8 @@ async def _run_transfer(
     text: str | None = None,
     file_path: Path | None = None,
     dest: Path,
+    sender_p2p_port: int = 0,
+    receiver_p2p_port: int = 0,
 ) -> tuple[TransferResult, TransferResult]:
     """Run a full sender ↔ receiver session; return (sender_result, receiver_result)."""
     received_code: list[str] = []
@@ -79,6 +81,7 @@ async def _run_transfer(
         ssl_context=client_ssl_ctx,
         verify_sas=False,
         stun_timeout=0.0,
+        p2p_port=sender_p2p_port,
     )
     sender.code_callback = lambda c: received_code.append(c)
 
@@ -95,6 +98,7 @@ async def _run_transfer(
             ssl_context=client_ssl_ctx,
             verify_sas=False,
             stun_timeout=0.0,
+            p2p_port=receiver_p2p_port,
         ).run()
 
     sender_task = asyncio.create_task(sender.run())
@@ -385,5 +389,69 @@ class TestTrustAndTransfer:
                 == hashlib.sha256(src.read_bytes()).hexdigest()
             )
 
+        finally:
+            await _stop_server(srv_obj, srv, db)
+
+
+# ---------------------------------------------------------------------------
+# Fixed P2P port
+# ---------------------------------------------------------------------------
+
+
+class TestFixedP2PPort:
+    async def test_send_and_receive_with_fixed_sender_port(
+        self,
+        tmp_path: Path,
+        server_ssl_ctx: ssl.SSLContext,
+        client_ssl_ctx: ssl.SSLContext,
+    ) -> None:
+        """Transfer succeeds when the sender uses a fixed P2P port."""
+        import socket
+
+        # Pick a free port, then release it so the session can bind to it.
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.bind(("127.0.0.1", 0))
+            free_port = s.getsockname()[1]
+
+        srv_obj, srv, db, url = await _start_server(server_ssl_ctx)
+        try:
+            s_res, r_res = await _run_transfer(
+                url,
+                client_ssl_ctx,
+                text="fixed-port test",
+                dest=tmp_path,
+                sender_p2p_port=free_port,
+            )
+            assert s_res.success, f"Sender failed: {s_res.error}"
+            assert r_res.success, f"Receiver failed: {r_res.error}"
+            assert r_res.text_content == "fixed-port test"
+        finally:
+            await _stop_server(srv_obj, srv, db)
+
+    async def test_send_and_receive_with_fixed_receiver_port(
+        self,
+        tmp_path: Path,
+        server_ssl_ctx: ssl.SSLContext,
+        client_ssl_ctx: ssl.SSLContext,
+    ) -> None:
+        """Transfer succeeds when the receiver uses a fixed P2P port."""
+        import socket
+
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.bind(("127.0.0.1", 0))
+            free_port = s.getsockname()[1]
+
+        srv_obj, srv, db, url = await _start_server(server_ssl_ctx)
+        try:
+            s_res, r_res = await _run_transfer(
+                url,
+                client_ssl_ctx,
+                text="fixed-port receiver test",
+                dest=tmp_path,
+                receiver_p2p_port=free_port,
+            )
+            assert s_res.success, f"Sender failed: {s_res.error}"
+            assert r_res.success, f"Receiver failed: {r_res.error}"
+            assert r_res.text_content == "fixed-port receiver test"
         finally:
             await _stop_server(srv_obj, srv, db)

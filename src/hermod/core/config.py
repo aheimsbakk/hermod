@@ -144,6 +144,7 @@ class HermodConfig:
     tls_key: str = ""  # PEM-encoded server private key
     ttl: int = 3600
     verbosity: str = "info"
+    p2p_port: int = 0  # 0 = OS-assigned; set a fixed port for NAT port-forwarding
     # Maps server URL → {"fingerprint": <hex>, "cert_pem": <PEM string>}
     trusted_servers: dict[str, dict[str, str]] = field(default_factory=dict)
 
@@ -166,6 +167,7 @@ _ENV_MAP: dict[str, str] = {
     "HERMOD_SERVER": "server",
     "HERMOD_DB_PATH": "db_path",
     "HERMOD_DEST_DIR": "dest_dir",
+    "HERMOD_P2P_PORT": "p2p_port",
 }
 
 
@@ -199,6 +201,7 @@ def load_config(
         "tls_key": "",
         "ttl": 3600,
         "verbosity": "info",
+        "p2p_port": 0,
         "trusted_servers": {},
     }
 
@@ -239,6 +242,12 @@ def load_config(
                 except (TypeError, ValueError):
                     logger.warning("Invalid ttl value in %s; ignoring", path)
 
+            if "p2p_port" in raw:
+                try:
+                    cfg["p2p_port"] = int(raw["p2p_port"])
+                except (TypeError, ValueError):
+                    logger.warning("Invalid p2p_port value in %s; ignoring", path)
+
             # Trusted servers (nested dict)
             ts = raw.get("trusted_servers")
             if isinstance(ts, dict):
@@ -255,6 +264,7 @@ def load_config(
                 "tls_cert",
                 "tls_key",
                 "ttl",
+                "p2p_port",
                 "verbosity",
                 "trusted_servers",
             }
@@ -270,6 +280,17 @@ def load_config(
         value = os.environ.get(env_var)
         if value is not None:
             cfg[field_name] = value
+
+    # Coerce integer fields that may have been set as strings via env vars.
+    for int_field in ("ttl", "p2p_port"):
+        if isinstance(cfg.get(int_field), str):
+            try:
+                cfg[int_field] = int(cfg[int_field])
+            except (TypeError, ValueError):
+                logger.warning(
+                    "Invalid %s value %r; ignoring", int_field, cfg[int_field]
+                )
+                cfg[int_field] = 0 if int_field == "p2p_port" else 3600
 
     # HERMOD_LISTEN overrides the listen address (new-style)
     listen_env = os.environ.get("HERMOD_LISTEN")

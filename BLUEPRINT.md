@@ -200,6 +200,7 @@ The `__init__.py` exposes high-level, asynchronous classes (e.g., `P2PClient`, `
 | `--text` | `-t` | None | Literal text. Accepts `-` for `stdin`. |
 | `--server` | `-s` | `wss://localhost:8786` | Signaling server URL. |
 | `--verify` | `-v` | `False` | Enforce SAS verification. |
+| `--p2p-port` | `-P` | `0` | Fixed local TCP port for the P2P listener (0 = OS-assigned). |
 
 **Command: `rx` | `receive`**
 | Parameter / Flag | Short | Default | Description |
@@ -209,6 +210,7 @@ The `__init__.py` exposes high-level, asynchronous classes (e.g., `P2PClient`, `
 | `--server` | `-s` | `wss://localhost:8786` | Signaling server URL. |
 | `--verify` | `-v` | `False` | Enforce SAS verification. |
 | `--yes` | `-y` | `False` | Auto-accept prompts. |
+| `--p2p-port` | `-P` | `0` | Fixed local TCP port for the P2P listener (0 = OS-assigned). |
 
 **Command: `trust`**
 | Parameter / Flag | Short | Default | Description |
@@ -225,6 +227,7 @@ The `__init__.py` exposes high-level, asynchronous classes (e.g., `P2PClient`, `
 | `HERMOD_HOST` | `--listen` (host part) | Deprecated; use `HERMOD_LISTEN` |
 | `HERMOD_DB_PATH` | `--db` | |
 | `HERMOD_DEST_DIR`| `--destination` | |
+| `HERMOD_P2P_PORT`| `--p2p-port` | Fixed local TCP port for P2P listener |
 
 ## 24. Persistent Configuration Management
 

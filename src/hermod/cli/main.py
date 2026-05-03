@@ -233,6 +233,14 @@ def transmit(
         bool,
         typer.Option("--verify", "-v", help="Enforce SAS out-of-band verification."),
     ] = False,
+    p2p_port: Annotated[
+        int,
+        typer.Option(
+            "--p2p-port",
+            "-P",
+            help="Fixed local TCP port for the P2P listener (0 = OS-assigned).",
+        ),
+    ] = 0,
 ) -> None:
     """Send a file or text to a peer."""
     cfg = load_config(overrides={"server": server})
@@ -278,6 +286,7 @@ def transmit(
         verify_sas=verify,
         progress_callback=_on_progress,
         peer_wait_timeout=float(cfg.ttl),
+        p2p_port=p2p_port or cfg.p2p_port,
     )
 
     # Display the transfer code as soon as the channel is registered,
@@ -343,6 +352,14 @@ def receive(
         bool,
         typer.Option("--yes", "-y", help="Auto-accept all prompts."),
     ] = False,
+    p2p_port: Annotated[
+        int,
+        typer.Option(
+            "--p2p-port",
+            "-P",
+            help="Fixed local TCP port for the P2P listener (0 = OS-assigned).",
+        ),
+    ] = 0,
 ) -> None:
     """Receive a file or text from a peer."""
     cfg = load_config(overrides={"server": server, "dest_dir": str(destination)})
@@ -374,6 +391,7 @@ def receive(
         verify_sas=verify,
         auto_accept=yes,
         progress_callback=_on_progress,
+        p2p_port=p2p_port or cfg.p2p_port,
     )
 
     async def _run() -> None:

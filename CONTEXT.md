@@ -2,10 +2,20 @@
 
 ## Current State
 
-All source modules and tests are implemented and passing (202/202, ~71% coverage).
+All source modules and tests are implemented and passing (204/204, ~71% coverage).
 The application is fully functional for its core transfer flows, including ICE-based
 NAT traversal with STUN candidate gathering and a three-layer hybrid key exchange
 (SPAKE2 + ephemeral X25519 + ML-KEM-768).
+
+Configurable P2P listen port added (v0.6.3):
+- `p2p_port: int = 0` field added to `HermodConfig` (default 0 = OS-assigned).
+- `HERMOD_P2P_PORT` env var and `p2p_port:` YAML key both supported.
+- `SenderSession` and `ReceiverSession` both accept `p2p_port: int = 0`; passed
+  straight to `PeerListener(host="0.0.0.0", port=self.p2p_port)`.
+- `hermod tx --p2p-port/-P <N>` and `hermod rx --p2p-port/-P <N>` CLI flags added.
+- CLI flag takes precedence over config value (`p2p_port or cfg.p2p_port`).
+- Use case: whichever peer has a forwarded port sets `--p2p-port <N>` so the srflx
+  candidate (public IP + fixed port) is reachable by the other side through NAT.
 
 ICE split-connection fix is complete (v0.6.2):
 - **Root cause**: `socket_utils.get_local_addresses()` returned both the primary LAN IP
@@ -58,13 +68,13 @@ Appendix B security hardening is complete:
 | Server: Rate Limiting | `src/hermod/server/rate_limit.py` | ✅ Complete |
 | Server: TLS | `src/hermod/server/tls.py` | ✅ Complete |
 | Server: Signaling | `src/hermod/server/signaling.py` | ✅ Complete |
-| Core: Config | `src/hermod/core/config.py` | ✅ Complete (`listen` field, `parse_listen`/`format_listen`, `trusted_servers`) |
+| Core: Config | `src/hermod/core/config.py` | ✅ Complete (`listen` field, `parse_listen`/`format_listen`, `trusted_servers`, `p2p_port`) |
 | Core: Trust Store | `src/hermod/core/trust.py` | ✅ Complete (persists to `config.yaml` via `trusted_servers`) |
 | Core: Streaming | `src/hermod/core/streaming.py` | ✅ Complete |
 | Core: Transfer Code | `src/hermod/core/transfer_code.py` | ✅ Complete |
-| Core: Session | `src/hermod/core/session.py` | ✅ Complete (ICE, stun_timeout param) |
+| Core: Session | `src/hermod/core/session.py` | ✅ Complete (ICE, stun_timeout, p2p_port params) |
 | CLI: UI | `src/hermod/cli/ui.py` | ✅ Complete |
-| CLI: Main | `src/hermod/cli/main.py` | ✅ Complete (`serve --listen`, `trust` auto-saves server URL, send/receive aliases) |
+| CLI: Main | `src/hermod/cli/main.py` | ✅ Complete (`serve --listen`, `trust` auto-saves server URL, send/receive aliases, `--p2p-port`) |
 
 ## Key Architectural Decisions
 
@@ -235,10 +245,10 @@ parses literal blocks correctly). Two tests in `TestSaveConfig` enforce this:
 
 ### Configuration Hierarchy
 CLI Flags > Env Vars (`HERMOD_SERVER`, `HERMOD_LISTEN`, `HERMOD_DB_PATH`,
-`HERMOD_DEST_DIR`; deprecated: `HERMOD_PORT`, `HERMOD_HOST`) > `~/.config/hermod/config.yaml` > Application Defaults.
+`HERMOD_DEST_DIR`, `HERMOD_P2P_PORT`; deprecated: `HERMOD_PORT`, `HERMOD_HOST`) > `~/.config/hermod/config.yaml` > Application Defaults.
 
 `config.yaml` is the **single source of truth** for all settings. It stores:
-- Runtime settings (`server`, `listen`, `db_path`, `dest_dir`, `ttl`, `verbosity`)
+- Runtime settings (`server`, `listen`, `db_path`, `dest_dir`, `ttl`, `verbosity`, `p2p_port`)
 - TLS certificate and private key (`tls_cert`, `tls_key` — PEM strings as `|` block scalars)
 - Pinned server certificates (`trusted_servers` — replaces the former `~/.hermod/trust_store.json`)
 
