@@ -1,5 +1,5 @@
 """
-Cryptographic unit tests: AEADCipher, KDF, KEM, PAKE.
+Cryptographic unit tests: AEADCipher, KDF, KEM, PAKE, MAC, SecretStream.
 """
 
 from __future__ import annotations
@@ -10,13 +10,20 @@ import pytest
 
 from hermod.crypto.aead import AEADCipher
 from hermod.crypto.ecdh import EphemeralX25519
-from hermod.crypto.kdf import derive_sas, derive_session_key
+from hermod.crypto.kdf import derive_resume_key, derive_sas, derive_session_key
 from hermod.crypto.kem import MLKEM768KyberPy, X25519KEMFallback, get_kem
+from hermod.crypto.mac import compute_mac, verify_mac
 from hermod.crypto.pake import SPAKE2Adapter
+from hermod.crypto.stream import (
+    STREAM_HEADER_SIZE,
+    STREAM_KEY_SIZE,
+    SecretStreamPull,
+    SecretStreamPush,
+)
 
 
 # ---------------------------------------------------------------------------
-# AEADCipher
+# AEADCipher — XChaCha20-Poly1305
 # ---------------------------------------------------------------------------
 
 
@@ -32,8 +39,8 @@ class TestAEADCipher:
         key = os.urandom(32)
         cipher = AEADCipher(key)
         ct = cipher.encrypt(b"data")
-        # First 12 bytes are nonce, rest is ciphertext+tag (>= 16 bytes)
-        assert len(ct) == 12 + len(b"data") + 16
+        # First 24 bytes are nonce (XChaCha20 uses 192-bit nonce), rest is ciphertext+tag
+        assert len(ct) == 24 + len(b"data") + 16
 
     def test_two_encryptions_differ(self) -> None:
         key = os.urandom(32)
@@ -142,6 +149,45 @@ class TestKDF:
     def test_empty_salt_raises(self) -> None:
         with pytest.raises(ValueError):
             derive_session_key(os.urandom(32), os.urandom(32), os.urandom(32), b"")
+
+
+# ---------------------------------------------------------------------------
+# KDF — derive_resume_key (Appendix B §2)
+# ---------------------------------------------------------------------------
+
+
+class TestDeriveResumeKey:
+    def test_output_is_32_bytes(self) -> None:
+        session_key = os.urandom(32)
+        rk = derive_resume_key(session_key, 0)
+        assert len(rk) == 32
+
+    def test_different_from_session_key(self) -> None:
+        session_key = os.urandom(32)
+        assert derive_resume_key(session_key, 0) != session_key
+
+    def test_counter_changes_key(self) -> None:
+        session_key = os.urandom(32)
+        k0 = derive_resume_key(session_key, 0)
+        k1 = derive_resume_key(session_key, 1)
+        assert k0 != k1
+
+    def test_deterministic(self) -> None:
+        session_key = os.urandom(32)
+        assert derive_resume_key(session_key, 3) == derive_resume_key(session_key, 3)
+
+    def test_different_session_keys_produce_different_resume_keys(self) -> None:
+        k1 = os.urandom(32)
+        k2 = os.urandom(32)
+        assert derive_resume_key(k1, 0) != derive_resume_key(k2, 0)
+
+    def test_wrong_key_length_raises(self) -> None:
+        with pytest.raises(ValueError):
+            derive_resume_key(b"tooshort", 0)
+
+    def test_negative_counter_raises(self) -> None:
+        with pytest.raises(ValueError):
+            derive_resume_key(os.urandom(32), -1)
 
 
 # ---------------------------------------------------------------------------
@@ -306,3 +352,178 @@ class TestSPAKE2Adapter:
     def test_output_non_empty(self) -> None:
         k_a, _ = self._run_pake(b"test")
         assert len(k_a) > 0
+
+
+# ---------------------------------------------------------------------------
+# MAC — HMAC-SHA256 key binding (Appendix B §1)
+# ---------------------------------------------------------------------------
+
+
+class TestMAC:
+    def test_compute_mac_returns_32_bytes(self) -> None:
+        key = os.urandom(32)
+        tag = compute_mac(key, b"some data")
+        assert len(tag) == 32
+
+    def test_verify_mac_passes_on_correct_tag(self) -> None:
+        key = os.urandom(32)
+        data = b"pk_kem_bytes" + b"pk_ecdh_bytes"
+        tag = compute_mac(key, data)
+        verify_mac(key, data, tag)  # should not raise
+
+    def test_verify_mac_fails_on_tampered_data(self) -> None:
+        key = os.urandom(32)
+        data = b"original data"
+        tag = compute_mac(key, data)
+        with pytest.raises(ValueError, match="tampered"):
+            verify_mac(key, b"modified data", tag)
+
+    def test_verify_mac_fails_on_wrong_key(self) -> None:
+        key1 = os.urandom(32)
+        key2 = os.urandom(32)
+        data = b"some data"
+        tag = compute_mac(key1, data)
+        with pytest.raises(ValueError):
+            verify_mac(key2, data, tag)
+
+    def test_verify_mac_fails_on_wrong_tag_length(self) -> None:
+        key = os.urandom(32)
+        data = b"some data"
+        with pytest.raises(ValueError, match="32 bytes"):
+            verify_mac(key, data, b"\x00" * 16)
+
+    def test_compute_mac_empty_key_raises(self) -> None:
+        with pytest.raises(ValueError, match="non-empty"):
+            compute_mac(b"", b"data")
+
+    def test_verify_mac_empty_key_raises(self) -> None:
+        with pytest.raises(ValueError, match="non-empty"):
+            verify_mac(b"", b"data", b"\x00" * 32)
+
+    def test_different_data_produces_different_tag(self) -> None:
+        key = os.urandom(32)
+        assert compute_mac(key, b"data-a") != compute_mac(key, b"data-b")
+
+    def test_different_keys_produce_different_tag(self) -> None:
+        data = b"same data"
+        assert compute_mac(os.urandom(32), data) != compute_mac(os.urandom(32), data)
+
+    def test_mac_is_deterministic(self) -> None:
+        key = os.urandom(32)
+        data = b"deterministic"
+        assert compute_mac(key, data) == compute_mac(key, data)
+
+
+# ---------------------------------------------------------------------------
+# SecretStream — push/pull (Appendix B §3)
+# ---------------------------------------------------------------------------
+
+
+class TestSecretStream:
+    def test_constants(self) -> None:
+        assert STREAM_HEADER_SIZE == 24
+        assert STREAM_KEY_SIZE == 32
+
+    def test_header_is_24_bytes(self) -> None:
+        key = os.urandom(32)
+        push = SecretStreamPush(key)
+        assert len(push.header) == 24
+
+    def test_single_chunk_roundtrip(self) -> None:
+        key = os.urandom(32)
+        push = SecretStreamPush(key)
+        pull = SecretStreamPull(key, push.header)
+
+        plaintext = b"hello secret stream"
+        ct = push.push(plaintext, is_final=True)
+        recovered, is_final = pull.pull(ct)
+
+        assert recovered == plaintext
+        assert is_final is True
+
+    def test_multi_chunk_roundtrip(self) -> None:
+        key = os.urandom(32)
+        push = SecretStreamPush(key)
+        pull = SecretStreamPull(key, push.header)
+
+        chunks = [b"chunk-one", b"chunk-two", b"chunk-three"]
+        cts = [
+            push.push(c, is_final=(i == len(chunks) - 1)) for i, c in enumerate(chunks)
+        ]
+
+        for i, ct in enumerate(cts):
+            pt, is_final = pull.pull(ct)
+            assert pt == chunks[i]
+            assert is_final == (i == len(chunks) - 1)
+
+    def test_non_final_tag_is_false(self) -> None:
+        key = os.urandom(32)
+        push = SecretStreamPush(key)
+        pull = SecretStreamPull(key, push.header)
+
+        ct = push.push(b"middle chunk", is_final=False)
+        _, is_final = pull.pull(ct)
+        assert is_final is False
+
+    def test_ciphertext_larger_than_plaintext(self) -> None:
+        """SecretStream adds a 17-byte ABYTES overhead per message."""
+        key = os.urandom(32)
+        push = SecretStreamPush(key)
+        plaintext = b"x" * 100
+        ct = push.push(plaintext)
+        assert len(ct) == len(plaintext) + 17
+
+    def test_wrong_key_raises(self) -> None:
+        key1 = os.urandom(32)
+        key2 = os.urandom(32)
+        push = SecretStreamPush(key1)
+        pull = SecretStreamPull(key2, push.header)
+        ct = push.push(b"secret")
+        with pytest.raises(Exception):
+            pull.pull(ct)
+
+    def test_wrong_header_raises(self) -> None:
+        key = os.urandom(32)
+        push = SecretStreamPush(key)
+        bad_header = os.urandom(24)
+        pull = SecretStreamPull(key, bad_header)
+        ct = push.push(b"data")
+        with pytest.raises(Exception):
+            pull.pull(ct)
+
+    def test_bad_key_length_raises(self) -> None:
+        with pytest.raises(ValueError, match="32 bytes"):
+            SecretStreamPush(b"tooshort")
+
+    def test_bad_header_length_raises(self) -> None:
+        key = os.urandom(32)
+        with pytest.raises(ValueError, match="24 bytes"):
+            SecretStreamPull(key, b"\x00" * 10)
+
+    def test_empty_plaintext(self) -> None:
+        key = os.urandom(32)
+        push = SecretStreamPush(key)
+        pull = SecretStreamPull(key, push.header)
+        ct = push.push(b"", is_final=True)
+        pt, is_final = pull.pull(ct)
+        assert pt == b""
+        assert is_final is True
+
+    def test_large_payload_roundtrip(self) -> None:
+        """1 MiB payload must survive a multi-chunk SecretStream transfer."""
+        key = os.urandom(32)
+        push = SecretStreamPush(key)
+        pull = SecretStreamPull(key, push.header)
+
+        chunk_size = 256 * 1024  # 256 KiB
+        data = os.urandom(1 * 1024 * 1024)
+        chunks = [data[i : i + chunk_size] for i in range(0, len(data), chunk_size)]
+
+        recovered_parts = []
+        for i, chunk in enumerate(chunks):
+            is_final = i == len(chunks) - 1
+            ct = push.push(chunk, is_final=is_final)
+            pt, _ = pull.pull(ct)
+            recovered_parts.append(pt)
+
+        assert b"".join(recovered_parts) == data

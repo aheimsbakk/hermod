@@ -1,6 +1,6 @@
 [project]
 name = "hermod-p2p"
-version = "0.4.1"
+version = "0.5.0"
 description = "Secure peer-to-peer file and text transfer with hybrid post-quantum cryptography"
 requires-python = ">=3.12"
 dependencies = [
@@ -13,6 +13,7 @@ dependencies = [
     "websockets>=13.0",
     "aiosqlite>=0.20.0",
     "pyyaml>=6.0.1",
+    "pynacl>=1.5.0",
 ]
 
 [project.optional-dependencies]

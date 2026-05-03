@@ -72,6 +72,40 @@ def derive_session_key(
     ).derive(combined)
 
 
+def derive_resume_key(session_key: bytes, resume_counter: int) -> bytes:
+    """Derive a unique sub-key for a resumed transfer segment.
+
+    Appendix B §2 mandates that the original ``session_key`` is NEVER reused
+    for a resumed transfer.  Each resumption must produce a fresh key bound to
+    a monotonically increasing counter.
+
+    Parameters
+    ----------
+    session_key:
+        The 32-byte composite session key from the initial exchange.
+    resume_counter:
+        A strictly increasing integer identifying this resume segment
+        (e.g. the number of previous resume attempts).
+
+    Returns
+    -------
+    bytes
+        32-byte sub-key unique to this resumption segment.
+    """
+    if len(session_key) != _SESSION_KEY_SIZE:
+        raise ValueError(
+            f"session_key must be {_SESSION_KEY_SIZE} bytes; got {len(session_key)}"
+        )
+    if resume_counter < 0:
+        raise ValueError("resume_counter must be non-negative")
+    return HKDF(
+        algorithm=hashes.SHA256(),
+        length=_SESSION_KEY_SIZE,
+        salt=None,
+        info=b"hermod-resume-v1:" + resume_counter.to_bytes(8, "big"),
+    ).derive(session_key)
+
+
 def derive_sas(session_key: bytes) -> str:
     """Derive a 6-character hex Short Authentication String.
 

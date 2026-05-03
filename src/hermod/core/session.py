@@ -10,9 +10,19 @@ transfer flow defined in the blueprint (§6):
 4. Encrypt and exchange P2P endpoint candidates
 5. Establish direct P2P TCP connection
 6. ML-KEM + ephemeral X25519 key exchange over P2P link
+   (all cryptographic material MAC-bound to k_classical — Appendix B §1)
 7. HKDF-SHA256 session key derivation (k_classical ‖ k_ecdh ‖ k_pq)
-8. Encrypted payload transfer over P2P link
+8. Encrypted payload transfer using SecretStream (Appendix B §3)
 9. Hash verification and teardown
+
+Cryptographic changes (Appendix B):
+- PQ_INIT and PQ_RESPONSE frames carry HMAC-SHA256 tags over all ephemeral
+  public keys / ciphertexts, keyed by k_classical, to prevent MitM attacks.
+- Payload encryption uses pynacl SecretStream (XChaCha20-Poly1305 with
+  automatic key ratcheting) instead of a single AES-GCM instance.
+- The 24-byte SecretStream header is piggybacked on the META frame.
+- The final CHUNK frame carries TAG_FINAL; the receiver detects truncation
+  if EOF arrives without a prior TAG_FINAL chunk.
 """
 
 from __future__ import annotations
@@ -40,9 +50,11 @@ from hermod.crypto.aead import AEADCipher
 from hermod.crypto.ecdh import EphemeralX25519
 from hermod.crypto.kdf import derive_sas, derive_session_key
 from hermod.crypto.kem import generate_kem_salt, get_kem
+from hermod.crypto.mac import compute_mac, verify_mac
 from hermod.crypto.pake import SPAKE2Adapter
+from hermod.crypto.stream import SecretStreamPull, SecretStreamPush
 from hermod.network.ice import IceCandidate, gather_candidates, ice_connect
-from hermod.network.p2p import Endpoint, P2PConnection, PeerListener, connect_to_peer
+from hermod.network.p2p import P2PConnection, PeerListener
 from hermod.network.wire import FrameType, read_frame, write_frame
 
 logger = logging.getLogger(__name__)
@@ -270,6 +282,10 @@ class SenderSession:
             dh = EphemeralX25519()
             pk_ecdh = dh.public_key_bytes()
 
+            # Appendix B §1: MAC-bind all ephemeral keys to k_classical before
+            # sending.  Receiver MUST verify the MAC before using the keys.
+            mac_init = compute_mac(k_classical, pk_kem + pk_ecdh)
+
             await write_frame(
                 p2p.writer,
                 {
@@ -277,6 +293,7 @@ class SenderSession:
                     "pk": pk_kem,
                     "salt": salt,
                     "pk_ecdh": pk_ecdh,
+                    "mac": mac_init,
                 },
             )
 
@@ -285,6 +302,11 @@ class SenderSession:
                 raise ValueError(f"Expected PQ_RESPONSE, got {hdr.get('type')!r}")
             ciphertext: bytes = hdr["ct"]
             peer_pk_ecdh: bytes = hdr["pk_ecdh"]
+            mac_response: bytes = hdr["mac"]
+
+            # Appendix B §1: Verify MAC before decapsulating or using the
+            # receiver's keys.  Raises ValueError if tampered.
+            verify_mac(k_classical, ciphertext + peer_pk_ecdh, mac_response)
 
             # Step 6b: Complete both key exchanges
             k_pq = kem.decapsulate(ciphertext)
@@ -302,26 +324,26 @@ class SenderSession:
                     await p2p.close()
                     return TransferResult(success=False, sas=sas, error="SAS rejected")
 
-            cipher = AEADCipher(session_key)
-
-            # Step 8: Transfer payload
+            # Step 8: Transfer payload — Appendix B §3: use SecretStream
             if self.file_path is not None:
-                return await self._send_file(p2p, cipher, sas)
+                return await self._send_file(p2p, session_key, sas)
             else:
-                return await self._send_text(p2p, cipher, sas)
+                return await self._send_text(p2p, session_key, sas)
         finally:
             await p2p.close()
 
     async def _send_file(
         self,
         p2p: P2PConnection,
-        cipher: AEADCipher,
+        session_key: bytes,
         sas: str,
     ) -> TransferResult:
         path = self.file_path
         assert path is not None
         file_hash = hash_file(path)
         file_size = path.stat().st_size
+
+        stream = SecretStreamPush(session_key)
 
         await write_frame(
             p2p.writer,
@@ -331,6 +353,7 @@ class SenderSession:
                 "size": file_size,
                 "hash": file_hash,
                 "kind": "file",
+                "stream_header": stream.header,
             },
         )
 
@@ -341,11 +364,12 @@ class SenderSession:
         total_sent = 0
         with ChunkedFileReader(path) as reader:
             for seq, chunk in reader:
-                enc = cipher.encrypt(chunk)
+                total_sent += len(chunk)
+                is_final = total_sent >= file_size
+                enc = stream.push(chunk, is_final=is_final)
                 await write_frame(
                     p2p.writer, {"type": FrameType.CHUNK, "seq": seq}, enc
                 )
-                total_sent += len(chunk)
                 if self.progress_callback:
                     self.progress_callback(total_sent, file_size)
 
@@ -360,13 +384,15 @@ class SenderSession:
     async def _send_text(
         self,
         p2p: P2PConnection,
-        cipher: AEADCipher,
+        session_key: bytes,
         sas: str,
     ) -> TransferResult:
         text = self.text
         assert text is not None
         payload = text.encode("utf-8")
         text_hash = hash_bytes(payload)
+
+        stream = SecretStreamPush(session_key)
 
         await write_frame(
             p2p.writer,
@@ -376,6 +402,7 @@ class SenderSession:
                 "size": len(payload),
                 "hash": text_hash,
                 "kind": "text",
+                "stream_header": stream.header,
             },
         )
 
@@ -383,7 +410,8 @@ class SenderSession:
         if hdr.get("type") != FrameType.ACK:
             raise ValueError("Did not receive ACK for metadata")
 
-        enc = cipher.encrypt(payload)
+        # Single chunk — always the final frame
+        enc = stream.push(payload, is_final=True)
         await write_frame(p2p.writer, {"type": FrameType.CHUNK, "seq": 0}, enc)
         await write_frame(p2p.writer, {"type": FrameType.EOF, "is_eof": True})
 
@@ -536,13 +564,18 @@ class ReceiverSession:
     async def _run_p2p(self, p2p: P2PConnection, k_classical: bytes) -> TransferResult:
         """Execute post-connection crypto and receive."""
         try:
-            # Step 6a: ML-KEM – receiver reads PQ_INIT, encapsulates + generates X25519
+            # Step 6a: ML-KEM – receiver reads PQ_INIT, verifies MAC, encapsulates
             hdr, _ = await read_frame(p2p.reader)
             if hdr.get("type") != FrameType.PQ_INIT:
                 raise ValueError(f"Expected PQ_INIT, got {hdr.get('type')!r}")
             pk_kem: bytes = hdr["pk"]
             salt: bytes = hdr["salt"]
             sender_pk_ecdh: bytes = hdr["pk_ecdh"]
+            mac_init: bytes = hdr["mac"]
+
+            # Appendix B §1: Verify MAC before using sender's keys.
+            # Raises ValueError if any key has been replaced by a MitM.
+            verify_mac(k_classical, pk_kem + sender_pk_ecdh, mac_init)
 
             kem = get_kem()
             ciphertext, k_pq = kem.encapsulate(pk_kem)
@@ -550,9 +583,17 @@ class ReceiverSession:
             dh = EphemeralX25519()
             pk_ecdh = dh.public_key_bytes()
 
+            # Appendix B §1: MAC-bind our response material to k_classical.
+            mac_response = compute_mac(k_classical, ciphertext + pk_ecdh)
+
             await write_frame(
                 p2p.writer,
-                {"type": FrameType.PQ_RESPONSE, "ct": ciphertext, "pk_ecdh": pk_ecdh},
+                {
+                    "type": FrameType.PQ_RESPONSE,
+                    "ct": ciphertext,
+                    "pk_ecdh": pk_ecdh,
+                    "mac": mac_response,
+                },
             )
 
             # Step 6b: Complete X25519 exchange
@@ -573,15 +614,14 @@ class ReceiverSession:
                             success=False, sas=sas, error="SAS rejected"
                         )
 
-            cipher = AEADCipher(session_key)
-            return await self._receive_payload(p2p, cipher, sas)
+            return await self._receive_payload(p2p, session_key, sas)
         finally:
             await p2p.close()
 
     async def _receive_payload(
         self,
         p2p: P2PConnection,
-        cipher: AEADCipher,
+        session_key: bytes,
         sas: str,
     ) -> TransferResult:
         # Metadata frame
@@ -593,19 +633,22 @@ class ReceiverSession:
         total_size: int = meta_hdr["size"]
         expected_hash: str = meta_hdr["hash"]
         kind: str = meta_hdr.get("kind", "file")
+        stream_header: bytes = meta_hdr["stream_header"]
+
+        stream = SecretStreamPull(session_key, stream_header)
 
         await write_frame(p2p.writer, {"type": FrameType.ACK})
 
         if kind == "text":
-            return await self._receive_text(p2p, cipher, sas, total_size, expected_hash)
+            return await self._receive_text(p2p, stream, sas, total_size, expected_hash)
         return await self._receive_file(
-            p2p, cipher, sas, name, total_size, expected_hash
+            p2p, stream, sas, name, total_size, expected_hash
         )
 
     async def _receive_text(
         self,
         p2p: P2PConnection,
-        cipher: AEADCipher,
+        stream: SecretStreamPull,
         sas: str,
         total_size: int,
         expected_hash: str,
@@ -613,18 +656,25 @@ class ReceiverSession:
         """Collect all chunks in memory and return decoded text_content."""
         chunks: list[bytes] = []
         total_recv = 0
+        last_chunk_was_final = False
+
         while True:
             hdr, payload = await read_frame(p2p.reader)
             frame_type = hdr.get("type")
 
             if frame_type == FrameType.CHUNK:
-                plaintext = cipher.decrypt(payload)
+                plaintext, is_final = stream.pull(payload)
                 chunks.append(plaintext)
                 total_recv += len(plaintext)
+                last_chunk_was_final = is_final
                 if self.progress_callback:
                     self.progress_callback(total_recv, total_size)
 
             elif frame_type == FrameType.EOF:
+                if not last_chunk_was_final:
+                    raise ValueError(
+                        "Stream truncated: EOF received without TAG_FINAL chunk"
+                    )
                 break
 
             elif frame_type == FrameType.ABORT:
@@ -652,7 +702,7 @@ class ReceiverSession:
     async def _receive_file(
         self,
         p2p: P2PConnection,
-        cipher: AEADCipher,
+        stream: SecretStreamPull,
         sas: str,
         name: str,
         total_size: int,
@@ -661,6 +711,8 @@ class ReceiverSession:
         """Stream chunks to disk under the original filename."""
         output_path = resolve_output_path(self.destination, name)
         writer = PartFileWriter(output_path)
+        last_chunk_was_final = False
+
         with writer:
             total_recv = 0
             while True:
@@ -668,13 +720,18 @@ class ReceiverSession:
                 frame_type = hdr.get("type")
 
                 if frame_type == FrameType.CHUNK:
-                    plaintext = cipher.decrypt(payload)
+                    plaintext, is_final = stream.pull(payload)
                     writer.write_chunk(plaintext)
                     total_recv += len(plaintext)
+                    last_chunk_was_final = is_final
                     if self.progress_callback:
                         self.progress_callback(total_recv, total_size)
 
                 elif frame_type == FrameType.EOF:
+                    if not last_chunk_was_final:
+                        raise ValueError(
+                            "Stream truncated: EOF received without TAG_FINAL chunk"
+                        )
                     break
 
                 elif frame_type == FrameType.ABORT:

@@ -2,17 +2,26 @@
 
 ## Current State
 
-All source modules and tests are implemented and passing (150/150, ~70% coverage).
+All source modules and tests are implemented and passing (179/179, ~71% coverage).
 The application is fully functional for its core transfer flows, including ICE-based
 NAT traversal with STUN candidate gathering and a three-layer hybrid key exchange
 (SPAKE2 + ephemeral X25519 + ML-KEM-768).
+
+Appendix B security hardening is complete:
+- **§1**: HMAC-SHA256 MAC binding on PQ_INIT / PQ_RESPONSE frames (MitM prevention).
+- **§2**: XChaCha20-Poly1305 (192-bit nonce) replaces AES-256-GCM for ad-hoc AEAD;
+  `derive_resume_key` added for safe session resumption.
+- **§3**: `crypto_secretstream` (auto key-ratcheting + TAG_FINAL truncation proof)
+  replaces single-key AES-GCM for payload encryption.
 
 ## Module Map
 
 | Module | File(s) | Status |
 |---|---|---|
-| Crypto: AEAD | `src/hermod/crypto/aead.py` | ✅ Complete |
-| Crypto: KDF | `src/hermod/crypto/kdf.py` | ✅ Complete |
+| Crypto: AEAD | `src/hermod/crypto/aead.py` | ✅ Complete (XChaCha20-Poly1305, 192-bit nonce) |
+| Crypto: MAC | `src/hermod/crypto/mac.py` | ✅ Complete (HMAC-SHA256 compute/verify) |
+| Crypto: Stream | `src/hermod/crypto/stream.py` | ✅ Complete (SecretStreamPush/Pull, TAG_FINAL) |
+| Crypto: KDF | `src/hermod/crypto/kdf.py` | ✅ Complete (+ derive_resume_key) |
 | Crypto: ECDH | `src/hermod/crypto/ecdh.py` | ✅ Complete (EphemeralX25519) |
 | Crypto: KEM | `src/hermod/crypto/kem.py` | ✅ Complete (kyber-py ML-KEM-768 active) |
 | Crypto: PAKE | `src/hermod/crypto/pake.py` | ✅ Complete |
@@ -76,11 +85,11 @@ Server → Client: `REGISTERED`, `JOINED_OK`, `PEER_CONNECTED`, `RELAY`, `PEER_D
 3. Receiver joins with JOIN + code; PAKE (SPAKE2) exchange via RELAY messages
 4. Both sides bind a `PeerListener`, gather ICE candidates (host + optional srflx via STUN), encrypt their candidate list with `k_classical[:32]`, and exchange via RELAY
 5. Both sides call `ice_connect(listener, peer_candidates)` which races inbound TCP accept vs outbound probes; first connection wins
-6. **Sender** sends `PQ_INIT`: `{ pk_kem, salt, pk_ecdh }` (ML-KEM-768 public key + random salt + X25519 public key)  
-   **Receiver** sends `PQ_RESPONSE`: `{ ct, pk_ecdh }` (ML-KEM-768 ciphertext + X25519 public key)  
-   Both compute `k_pq` (ML-KEM decapsulate/encapsulate) and `k_ecdh` (X25519 DH) from the same two frames
+6. **Sender** sends `PQ_INIT`: `{ pk_kem, salt, pk_ecdh, mac }` (ML-KEM-768 public key + random salt + X25519 public key + HMAC-SHA256 over `pk_kem ‖ pk_ecdh` keyed by `k_classical`)  
+   **Receiver** sends `PQ_RESPONSE`: `{ ct, pk_ecdh, mac }` (ML-KEM-768 ciphertext + X25519 public key + HMAC-SHA256 over `ct ‖ pk_ecdh` keyed by `k_classical`)  
+   Each side MUST verify the `mac` field before using any received key material. Both compute `k_pq` (ML-KEM decapsulate/encapsulate) and `k_ecdh` (X25519 DH) from the same two frames
 7. Both derive `session_key = HKDF(k_classical ‖ k_ecdh ‖ k_pq, salt, "hermod-session-v2")`
-8. META → ACK → CHUNK frames → EOF → ACK; receiver verifies SHA-256
+8. META (carries `stream_header: bytes` — 24-byte SecretStream init header) → ACK → CHUNK frames → EOF → ACK; receiver verifies SHA-256 and TAG_FINAL truncation guard
 
 ### ICE Candidate Exchange Wire Format
 Encrypted payload: `{"candidates": [{"type": "host"|"srflx", "ip": "...", "port": N}, ...]}`
@@ -110,6 +119,41 @@ Registered via `app.command(name="send")(transmit)` / `app.command(name="receive
 Server handler signature: `async def handler(ws: ServerConnection)`.
 `ws.remote_address` is `(host, port)` tuple.
 `srv.serve_forever()` blocks; `srv.close()` + `await srv.wait_closed()` for teardown.
+
+### MAC Binding (Appendix B §1)
+`compute_mac(key, data)` in `crypto/mac.py` computes HMAC-SHA256 using `cryptography.hazmat.primitives.hmac`.
+`verify_mac(key, data, tag)` uses `hmac.compare_digest` for constant-time comparison.
+
+- `PQ_INIT` MAC covers: `pk_kem ‖ pk_ecdh` (keyed by `k_classical[:32]`)
+- `PQ_RESPONSE` MAC covers: `ct ‖ pk_ecdh` (keyed by `k_classical[:32]`)
+- Receiver raises `ValueError("MAC verification failed …")` on mismatch; session aborts.
+
+### SecretStream Payload Encryption (Appendix B §3)
+`SecretStreamPush` / `SecretStreamPull` in `crypto/stream.py` wrap
+`nacl.bindings.crypto_secretstream_xchacha20poly1305_*`.
+
+- `push(plaintext, last=False)` — encrypts one chunk; uses `TAG_FINAL` (3) on the last chunk.
+- `pull(ciphertext) → (plaintext, is_final: bool)` — decrypts and returns the tag boolean.
+- Receiver raises `ValueError("Stream truncated …")` if EOF frame arrives before a `TAG_FINAL` chunk.
+- The 24-byte stream header is carried in the `stream_header` field of the META wire frame.
+
+### Resume Sub-Key Derivation (Appendix B §2)
+```python
+resume_key = derive_resume_key(session_key, resume_counter)
+# HKDF-SHA256(ikm=session_key, salt=b"", info=b"hermod-resume-v1:<counter>", len=32)
+```
+`resume_counter` must be a non-negative integer. The original `session_key` is never passed
+directly to a `SecretStream` for a resumed segment; only the derived sub-key is used.
+
+### Ad-hoc AEAD (Appendix B §2)
+`AEADCipher` in `crypto/aead.py` uses `nacl.bindings.crypto_aead_xchacha20poly1305_ietf_*`.
+Nonce is 24 bytes (192-bit), generated fresh with `os.urandom` per call.
+Wire format: `nonce (24 B) ‖ ciphertext+tag`.
+
+### pynacl Dependency
+`pynacl>=1.5.0` added to `pyproject.toml` `[project.dependencies]`.
+Used by: `crypto/aead.py`, `crypto/stream.py`.
+`cryptography` library is retained for HKDF, HMAC, X25519, and X.509.
 
 ### Ephemeral X25519 ECDH (`crypto/ecdh.py`)
 `EphemeralX25519` wraps `cryptography`'s X25519 with a one-shot guard:
