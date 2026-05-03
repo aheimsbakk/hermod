@@ -16,6 +16,7 @@ import asyncio
 import hashlib
 import ssl
 from pathlib import Path
+from typing import Any
 
 import pytest
 from cryptography import x509
@@ -453,5 +454,210 @@ class TestFixedP2PPort:
             assert s_res.success, f"Sender failed: {s_res.error}"
             assert r_res.success, f"Receiver failed: {r_res.error}"
             assert r_res.text_content == "fixed-port receiver test"
+        finally:
+            await _stop_server(srv_obj, srv, db)
+
+
+# ---------------------------------------------------------------------------
+# raw_bytes send (binary stdin path)
+# ---------------------------------------------------------------------------
+
+
+async def _run_transfer_raw_bytes(
+    url: str,
+    client_ssl_ctx: ssl.SSLContext,
+    *,
+    raw_bytes: bytes,
+    dest: Path,
+    output_sink: Any = None,
+) -> tuple[TransferResult, TransferResult]:
+    """Run a full transfer using the raw_bytes sender path."""
+    received_code: list[str] = []
+
+    sender = SenderSession(
+        server_url=url,
+        raw_bytes=raw_bytes,
+        ssl_context=client_ssl_ctx,
+        verify_sas=False,
+        stun_timeout=0.0,
+    )
+    sender.code_callback = lambda c: received_code.append(c)
+
+    async def _recv() -> TransferResult:
+        for _ in range(100):
+            await asyncio.sleep(0.05)
+            if received_code:
+                break
+        assert received_code, "Sender never emitted a transfer code"
+        return await ReceiverSession(
+            server_url=url,
+            code=received_code[0],
+            destination=dest,
+            ssl_context=client_ssl_ctx,
+            verify_sas=False,
+            stun_timeout=0.0,
+            output_sink=output_sink,
+        ).run()
+
+    sender_task = asyncio.create_task(sender.run())
+    receiver_result = await _recv()
+    sender_result = await sender_task
+    return sender_result, receiver_result
+
+
+class TestRawBytesSend:
+    """SenderSession.raw_bytes — binary stdin path."""
+
+    async def test_binary_data_saved_to_disk(
+        self,
+        tmp_path: Path,
+        server_ssl_ctx: ssl.SSLContext,
+        client_ssl_ctx: ssl.SSLContext,
+    ) -> None:
+        """Binary (non-UTF-8) bytes are received as a file named 'stdin'."""
+        _assert_pq_kem_active()
+
+        srv_obj, srv, db, url = await _start_server(server_ssl_ctx)
+        try:
+            payload = bytes(range(256)) * 100  # 25.6 KiB, not valid UTF-8
+            dest = tmp_path / "out"
+            dest.mkdir()
+
+            s_res, r_res = await _run_transfer_raw_bytes(
+                url, client_ssl_ctx, raw_bytes=payload, dest=dest
+            )
+
+            assert s_res.success, f"Sender failed: {s_res.error}"
+            assert r_res.success, f"Receiver failed: {r_res.error}"
+            assert s_res.bytes_transferred == len(payload)
+            assert r_res.bytes_transferred == len(payload)
+
+            out = r_res.output_path
+            assert out is not None and out.exists()
+            assert out.name == "stdin"
+            assert out.read_bytes() == payload
+        finally:
+            await _stop_server(srv_obj, srv, db)
+
+    async def test_utf8_bytes_sent_via_raw_bytes_arrive_as_file(
+        self,
+        tmp_path: Path,
+        server_ssl_ctx: ssl.SSLContext,
+        client_ssl_ctx: ssl.SSLContext,
+    ) -> None:
+        """Even valid UTF-8 bytes sent via raw_bytes arrive as kind='file'."""
+        _assert_pq_kem_active()
+
+        srv_obj, srv, db, url = await _start_server(server_ssl_ctx)
+        try:
+            payload = b"hello from raw bytes"
+            dest = tmp_path / "out"
+            dest.mkdir()
+
+            s_res, r_res = await _run_transfer_raw_bytes(
+                url, client_ssl_ctx, raw_bytes=payload, dest=dest
+            )
+
+            assert r_res.success
+            # raw_bytes → kind='file' → receiver saves, does not expose text_content
+            assert r_res.text_content is None
+            assert r_res.output_path is not None
+            assert r_res.output_path.read_bytes() == payload
+        finally:
+            await _stop_server(srv_obj, srv, db)
+
+
+# ---------------------------------------------------------------------------
+# output_sink receive (stdout-streaming path)
+# ---------------------------------------------------------------------------
+
+
+class TestOutputSink:
+    """ReceiverSession.output_sink — stdout streaming path."""
+
+    async def test_text_written_to_sink(
+        self,
+        tmp_path: Path,
+        server_ssl_ctx: ssl.SSLContext,
+        client_ssl_ctx: ssl.SSLContext,
+    ) -> None:
+        """Text content is written to output_sink as UTF-8 bytes."""
+        import io
+
+        _assert_pq_kem_active()
+
+        srv_obj, srv, db, url = await _start_server(server_ssl_ctx)
+        try:
+            message = "streamed text via sink"
+            sink = io.BytesIO()
+            received_code: list[str] = []
+
+            sender = SenderSession(
+                server_url=url,
+                text=message,
+                ssl_context=client_ssl_ctx,
+                verify_sas=False,
+                stun_timeout=0.0,
+            )
+            sender.code_callback = lambda c: received_code.append(c)
+
+            async def _recv() -> TransferResult:
+                for _ in range(100):
+                    await asyncio.sleep(0.05)
+                    if received_code:
+                        break
+                return await ReceiverSession(
+                    server_url=url,
+                    code=received_code[0],
+                    destination=tmp_path,
+                    ssl_context=client_ssl_ctx,
+                    verify_sas=False,
+                    stun_timeout=0.0,
+                    output_sink=sink,
+                ).run()
+
+            sender_task = asyncio.create_task(sender.run())
+            r_res = await _recv()
+            s_res = await sender_task
+
+            assert s_res.success
+            assert r_res.success
+            # Sink received the raw bytes; text_content is None
+            assert r_res.text_content is None
+            assert sink.getvalue() == message.encode("utf-8")
+        finally:
+            await _stop_server(srv_obj, srv, db)
+
+    async def test_file_streamed_to_sink(
+        self,
+        tmp_path: Path,
+        server_ssl_ctx: ssl.SSLContext,
+        client_ssl_ctx: ssl.SSLContext,
+    ) -> None:
+        """File bytes are written to output_sink instead of disk."""
+        import io
+
+        _assert_pq_kem_active()
+
+        src = tmp_path / "source.bin"
+        payload = bytes(range(256)) * 200  # 51.2 KiB
+        src.write_bytes(payload)
+        sink = io.BytesIO()
+
+        srv_obj, srv, db, url = await _start_server(server_ssl_ctx)
+        try:
+            s_res, r_res = await _run_transfer_raw_bytes(
+                url,
+                client_ssl_ctx,
+                raw_bytes=payload,
+                dest=tmp_path,
+                output_sink=sink,
+            )
+
+            assert s_res.success
+            assert r_res.success
+            # No file written to disk; output_path is None
+            assert r_res.output_path is None
+            assert sink.getvalue() == payload
         finally:
             await _stop_server(srv_obj, srv, db)

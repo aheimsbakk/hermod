@@ -28,11 +28,12 @@ Cryptographic changes (Appendix B):
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import sys
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import IO, Any
 
 import msgpack
 from websockets.asyncio.client import connect as ws_connect
@@ -180,6 +181,7 @@ class SenderSession:
         server_url: str,
         file_path: Path | None = None,
         text: str | None = None,
+        raw_bytes: bytes | None = None,
         ssl_context: Any = None,
         verify_sas: bool = False,
         progress_callback: Any = None,
@@ -188,14 +190,16 @@ class SenderSession:
         p2p_port: int = 0,
         p2p_host: str = "0.0.0.0",
     ) -> None:
-        if file_path is None and text is None:
-            raise ValueError("Either file_path or text must be provided")
-        if file_path is not None and text is not None:
-            raise ValueError("file_path and text are mutually exclusive")
+        provided = sum(x is not None for x in (file_path, text, raw_bytes))
+        if provided == 0:
+            raise ValueError("One of file_path, text, or raw_bytes must be provided")
+        if provided > 1:
+            raise ValueError("file_path, text, and raw_bytes are mutually exclusive")
 
         self.server_url = server_url
         self.file_path = file_path
         self.text = text
+        self.raw_bytes = raw_bytes
         self.ssl_context = ssl_context
         self.verify_sas = verify_sas
         self.progress_callback = progress_callback
@@ -355,8 +359,10 @@ class SenderSession:
             # Step 8: Transfer payload — Appendix B §3: use SecretStream
             if self.file_path is not None:
                 return await self._send_file(p2p, session_key, sas)
-            else:
+            elif self.text is not None:
                 return await self._send_text(p2p, session_key, sas)
+            else:
+                return await self._send_raw_bytes(p2p, session_key, sas)
         finally:
             await p2p.close()
 
@@ -449,6 +455,57 @@ class SenderSession:
 
         return TransferResult(success=True, bytes_transferred=len(payload), sas=sas)
 
+    async def _send_raw_bytes(
+        self,
+        p2p: P2PConnection,
+        session_key: bytes,
+        sas: str,
+    ) -> TransferResult:
+        """Send raw bytes (e.g. binary stdin) as a file-type payload named 'stdin'."""
+        payload = self.raw_bytes
+        assert payload is not None
+        file_hash = hash_bytes(payload)
+
+        stream = SecretStreamPush(session_key)
+
+        await write_frame(
+            p2p.writer,
+            {
+                "type": FrameType.META,
+                "name": "stdin",
+                "size": len(payload),
+                "hash": file_hash,
+                "kind": "file",
+                "stream_header": stream.header,
+            },
+        )
+
+        hdr, _ = await read_frame(p2p.reader)
+        if hdr.get("type") != FrameType.ACK:
+            raise ValueError("Did not receive ACK for metadata")
+
+        total_sent = 0
+        offset = 0
+        seq = 0
+        while offset < len(payload):
+            chunk = payload[offset : offset + CHUNK_SIZE]
+            offset += len(chunk)
+            total_sent += len(chunk)
+            is_final = offset >= len(payload)
+            enc = stream.push(chunk, is_final=is_final)
+            await write_frame(p2p.writer, {"type": FrameType.CHUNK, "seq": seq}, enc)
+            if self.progress_callback:
+                self.progress_callback(total_sent, len(payload))
+            seq += 1
+
+        await write_frame(p2p.writer, {"type": FrameType.EOF, "is_eof": True})
+
+        hdr, _ = await read_frame(p2p.reader)
+        if hdr.get("type") != FrameType.ACK:
+            raise ValueError("Did not receive final ACK")
+
+        return TransferResult(success=True, bytes_transferred=total_sent, sas=sas)
+
 
 # ------------------------------------------------------------------
 # Receiver session
@@ -496,6 +553,7 @@ class ReceiverSession:
         stun_timeout: float = 2.0,
         p2p_port: int = 0,
         p2p_host: str = "0.0.0.0",
+        output_sink: IO[bytes] | None = None,
     ) -> None:
         self.server_url = server_url
         self.code = code
@@ -507,6 +565,7 @@ class ReceiverSession:
         self.stun_timeout = stun_timeout
         self.p2p_port = p2p_port
         self.p2p_host = p2p_host
+        self.output_sink = output_sink
 
     async def run(self) -> TransferResult:
         """Execute the full receive flow."""
@@ -731,6 +790,15 @@ class ReceiverSession:
 
         await write_frame(p2p.writer, {"type": FrameType.ACK})
 
+        if self.output_sink is not None:
+            self.output_sink.write(raw)
+            self.output_sink.flush()
+            return TransferResult(
+                success=True,
+                bytes_transferred=total_recv,
+                sas=sas,
+            )
+
         return TransferResult(
             success=True,
             bytes_transferred=total_recv,
@@ -747,7 +815,76 @@ class ReceiverSession:
         total_size: int,
         expected_hash: str,
     ) -> TransferResult:
-        """Stream chunks to disk under the original filename."""
+        """Stream chunks to disk under the original filename, or to output_sink."""
+        if self.output_sink is not None:
+            return await self._stream_file_to_sink(
+                p2p, stream, sas, total_size, expected_hash
+            )
+        return await self._save_file_to_disk(
+            p2p, stream, sas, name, total_size, expected_hash
+        )
+
+    async def _stream_file_to_sink(
+        self,
+        p2p: P2PConnection,
+        stream: SecretStreamPull,
+        sas: str,
+        total_size: int,
+        expected_hash: str,
+    ) -> TransferResult:
+        """Write received file chunks directly to self.output_sink."""
+        assert self.output_sink is not None
+        digest = hashlib.sha256()
+        total_recv = 0
+        last_chunk_was_final = False
+
+        while True:
+            hdr, payload = await read_frame(p2p.reader)
+            frame_type = hdr.get("type")
+
+            if frame_type == FrameType.CHUNK:
+                plaintext, is_final = stream.pull(payload)
+                self.output_sink.write(plaintext)
+                digest.update(plaintext)
+                total_recv += len(plaintext)
+                last_chunk_was_final = is_final
+                if self.progress_callback:
+                    self.progress_callback(total_recv, total_size)
+
+            elif frame_type == FrameType.EOF:
+                if not last_chunk_was_final:
+                    raise ValueError(
+                        "Stream truncated: EOF received without TAG_FINAL chunk"
+                    )
+                break
+
+            elif frame_type == FrameType.ABORT:
+                return TransferResult(success=False, error="Transfer aborted by sender")
+
+            else:
+                raise ValueError(f"Unexpected frame type {frame_type!r}")
+
+        self.output_sink.flush()
+
+        actual_hash = digest.hexdigest()
+        if actual_hash != expected_hash:
+            raise ValueError(
+                f"Hash mismatch: expected {expected_hash!r}, got {actual_hash!r}"
+            )
+
+        await write_frame(p2p.writer, {"type": FrameType.ACK})
+
+        return TransferResult(success=True, bytes_transferred=total_recv, sas=sas)
+
+    async def _save_file_to_disk(
+        self,
+        p2p: P2PConnection,
+        stream: SecretStreamPull,
+        sas: str,
+        name: str,
+        total_size: int,
+        expected_hash: str,
+    ) -> TransferResult:
         output_path = resolve_output_path(self.destination, name)
         writer = PartFileWriter(output_path)
         last_chunk_was_final = False

@@ -126,8 +126,15 @@ Hermod employs the Strategy Design Pattern for Layer 1 authentication to isolate
 
 ## 13. Payload Detection and Typing
 
-*   **Auto-Detection**: Standard OS-level path resolution determines if input is a file or text.
-*   **Explicit Overrides**: Users bypass auto-detection using `--file` (`-f`) or `--text` (`-t`).
+*   **Auto-Detection on Send**: The CLI resolves payload type from the positional `INPUT` argument:
+    *   Argument is `-` or stdin is piped and no argument given → read `sys.stdin.buffer`; if the bytes decode as UTF-8 they are sent as `kind="text"`, otherwise as `kind="file"` named `"stdin"`.
+    *   Argument resolves to an existing path → sent as `kind="file"` with the original filename.
+    *   Any other argument string → sent as `kind="text"`.
+*   **No Explicit Flags**: `--file` (`-f`) and `--text` (`-t`) have been removed; auto-detection replaces them.
+*   **Auto-Detection on Receive**: The CLI streams output based on whether `--destination` was given and whether stdout is a terminal:
+    *   `--destination` given → always save file / print text (terminal behavior unchanged).
+    *   No `--destination` and stdout is a terminal → text printed to stdout, file saved with original name in the configured dest dir.
+    *   No `--destination` and stdout is redirected/piped → **all payload bytes** (file or text) streamed directly to `sys.stdout.buffer`.
 
 ## 14. Out-of-Band Verification (MitM Protection)
 
@@ -196,8 +203,7 @@ The `__init__.py` exposes high-level, asynchronous classes (e.g., `P2PClient`, `
 **Command: `tx` | `send`** *(shown as `send or tx` in help)*
 | Parameter / Flag | Short | Default | Description |
 | :--- | :--- | :--- | :--- |
-| `--file` | `-f` | None | Path to local file. |
-| `--text` | `-t` | None | Literal text. Accepts `-` for `stdin`. |
+| `[INPUT]` | N/A | None | File path, text string, or `-` for stdin. Auto-detected. |
 | `--server` | `-s` | `wss://localhost:8786` | Signaling server URL. |
 | `--verify` | `-v` | `False` | Enforce SAS verification. |
 | `--listen` | `-l` | `:0` | P2P bind address (`host:port`, `[ipv6]:port`, or `:port`). `:0` = OS-assigned. |
@@ -206,7 +212,7 @@ The `__init__.py` exposes high-level, asynchronous classes (e.g., `P2PClient`, `
 | Parameter / Flag | Short | Default | Description |
 | :--- | :--- | :--- | :--- |
 | `code` | N/A | Req. | Transfer code. |
-| `--destination`| `-d` | `./` | Output directory/file path. |
+| `--destination`| `-d` | None | Output directory/file path. When omitted: text is printed, files are saved (or streamed to stdout when stdout is redirected). |
 | `--server` | `-s` | `wss://localhost:8786` | Signaling server URL. |
 | `--verify` | `-v` | `False` | Enforce SAS verification. |
 | `--yes` | `-y` | `False` | Auto-accept prompts. |

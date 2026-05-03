@@ -361,13 +361,15 @@ def _parse_p2p_listen(value: str) -> tuple[str, int]:
 
 @app.command(name="send")
 def transmit(
-    file: Annotated[
-        Optional[Path],
-        typer.Option("--file", "-f", help="Path to local file."),
-    ] = None,
-    text: Annotated[
+    source: Annotated[
         Optional[str],
-        typer.Option("--text", "-t", help="Literal text. Use '-' to read stdin."),
+        typer.Argument(
+            metavar="INPUT",
+            help=(
+                "What to send: a file path, a text string, or '-' to read stdin. "
+                "Omit to read from stdin automatically when data is piped."
+            ),
+        ),
     ] = None,
     server: Annotated[
         Optional[str],
@@ -390,41 +392,67 @@ def transmit(
         ),
     ] = ":0",
 ) -> None:
-    """Send a file or text to a peer."""
+    """Send a file or text to a peer.
+
+    Auto-detects payload type from the INPUT argument:
+    \b
+      hermod send myfile.bin          # existing file → sent as file
+      hermod send "hello world"       # non-path string → sent as text
+      hermod send -                   # read stdin
+      echo "text" | hermod send       # stdin auto-detected when piped
+      hermod send < myfile.bin        # binary stdin → sent as file named 'stdin'
+    """
     cfg = load_config(overrides={"server": server})
     ssl_context = _require_ssl_context(cfg.server)
 
-    # Resolve payload
+    # --- Payload resolution -------------------------------------------
     resolved_text: str | None = None
     resolved_file: Path | None = None
+    resolved_raw_bytes: bytes | None = None
 
-    if text == "-":
-        resolved_text = sys.stdin.read()
-    elif text is not None:
-        resolved_text = text
-    elif file is not None:
-        if not file.exists():
-            print_error(f"File not found: {file}")
-            raise typer.Exit(code=1)
-        resolved_file = file
-    else:
-        if not sys.stdin.isatty():
-            resolved_text = sys.stdin.read()
+    read_stdin = source == "-" or (source is None and not sys.stdin.isatty())
+
+    if read_stdin:
+        raw_data = sys.stdin.buffer.read()
+        try:
+            resolved_text = raw_data.decode("utf-8")
+        except UnicodeDecodeError:
+            resolved_raw_bytes = raw_data
+    elif source is not None:
+        candidate = Path(source)
+        if candidate.exists():
+            resolved_file = candidate
         else:
-            print_error("Provide --file or --text (or pipe via stdin).")
-            raise typer.Exit(code=1)
+            resolved_text = source
+    else:
+        print_error(
+            "Provide a file path, a text string, or pipe data via stdin.\n"
+            "Examples:\n"
+            "  hermod send myfile.bin\n"
+            '  hermod send "hello world"\n'
+            "  echo text | hermod send"
+        )
+        raise typer.Exit(code=1)
+
+    # Validate resolved file exists (candidate.exists() already guards this,
+    # but check explicitly in case of races).
+    if resolved_file is not None and not resolved_file.exists():
+        print_error(f"File not found: {resolved_file}")
+        raise typer.Exit(code=1)
 
     p2p_host, p2p_port = _parse_p2p_listen(p2p_listen)
-    # CLI flag takes precedence over config value for the port.
     if p2p_port == 0 and cfg.p2p_port:
         p2p_port = cfg.p2p_port
 
-    total_bytes = (
-        resolved_file.stat().st_size
-        if resolved_file
-        else len((resolved_text or "").encode())
-    )
-    label = resolved_file.name if resolved_file else "text message"
+    if resolved_file is not None:
+        total_bytes = resolved_file.stat().st_size
+        label = resolved_file.name
+    elif resolved_raw_bytes is not None:
+        total_bytes = len(resolved_raw_bytes)
+        label = "stdin"
+    else:
+        total_bytes = len((resolved_text or "").encode())
+        label = "text message"
 
     progress = TransferProgress(f"Sending [cyan]{label}[/cyan]", total_bytes)
 
@@ -435,6 +463,7 @@ def transmit(
         server_url=cfg.server,
         file_path=resolved_file,
         text=resolved_text,
+        raw_bytes=resolved_raw_bytes,
         ssl_context=ssl_context,
         verify_sas=verify,
         progress_callback=_on_progress,
@@ -443,8 +472,6 @@ def transmit(
         p2p_host=p2p_host,
     )
 
-    # Display the transfer code as soon as the channel is registered,
-    # before the progress bar starts (the sender waits for the receiver).
     def _on_code(code: str) -> None:
         print_transfer_code(code)
 
@@ -468,8 +495,6 @@ def transmit(
         print_warning("Transfer interrupted.")
         raise typer.Exit(code=130)
     except (ConnectionError, ValueError, OSError) as exc:
-        # Expected user-facing conditions (wrong channel, refused connection,
-        # invalid code, …).  Print the message cleanly — no traceback.
         print_error(str(exc))
         raise typer.Exit(code=1)
     except Exception as exc:
@@ -491,9 +516,17 @@ app.command(name="tx")(transmit)
 def receive(
     code: Annotated[str, typer.Argument(help="Transfer code from sender.")],
     destination: Annotated[
-        Path,
-        typer.Option("--destination", "-d", help="Output directory or file path."),
-    ] = Path("."),
+        Optional[Path],
+        typer.Option(
+            "--destination",
+            "-d",
+            help=(
+                "Directory or file path to save received content. "
+                "Omit to auto-stream: text is printed, files are saved in the "
+                "current directory (or streamed to stdout when stdout is redirected)."
+            ),
+        ),
+    ] = None,
     server: Annotated[
         Optional[str],
         typer.Option(
@@ -519,8 +552,19 @@ def receive(
         ),
     ] = ":0",
 ) -> None:
-    """Receive a file or text from a peer."""
-    cfg = load_config(overrides={"server": server, "dest_dir": str(destination)})
+    """Receive a file or text from a peer.
+
+    Behaviour when --destination is NOT given:
+    \b
+      hermod receive           # text → printed to stdout; file → saved with original name
+      hermod receive > out     # both text and file content streamed to stdout
+      hermod receive | cat     # same — stdout pipe triggers streaming mode
+
+    Behaviour when --destination IS given:
+    \b
+      hermod receive -d .      # always save file; always print text
+    """
+    cfg = load_config(overrides={"server": server, "dest_dir": str(destination or ".")})
     ssl_context = _require_ssl_context(cfg.server)
 
     try:
@@ -529,17 +573,20 @@ def receive(
         print_error(str(exc))
         raise typer.Exit(code=1)
 
-    dest = destination if destination != Path(".") else Path(cfg.dest_dir)
+    # When --destination is explicit, always save to it.
+    # Otherwise, fall back to config dest_dir for disk saves, but stream to
+    # stdout when stdout is not a terminal (redirect or pipe).
+    dest = destination if destination is not None else Path(cfg.dest_dir)
+    use_stdout = destination is None and not sys.stdout.isatty()
+    output_sink = sys.stdout.buffer if use_stdout else None
 
     p2p_host, p2p_port = _parse_p2p_listen(p2p_listen)
-    # CLI flag takes precedence over config value for the port.
     if p2p_port == 0 and cfg.p2p_port:
         p2p_port = cfg.p2p_port
 
     progress = TransferProgress("Receiving", total=0)
 
     def _on_progress(received: int, total: int) -> None:
-        # Update total dynamically when metadata arrives
         if progress._total != total and total > 0:
             progress._total = total
             if progress._task_id is not None:
@@ -556,6 +603,7 @@ def receive(
         progress_callback=_on_progress,
         p2p_port=p2p_port,
         p2p_host=p2p_host,
+        output_sink=output_sink,
     )
 
     async def _run() -> None:
@@ -564,7 +612,10 @@ def receive(
             result = await session.run()
 
         if result.success:
-            if result.text_content is not None:
+            if use_stdout:
+                # Content was already written directly to stdout; nothing more to do.
+                pass
+            elif result.text_content is not None:
                 sys.stdout.write(result.text_content)
                 if not result.text_content.endswith("\n"):
                     sys.stdout.write("\n")
@@ -587,8 +638,6 @@ def receive(
         print_warning("Transfer interrupted.")
         raise typer.Exit(code=130)
     except (ConnectionError, ValueError, OSError) as exc:
-        # Expected user-facing conditions (wrong channel, refused connection,
-        # invalid code, …).  Print the message cleanly — no traceback.
         print_error(str(exc))
         raise typer.Exit(code=1)
     except Exception as exc:

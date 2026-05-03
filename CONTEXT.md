@@ -2,10 +2,28 @@
 
 ## Current State
 
-All source modules and tests are implemented and passing (204/204, ~71% coverage).
+All source modules and tests are implemented and passing (208/208, ~71% coverage).
 The application is fully functional for its core transfer flows, including ICE-based
 NAT traversal with STUN candidate gathering and a three-layer hybrid key exchange
 (SPAKE2 + ephemeral X25519 + ML-KEM-768).
+
+Auto-detect send/receive UX (v0.6.5):
+- `--file/-f` and `--text/-t` removed from `hermod send`; replaced by a single
+  positional `[INPUT]` argument with auto-detection:
+  - Existing path → sent as file.
+  - Non-path string → sent as text.
+  - `-` or piped stdin → read `sys.stdin.buffer`; UTF-8-decodable → text, else binary file.
+- `SenderSession` gains `raw_bytes: bytes | None` parameter for binary stdin payloads.
+  `_send_raw_bytes` sends them as `kind="file"` with name `"stdin"`, chunked via
+  `CHUNK_SIZE`, using the same SecretStream encryption path.
+- `hermod receive --destination/-d` is now optional (was `Path(".")`):
+  - Omitted + stdout is a terminal → text printed, file saved with original name.
+  - Omitted + stdout redirected/piped → entire payload streamed to `sys.stdout.buffer`.
+  - Explicit → always save/print regardless of stdout state.
+- `ReceiverSession` gains `output_sink: IO[bytes] | None` parameter.
+  `_receive_file` delegates to `_stream_file_to_sink` when sink is set (inline
+  SHA-256 verification, no disk write). `_receive_text` writes raw bytes to sink
+  and returns `TransferResult` without `text_content`.
 
 CLI UX improvements (v0.6.4):
 - `--p2p-port/-P` renamed to `--listen/-l` on `send` and `receive`; accepts
@@ -87,9 +105,9 @@ Appendix B security hardening is complete:
 | Core: Trust Store | `src/hermod/core/trust.py` | ✅ Complete (persists to `config.yaml` via `trusted_servers`) |
 | Core: Streaming | `src/hermod/core/streaming.py` | ✅ Complete |
 | Core: Transfer Code | `src/hermod/core/transfer_code.py` | ✅ Complete |
-| Core: Session | `src/hermod/core/session.py` | ✅ Complete (ICE, stun_timeout, p2p_port params) |
+| Core: Session | `src/hermod/core/session.py` | ✅ Complete (ICE, stun_timeout, p2p_port params; `raw_bytes` send path; `output_sink` receive path) |
 | CLI: UI | `src/hermod/cli/ui.py` | ✅ Complete |
-| CLI: Main | `src/hermod/cli/main.py` | ✅ Complete (`_AliasedGroup` collapses aliases; `ctx.default_map` shows effective defaults; `--listen/-l` replaces `--p2p-port/-P` on send/receive; no-args prints usage) |
+| CLI: Main | `src/hermod/cli/main.py` | ✅ Complete (auto-detect send INPUT arg; stdout-streaming receive; `output_sink` wired to `ReceiverSession`) |
 
 ## Key Architectural Decisions
 
