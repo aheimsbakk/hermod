@@ -17,6 +17,7 @@ TLS is always required.  Clients must pin the server certificate with
 from __future__ import annotations
 
 import asyncio
+import importlib.metadata
 import logging
 import signal
 import ssl
@@ -64,7 +65,7 @@ _VERBOSITY_MAP = {
 }
 
 
-@app.callback()
+@app.callback(invoke_without_command=True)
 def _global_options(
     verbosity: Annotated[
         str,
@@ -73,8 +74,21 @@ def _global_options(
             help="Logging level (debug, info, warning, error, critical).",
         ),
     ] = "warning",
+    version: Annotated[
+        Optional[bool],
+        typer.Option(
+            "--version",
+            "-V",
+            is_eager=True,
+            help="Show version and exit.",
+        ),
+    ] = None,
 ) -> None:
     """Global options applied to all sub-commands."""
+    if version:
+        v = importlib.metadata.version("hermod-p2p")
+        typer.echo(f"hermod {v}")
+        raise typer.Exit()
     level = _VERBOSITY_MAP.get(verbosity.lower(), logging.WARNING)
     logging.basicConfig(
         level=level,
