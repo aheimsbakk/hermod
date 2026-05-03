@@ -1,4 +1,4 @@
-# Hermod
+# Hermod (Pre ALPHA)
 
 Hermod transfers files and text directly between two computers — no cloud storage, no account, no middleman — using post-quantum encryption.
 
