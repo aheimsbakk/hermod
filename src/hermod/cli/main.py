@@ -277,6 +277,11 @@ def transmit(
     except (KeyboardInterrupt, SystemExit):
         print_warning("Transfer interrupted.")
         raise typer.Exit(code=130)
+    except (ConnectionError, ValueError, OSError) as exc:
+        # Expected user-facing conditions (wrong channel, refused connection,
+        # invalid code, …).  Print the message cleanly — no traceback.
+        print_error(str(exc))
+        raise typer.Exit(code=1)
     except Exception as exc:
         print_error(str(exc))
         logger.exception("tx command failed")
@@ -366,6 +371,11 @@ def receive(
     except (KeyboardInterrupt, SystemExit):
         print_warning("Transfer interrupted.")
         raise typer.Exit(code=130)
+    except (ConnectionError, ValueError, OSError) as exc:
+        # Expected user-facing conditions (wrong channel, refused connection,
+        # invalid code, …).  Print the message cleanly — no traceback.
+        print_error(str(exc))
+        raise typer.Exit(code=1)
     except Exception as exc:
         print_error(str(exc))
         logger.exception("rx command failed")
