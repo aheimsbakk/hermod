@@ -185,7 +185,7 @@ The `__init__.py` exposes high-level, asynchronous classes (e.g., `P2PClient`, `
 | Parameter / Flag | Short | Default | Description |
 | :--- | :--- | :--- | :--- |
 | `--port` | `-p` | `8786` | Server bind port. |
-| `--host` | `-h` | `0.0.0.0` | Bind interface. |
+| `--host` | `-H` | `0.0.0.0` | Bind interface. |
 | `--db` | `-d` | `~/.hermod/signaling.db` | SQLite database path. |
 | `--ttl` | `-T` | `3600` | TTL in seconds for channels. |
 
