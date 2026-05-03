@@ -7,14 +7,29 @@ The application is fully functional for its core transfer flows, including ICE-b
 NAT traversal with STUN candidate gathering and a three-layer hybrid key exchange
 (SPAKE2 + ephemeral X25519 + ML-KEM-768).
 
+CLI UX improvements (v0.6.4):
+- `--p2p-port/-P` renamed to `--listen/-l` on `send` and `receive`; accepts
+  `host:port`, `[ipv6]:port`, or bare `:port` (empty host → `"0.0.0.0"`).
+- `_AliasedGroup(TyperGroup)` collapses aliases into one help line (`send or tx`,
+  `receive or rx`) by overriding `list_commands` and `get_command`.
+- `@app.callback(invoke_without_command=True)` with `ctx.invoked_subcommand is None`
+  check prints usage when called with no subcommand (including flag-only invocations
+  like `hermod --verbosity error`).
+- `ctx.default_map` set in the group callback injects config-sourced defaults into
+  all subcommand `--help` outputs (effective value, not `(dynamic)`).
+- `--verbosity` CLI default changed to `"error"` (suppressed by default); was `"info"`.
+- `SenderSession` and `ReceiverSession` both accept `p2p_host: str = "0.0.0.0"` (new)
+  in addition to existing `p2p_port: int = 0`; passed to `PeerListener(host=, port=)`.
+
 Configurable P2P listen port added (v0.6.3):
 - `p2p_port: int = 0` field added to `HermodConfig` (default 0 = OS-assigned).
 - `HERMOD_P2P_PORT` env var and `p2p_port:` YAML key both supported.
 - `SenderSession` and `ReceiverSession` both accept `p2p_port: int = 0`; passed
   straight to `PeerListener(host="0.0.0.0", port=self.p2p_port)`.
-- `hermod tx --p2p-port/-P <N>` and `hermod rx --p2p-port/-P <N>` CLI flags added.
+- `hermod send --listen/-l <host:port>` and `hermod receive --listen/-l <host:port>`
+  CLI flags added (formerly `--p2p-port/-P`).
 - CLI flag takes precedence over config value (`p2p_port or cfg.p2p_port`).
-- Use case: whichever peer has a forwarded port sets `--p2p-port <N>` so the srflx
+- Use case: whichever peer has a forwarded port sets `--listen :<N>` so the srflx
   candidate (public IP + fixed port) is reachable by the other side through NAT.
 
 ICE split-connection fix is complete (v0.6.2):
@@ -74,7 +89,7 @@ Appendix B security hardening is complete:
 | Core: Transfer Code | `src/hermod/core/transfer_code.py` | ✅ Complete |
 | Core: Session | `src/hermod/core/session.py` | ✅ Complete (ICE, stun_timeout, p2p_port params) |
 | CLI: UI | `src/hermod/cli/ui.py` | ✅ Complete |
-| CLI: Main | `src/hermod/cli/main.py` | ✅ Complete (`serve --listen`, `trust` auto-saves server URL, send/receive aliases, `--p2p-port`) |
+| CLI: Main | `src/hermod/cli/main.py` | ✅ Complete (`_AliasedGroup` collapses aliases; `ctx.default_map` shows effective defaults; `--listen/-l` replaces `--p2p-port/-P` on send/receive; no-args prints usage) |
 
 ## Key Architectural Decisions
 
@@ -163,9 +178,15 @@ are now computed `@property` values derived from `listen` via `parse_listen`.
 
 `format_listen(host, port)` emits `"[host]:port"` for IPv6 addresses (RFC 3986), `"host:port"` otherwise.
 
-### CLI Aliases
+### CLI Aliases and Help Display
 `hermod send` → `hermod tx` (same function); `hermod receive` → `hermod rx` (same function).
-Registered via `app.command(name="send")(transmit)` / `app.command(name="receive")(receive)` after the command definitions.
+The `_AliasedGroup(TyperGroup)` class overrides `list_commands` to merge alias names into a
+single entry (`"send or tx"`, `"receive or rx"`) and `get_command` to resolve these composite
+names back to the real command via a shallow `copy.copy` proxy that carries the display name.
+Aliases are registered via `app.command(name="tx")(transmit)` / `app.command(name="rx")(receive)`.
+`_ALIAS_MAP = {"tx": "send", "rx": "receive"}` drives the suppression logic.
+`ctx.default_map` entries exist for both canonical names AND their aliases so that
+`hermod send --help`, `hermod tx --help`, etc. all show the effective configured defaults.
 
 ### websockets v16 API
 `from websockets.asyncio.server import serve` (not `websockets.server`).

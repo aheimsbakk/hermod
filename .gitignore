@@ -48,3 +48,6 @@ coverage.xml
 
 # AI workflow planning artifacts
 PLAN.md
+
+# Temporary files
+tmp/

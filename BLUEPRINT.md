@@ -184,7 +184,7 @@ The `__init__.py` exposes high-level, asynchronous classes (e.g., `P2PClient`, `
 ## 22. Command Line Interface (CLI) Reference and Parameters
 
 **Global Options:**
-*   `--verbosity`: Logging level (`debug`, `info`, `warning`, `error`, `critical`). Default: `info`.
+*   `--verbosity`: Logging level (`debug`, `info`, `warning`, `error`, `critical`). Default: `error`.
 
 **Command: `serve`**
 | Parameter / Flag | Short | Default | Description |
@@ -193,16 +193,16 @@ The `__init__.py` exposes high-level, asynchronous classes (e.g., `P2PClient`, `
 | `--db` | `-d` | `~/.hermod/signaling.db` | SQLite database path. |
 | `--ttl` | `-T` | `3600` | TTL in seconds for channels. |
 
-**Command: `tx` | `send`**
+**Command: `tx` | `send`** *(shown as `send or tx` in help)*
 | Parameter / Flag | Short | Default | Description |
 | :--- | :--- | :--- | :--- |
 | `--file` | `-f` | None | Path to local file. |
 | `--text` | `-t` | None | Literal text. Accepts `-` for `stdin`. |
 | `--server` | `-s` | `wss://localhost:8786` | Signaling server URL. |
 | `--verify` | `-v` | `False` | Enforce SAS verification. |
-| `--p2p-port` | `-P` | `0` | Fixed local TCP port for the P2P listener (0 = OS-assigned). |
+| `--listen` | `-l` | `:0` | P2P bind address (`host:port`, `[ipv6]:port`, or `:port`). `:0` = OS-assigned. |
 
-**Command: `rx` | `receive`**
+**Command: `rx` | `receive`** *(shown as `receive or rx` in help)*
 | Parameter / Flag | Short | Default | Description |
 | :--- | :--- | :--- | :--- |
 | `code` | N/A | Req. | Transfer code. |
@@ -210,7 +210,7 @@ The `__init__.py` exposes high-level, asynchronous classes (e.g., `P2PClient`, `
 | `--server` | `-s` | `wss://localhost:8786` | Signaling server URL. |
 | `--verify` | `-v` | `False` | Enforce SAS verification. |
 | `--yes` | `-y` | `False` | Auto-accept prompts. |
-| `--p2p-port` | `-P` | `0` | Fixed local TCP port for the P2P listener (0 = OS-assigned). |
+| `--listen` | `-l` | `:0` | P2P bind address (`host:port`, `[ipv6]:port`, or `:port`). `:0` = OS-assigned. |
 
 **Command: `trust`**
 | Parameter / Flag | Short | Default | Description |
@@ -227,7 +227,7 @@ The `__init__.py` exposes high-level, asynchronous classes (e.g., `P2PClient`, `
 | `HERMOD_HOST` | `--listen` (host part) | Deprecated; use `HERMOD_LISTEN` |
 | `HERMOD_DB_PATH` | `--db` | |
 | `HERMOD_DEST_DIR`| `--destination` | |
-| `HERMOD_P2P_PORT`| `--p2p-port` | Fixed local TCP port for P2P listener |
+| `HERMOD_P2P_PORT`| `--listen` (port part on send/receive) | Fixed local TCP port for P2P listener |
 
 ## 24. Persistent Configuration Management
 

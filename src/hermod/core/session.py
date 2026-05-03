@@ -170,6 +170,9 @@ class SenderSession:
         OS assign a random port.  Set a fixed port when the sender is behind a
         NAT with an explicit port-forwarding rule so the srflx candidate is
         reachable by the receiver.
+    p2p_host:
+        Local host/interface to bind the P2P listener on.  Defaults to
+        ``"0.0.0.0"`` (all IPv4 interfaces).
     """
 
     def __init__(
@@ -183,6 +186,7 @@ class SenderSession:
         stun_timeout: float = 2.0,
         peer_wait_timeout: float = 3600.0,
         p2p_port: int = 0,
+        p2p_host: str = "0.0.0.0",
     ) -> None:
         if file_path is None and text is None:
             raise ValueError("Either file_path or text must be provided")
@@ -198,6 +202,7 @@ class SenderSession:
         self.stun_timeout = stun_timeout
         self.peer_wait_timeout = peer_wait_timeout
         self.p2p_port = p2p_port
+        self.p2p_host = p2p_host
         self.code_callback: Callable[[str], None] | None = None
         self._transfer_code = ""
 
@@ -247,7 +252,7 @@ class SenderSession:
         # Step 4: Set up P2P listener, gather ICE candidates, exchange with peer
         # Bind to all interfaces so the peer can reach us regardless of which
         # local IP it resolves; gather_candidates advertises the right IPs.
-        listener = PeerListener(host="0.0.0.0", port=self.p2p_port)
+        listener = PeerListener(host=self.p2p_host, port=self.p2p_port)
         await listener.bind()
 
         my_candidates = await gather_candidates(
@@ -474,6 +479,9 @@ class ReceiverSession:
         OS assign a random port.  Set a fixed port when the receiver is behind a
         NAT with an explicit port-forwarding rule so the srflx candidate is
         reachable by the sender.
+    p2p_host:
+        Local host/interface to bind the P2P listener on.  Defaults to
+        ``"0.0.0.0"`` (all IPv4 interfaces).
     """
 
     def __init__(
@@ -487,6 +495,7 @@ class ReceiverSession:
         progress_callback: Any = None,
         stun_timeout: float = 2.0,
         p2p_port: int = 0,
+        p2p_host: str = "0.0.0.0",
     ) -> None:
         self.server_url = server_url
         self.code = code
@@ -497,6 +506,7 @@ class ReceiverSession:
         self.progress_callback = progress_callback
         self.stun_timeout = stun_timeout
         self.p2p_port = p2p_port
+        self.p2p_host = p2p_host
 
     async def run(self) -> TransferResult:
         """Execute the full receive flow."""
@@ -554,7 +564,7 @@ class ReceiverSession:
         # Bind our own listener and gather candidates.
         # Bind to all interfaces so the sender can reach us regardless of which
         # local IP it resolves; gather_candidates advertises the right IPs.
-        listener = PeerListener(host="0.0.0.0", port=self.p2p_port)
+        listener = PeerListener(host=self.p2p_host, port=self.p2p_port)
         await listener.bind()
 
         my_candidates = await gather_candidates(
