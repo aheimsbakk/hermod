@@ -152,9 +152,32 @@ def load_config(
 
 
 def save_config(config: HermodConfig, path: Path | None = None) -> None:
-    """Persist *config* to *path* (or the platform default)."""
+    """Persist *config* to *path* (or the platform default).
+
+    Multiline values (PEM certificate / key strings) are written as YAML
+    literal block scalars so the file stays compact — no extra blank lines.
+    """
     target = path or _default_config_path()
     target.parent.mkdir(parents=True, exist_ok=True)
     data = {f: getattr(config, f) for f in HermodConfig.__dataclass_fields__}
-    target.write_text(yaml.safe_dump(data, default_flow_style=False), encoding="utf-8")
+    target.write_text(
+        yaml.dump(data, Dumper=_HermodDumper, default_flow_style=False),
+        encoding="utf-8",
+    )
     logger.debug("Config saved to %s", target)
+
+
+class _HermodDumper(yaml.SafeDumper):
+    """YAML dumper that writes multiline strings as literal block scalars (``|``).
+
+    This prevents PyYAML from inserting a blank line between every line of the
+    PEM certificate / private key when using the default quoted scalar style.
+    """
+
+
+def _str_representer(dumper: yaml.SafeDumper, value: str) -> yaml.ScalarNode:
+    style = "|" if "\n" in value else None
+    return dumper.represent_scalar("tag:yaml.org,2002:str", value, style=style)
+
+
+_HermodDumper.add_representer(str, _str_representer)

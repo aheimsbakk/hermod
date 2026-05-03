@@ -18,8 +18,11 @@ import ssl
 from pathlib import Path
 
 import pytest
+from cryptography import x509
+from cryptography.hazmat.primitives import serialization
 
 from hermod.core.session import ReceiverSession, SenderSession, TransferResult
+from hermod.core.trust import TrustStore, pinned_ssl_context
 from hermod.crypto.kem import MLKEM768KyberPy, get_kem
 from hermod.server.db import SignalingDB
 from hermod.server.signaling import SignalingServer
@@ -251,5 +254,102 @@ class TestFileTransfer:
             out = receiver_result.output_path
             assert out is not None
             assert out.name == "important_document.pdf"
+        finally:
+            await _stop_server(srv_obj, srv, db)
+
+
+# ---------------------------------------------------------------------------
+# End-to-end: trust workflow → text + file transfer
+# ---------------------------------------------------------------------------
+
+
+class TestTrustAndTransfer:
+    """Full end-to-end workflow: start server, pin certificate via trust, then
+    verify both a text and a file transfer succeed using the pinned SSL context.
+
+    This exercises the same path a real user follows:
+      hermod serve  →  hermod trust host:port  →  hermod tx / hermod rx
+    """
+
+    async def test_trust_pin_then_text_and_file(
+        self,
+        tmp_path: Path,
+        server_ssl_ctx: ssl.SSLContext,
+    ) -> None:
+        _assert_pq_kem_active()
+
+        # 1. Start the signaling server.
+        srv_obj, srv, db, url = await _start_server(server_ssl_ctx)
+        host = "127.0.0.1"
+        port = int(url.rsplit(":", 1)[-1])
+
+        try:
+            # 2. Pin the certificate — mirrors what `hermod trust host:port` does.
+            #    Use asyncio.open_connection so the event loop keeps serving the
+            #    WebSocket server during the TLS handshake.
+            fetch_ctx = ssl.create_default_context()
+            fetch_ctx.check_hostname = False
+            fetch_ctx.verify_mode = ssl.CERT_NONE
+
+            reader, writer = await asyncio.open_connection(host, port, ssl=fetch_ctx)
+            ssl_obj = writer.get_extra_info("ssl_object")
+            assert ssl_obj is not None, "Could not retrieve SSL object from connection"
+            der = ssl_obj.getpeercert(binary_form=True)
+            writer.close()
+            await writer.wait_closed()
+
+            assert der is not None, "Server returned no certificate"
+            fingerprint = hashlib.sha256(der).hexdigest()
+            cert_obj = x509.load_der_x509_certificate(der)
+            cert_pem_bytes = cert_obj.public_bytes(serialization.Encoding.PEM)
+
+            store = TrustStore(path=tmp_path / "trust_store.json")
+            store.add(url, fingerprint, cert_pem_bytes)
+
+            pinned_fp = store.get(url)
+            pinned_pem = store.get_cert_pem(url)
+            assert pinned_fp is not None, "Trust store missing fingerprint"
+            assert pinned_pem is not None, "Trust store missing cert PEM"
+
+            client_ctx = pinned_ssl_context(pinned_fp, pinned_pem)
+
+            # 3. Text transfer: send and verify exact content.
+            text_dest = tmp_path / "text_dest"
+            text_dest.mkdir()
+            message = "Trust-pinned text transfer via Hermod PQ!"
+
+            s_res, r_res = await _run_transfer(
+                url, client_ctx, text=message, dest=text_dest
+            )
+
+            assert s_res.success, f"Text sender failed: {s_res.error}"
+            assert r_res.success, f"Text receiver failed: {r_res.error}"
+            assert s_res.bytes_transferred == len(message.encode())
+            assert r_res.bytes_transferred == len(message.encode())
+            out = r_res.output_path
+            assert out is not None and out.exists()
+            assert out.read_text(encoding="utf-8") == message
+
+            # 4. File transfer: send and verify SHA-256 integrity.
+            src = tmp_path / "payload.bin"
+            src.write_bytes(bytes(range(256)) * 200)  # 51.2 KiB
+            file_dest = tmp_path / "file_dest"
+            file_dest.mkdir()
+
+            s_res, r_res = await _run_transfer(
+                url, client_ctx, file_path=src, dest=file_dest
+            )
+
+            assert s_res.success, f"File sender failed: {s_res.error}"
+            assert r_res.success, f"File receiver failed: {r_res.error}"
+            assert r_res.bytes_transferred == len(src.read_bytes())
+            out = r_res.output_path
+            assert out is not None and out.exists()
+            assert out.name == src.name
+            assert (
+                hashlib.sha256(out.read_bytes()).hexdigest()
+                == hashlib.sha256(src.read_bytes()).hexdigest()
+            )
+
         finally:
             await _stop_server(srv_obj, srv, db)

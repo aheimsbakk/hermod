@@ -404,7 +404,7 @@ def trust(
             raise typer.Exit(code=1)
     else:
         host = target
-        port = 443
+        port = load_config().port
 
     url = f"wss://{host}:{port}"
     print_info(f"Fetching certificate from {host}:{port}...")

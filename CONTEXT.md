@@ -2,7 +2,7 @@
 
 ## Current State
 
-All source modules and tests are implemented and passing (146/146, ~70% coverage).
+All source modules and tests are implemented and passing (149/149, ~70% coverage).
 The application is fully functional for its core transfer flows, including ICE-based
 NAT traversal with STUN candidate gathering and a three-layer hybrid key exchange
 (SPAKE2 + ephemeral X25519 + ML-KEM-768).
@@ -135,6 +135,15 @@ input secrets is secure. An attacker must break all three independently.
 In-memory (`:memory:`) for tests. WAL mode for production. TTL sweep removes channels
 older than `--ttl` seconds. Per-channel limits: `MAX_MESSAGES_PER_CHANNEL=8`,
 `MAX_MESSAGE_SIZE=4096` bytes (anti-spam §8).
+
+### YAML Serialisation for PEM Strings
+`save_config` uses a custom `_HermodDumper` (subclass of `yaml.SafeDumper`) with a
+`str` representer that writes any string containing `\n` as a YAML literal block
+scalar (`style="|"`). This prevents PyYAML's default quoted-scalar style from
+inserting a blank line between every base64 line of the PEM certificate/key, keeping
+`config.yaml` compact and human-readable. Loading is unaffected (`yaml.safe_load`
+parses literal blocks correctly). Two tests in `TestSaveConfig` enforce this:
+`test_yaml_no_consecutive_blank_lines` and `test_yaml_pem_round_trips`.
 
 ### Configuration Hierarchy
 CLI Flags > Env Vars (`HERMOD_SERVER`, `HERMOD_PORT`, `HERMOD_HOST`, `HERMOD_DB_PATH`,

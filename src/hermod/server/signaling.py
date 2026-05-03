@@ -372,6 +372,22 @@ class SignalingServer:
 # ------------------------------------------------------------------
 
 
+class _SuppressTrustProbe(logging.Filter):
+    """Drop the expected EOF error logged by websockets when ``hermod trust``
+    connects via raw TLS to read the certificate and closes immediately.
+
+    The trust command never sends an HTTP request, so websockets logs:
+      "opening handshake failed … connection closed while reading HTTP
+       request line"
+    at ERROR level.  This is intentional behaviour, not a fault.
+    """
+
+    _MARKER = "connection closed while reading HTTP request line"
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return self._MARKER not in record.getMessage()
+
+
 async def run_server(
     host: str = "0.0.0.0",
     port: int = 8786,
@@ -380,12 +396,20 @@ async def run_server(
     ssl_context=None,
 ) -> None:
     """Start the signaling server and block until cancelled (SIGINT / SIGTERM)."""
-    async with SignalingDB(path=db_path, ttl=ttl) as db:
-        server_obj = SignalingServer(db=db, ttl=ttl)
-        srv = await server_obj.start(host=host, port=port, ssl_context=ssl_context)
-        try:
-            await srv.serve_forever()
-        finally:
-            srv.close()
-            await srv.wait_closed()
-            await server_obj.stop()
+    # Suppress the harmless EOF that websockets logs whenever ``hermod trust``
+    # opens a raw TLS connection just to inspect the certificate.
+    _probe_filter = _SuppressTrustProbe()
+    logging.getLogger("websockets.server").addFilter(_probe_filter)
+
+    try:
+        async with SignalingDB(path=db_path, ttl=ttl) as db:
+            server_obj = SignalingServer(db=db, ttl=ttl)
+            srv = await server_obj.start(host=host, port=port, ssl_context=ssl_context)
+            try:
+                await srv.serve_forever()
+            finally:
+                srv.close()
+                await srv.wait_closed()
+                await server_obj.stop()
+    finally:
+        logging.getLogger("websockets.server").removeFilter(_probe_filter)

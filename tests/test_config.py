@@ -94,3 +94,39 @@ class TestSaveConfig:
         path = tmp_path / "deep" / "nested" / "config.yaml"
         save_config(HermodConfig(), path)
         assert path.exists()
+
+    def test_yaml_no_consecutive_blank_lines(self, tmp_path: Path) -> None:
+        """Saved config must not contain consecutive blank lines.
+
+        PyYAML's default quoted-scalar style inserts a blank line between
+        every base64 line of a PEM string.  The custom ``_HermodDumper``
+        writes multiline values as literal block scalars (``|``) so the
+        file stays compact.
+        """
+        from hermod.server.tls import generate_self_signed
+
+        cert_pem, key_pem = generate_self_signed(hostname="test", key_size=2048)
+        path = tmp_path / "config.yaml"
+        save_config(HermodConfig(tls_cert=cert_pem, tls_key=key_pem), path)
+
+        lines = path.read_text(encoding="utf-8").splitlines()
+        consecutive = [
+            i + 1  # 1-indexed for readability
+            for i in range(1, len(lines))
+            if lines[i].strip() == "" and lines[i - 1].strip() == ""
+        ]
+        assert not consecutive, (
+            f"Config YAML has consecutive blank lines at line(s): {consecutive}"
+        )
+
+    def test_yaml_pem_round_trips(self, tmp_path: Path) -> None:
+        """PEM strings stored and reloaded from config must be identical."""
+        from hermod.server.tls import generate_self_signed
+
+        cert_pem, key_pem = generate_self_signed(hostname="test", key_size=2048)
+        path = tmp_path / "config.yaml"
+        save_config(HermodConfig(tls_cert=cert_pem, tls_key=key_pem), path)
+
+        reloaded = load_config(config_path=path)
+        assert reloaded.tls_cert == cert_pem
+        assert reloaded.tls_key == key_pem
