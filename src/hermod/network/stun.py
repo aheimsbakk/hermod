@@ -197,7 +197,21 @@ async def get_srflx_candidate(
             )
             if not infos:
                 return None
+
+            # Guard: stun_addr must be a plain (host, port) 2-tuple.  With
+            # family=AF_INET this is always true, but an old cached build or an
+            # unusual resolver could return an IPv6 4-tuple; passing that to an
+            # AF_INET datagram transport raises a TypeError that asyncio logs as
+            # "Fatal write error" at ERROR level.
             stun_addr = infos[0][4]
+            if not (isinstance(stun_addr, tuple) and len(stun_addr) == 2):
+                logger.debug(
+                    "STUN %s:%d → non-IPv4 address %r, skipping",
+                    stun_host,
+                    stun_port,
+                    stun_addr,
+                )
+                return None
 
             sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
