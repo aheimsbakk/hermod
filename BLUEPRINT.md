@@ -17,7 +17,7 @@ The CLI supports overriding the default signaling server to allow user-defined i
 
 ```bash
 # Start the signaling and NAT helper service on port 443 (requires elevated privileges)
-hermod serve --port 443 --db /var/lib/hermod/signaling.db --ttl 3600
+hermod serve --listen 0.0.0.0:443 --db /var/lib/hermod/signaling.db --ttl 3600
 
 # Fetch and pin the public certificate of a specific server
 hermod trust my-relay.local:8443
@@ -36,22 +36,25 @@ The security model assumes the signaling server is untrusted and anticipates fut
 
 *   **Transfer Code Allocation**: A short, cryptographically secure random code is generated (e.g., `7-rapid-blue-fox`). The integer acts as the channel ID. The string acts as the shared secret for classical authentication.
 *   **Layer 1: Classical Authentication (PAKE)**: Clients execute a classical PAKE protocol (SPAKE2 over Elliptic Curves) via the signaling server. This prevents offline dictionary attacks and yields a classical shared secret ($K_{classical}$).
-*   **Signaling Encryption**: ICE candidates for NAT traversal are encrypted using $K_{classical}$ and exchanged via the signaling server.
+*   **Signaling Encryption**: ICE candidates for NAT traversal are encrypted using $K_{classical}$ (XChaCha20-Poly1305, 192-bit nonce) and exchanged via the signaling server.
 *   **Layer 2: Ephemeral X25519 DH**: Upon P2P connection establishment, clients perform an ephemeral X25519 Diffie-Hellman exchange, yielding a classical shared secret ($K_{ecdh}$). This layer provides defence-in-depth: if the PQ KEM is ever broken by a *classical* computer, $K_{ecdh}$ keeps the session secure.
 *   **Layer 3: Post-Quantum Encapsulation (KEM)**: Clients perform a secondary key exchange using NIST FIPS 203 ML-KEM-768. The receiver encapsulates a PQ shared secret ($K_{pq}$) and returns the ciphertext.
+*   **MitM Protection (Appendix B §1)**: All cryptographic material in `PQ_INIT` and `PQ_RESPONSE` frames is authenticated with HMAC-SHA256 keyed by $K_{classical}$. The receiver MUST verify the MAC tag before using any received public key or ciphertext. This prevents a network-level attacker from substituting ephemeral keys after NAT punch-through.
 *   **Key Derivation (Composite Key)**: All three secrets are bound together via HKDF-SHA256:
     `Session_Key = HKDF(Salt, K_classical ‖ K_ecdh ‖ K_pq, info="hermod-session-v2")`
     An attacker must break **all three** independently to recover the session key.
-*   **Symmetric Payload Encryption**: All data transmitted over the P2P connection is encrypted using AES-256-GCM or ChaCha20-Poly1305 keyed with the composite `Session_Key`.
+*   **Symmetric Payload Encryption (Appendix B §2 & §3)**: All payload data is encrypted using `pynacl` `crypto_secretstream` (XChaCha20-Poly1305 with automatic key ratcheting and per-block nonce rotation). The 24-byte stream header is piggybacked on the `META` wire frame. A `TAG_FINAL` tag on the last encrypted chunk provides cryptographic proof against truncation attacks.
+*   **Ad-hoc AEAD**: Small messages (ICE candidates) use `AEADCipher` — XChaCha20-Poly1305 via `pynacl` bindings with a 192-bit random nonce.
+*   **Resume Sub-Key (Appendix B §2)**: Resuming a transfer calls `derive_resume_key(session_key, resume_counter)` which runs HKDF-SHA256 with a counter-bound context. The original `Session_Key` is never reused across resume segments.
 
 ## 5. Network Protocol and NAT Traversal
 
 Data transmission is strictly constrained to the P2P channel.
 
 *   **Endpoint Discovery**: The `serve` component inspects incoming connections to determine public IP addresses.
-*   **ICE (Interactive Connectivity Establishment)**: Both peers independently gather candidates: host candidates from local interfaces (`socket_utils.get_local_addresses`) and an optional server-reflexive (srflx) candidate via STUN (`network/stun.py`, RFC 5389). STUN queries three public servers concurrently; the first valid XOR-MAPPED-ADDRESS wins. Passing `stun_timeout=0.0` skips STUN entirely (used in tests).
+*   **ICE (Interactive Connectivity Establishment)**: Both peers independently gather candidates: host candidates from local interfaces (`socket_utils.get_local_addresses`) and an optional server-reflexive (srflx) candidate via STUN (`network/stun.py`, RFC 5389). STUN queries three public servers concurrently; the first valid XOR-MAPPED-ADDRESS wins. Passing `stun_timeout=0.0` skips STUN entirely (used in tests). `get_local_addresses` returns the default-route IP (via UDP probe to `8.8.8.8`) and appends loopback only when no other address is found, preventing multiple candidates from resolving to the same `0.0.0.0` listener.
 *   **Encrypted Exchange**: Candidate lists are serialised as `{"candidates": [{"type": "host"|"srflx", "ip": ..., "port": ...}, ...]}`, encrypted with $K_{classical}$ and exchanged via the signaling relay. A legacy fallback decodes the old `{"ip": ..., "port": ...}` single-endpoint format.
-*   **Symmetric Connectivity Race**: Both sides bind a `PeerListener` and call `ice_connect()` simultaneously. `ice_connect` races an inbound TCP accept against outbound TCP probes to every peer candidate; the first successful connection wins and all remaining tasks are cancelled.
+*   **Asymmetric Connectivity Race**: Sender is the ICE *controlling* role — fires outbound probes immediately. Receiver is the ICE *controlled* role — delays probes by 100 ms so the sender's probe arrives at the receiver's listener first. Both sides call `ice_connect()`; when multiple tasks complete simultaneously the winning task is selected in insertion order (`accept_task` first, then probes by priority) to guarantee a deterministic, split-connection-free result.
 
 ## 6. Execution Flow
 
@@ -86,7 +89,8 @@ The signaling server acts strictly as an ephemeral, blind relay using SQLite.
 *   **Testing**: `pytest` and `pytest-cov` (mandating strict test coverage).
 *   **CLI Framework**: `Typer`.
 *   **Cryptographic Dependencies**: 
-    *   `cryptography`: Symmetrical encryption, hashing, X.509.
+    *   `cryptography`: Classical DH, HKDF, HMAC, X.509.
+    *   `pynacl`: XChaCha20-Poly1305 AEAD and `crypto_secretstream` (libsodium bindings).
     *   `spake2`: Classical PAKE.
     *   `kyber-py`: Post-Quantum KEM (pure-Python FIPS 203 ML-KEM-768; no native build required).
     *   `liboqs-python` *(optional)*: Native C-backed ML-KEM-768; preferred when the shared library is available.
@@ -96,7 +100,7 @@ The signaling server acts strictly as an ephemeral, blind relay using SQLite.
 
 *   **Server-Side Auto-Generation**: `hermod serve` automatically generates a self-signed X.509 certificate on first run. The PEM certificate and private key are stored as strings directly inside `~/.config/hermod/config.yaml` — no separate certificate files are written to disk.
 *   **Single Config File**: `~/.config/hermod/config.yaml` is the sole persistent configuration store. It contains all settings including the TLS certificate (`tls_cert`) and private key (`tls_key`) as PEM strings.
-*   **Client-Side Trust Store**: Maps server URLs to SHA-256 public certificate fingerprints in `~/.hermod/trust_store.json`.
+*   **Client-Side Trust Store**: Maps server URLs to SHA-256 public certificate fingerprints and full PEM certificates in the `trusted_servers` section of `~/.config/hermod/config.yaml`.  The former `~/.hermod/trust_store.json` file is no longer used.
 *   **Certificate Pinning Enforcement**: The client rejects standard CA validation, explicitly verifying the SHA-256 fingerprint matches the pinned hash.
 
 ## 11. P2P Wire Protocol and Extensibility
@@ -110,6 +114,7 @@ The P2P connection utilizes a versioned, MessagePack frame-based "Header-Payload
     4.  **Payload Length (8 bytes)**: Raw payload size.
     5.  **Header**: MessagePack encoded dictionary.
     6.  **Payload**: Raw encrypted binary data.
+*   **META Frame Extension**: The `META` frame header carries a `stream_header` field (24 bytes) — the libsodium `crypto_secretstream` initialisation header. The receiver passes this to `SecretStreamPull` before processing any `CHUNK` frames.
 *   **Extensibility**: Clients strictly ignore unrecognized keys in the MessagePack header.
 
 ## 12. Software Architecture: Cryptographic Abstraction
@@ -121,8 +126,15 @@ Hermod employs the Strategy Design Pattern for Layer 1 authentication to isolate
 
 ## 13. Payload Detection and Typing
 
-*   **Auto-Detection**: Standard OS-level path resolution determines if input is a file or text.
-*   **Explicit Overrides**: Users bypass auto-detection using `--file` (`-f`) or `--text` (`-t`).
+*   **Auto-Detection on Send**: The CLI resolves payload type from the positional `INPUT` argument:
+    *   Argument is `-` or stdin is piped and no argument given → read `sys.stdin.buffer`; if the bytes decode as UTF-8 they are sent as `kind="text"`, otherwise as `kind="file"` named `"stdin"`.
+    *   Argument resolves to an existing path → sent as `kind="file"` with the original filename.
+    *   Any other argument string → sent as `kind="text"`.
+*   **No Explicit Flags**: `--file` (`-f`) and `--text` (`-t`) have been removed; auto-detection replaces them.
+*   **Auto-Detection on Receive**: The CLI streams output based on whether `--destination` was given and whether stdout is a terminal:
+    *   `--destination` given → always save file / print text (terminal behavior unchanged).
+    *   No `--destination` and stdout is a terminal → text printed to stdout, file saved with original name in the configured dest dir.
+    *   No `--destination` and stdout is redirected/piped → **all payload bytes** (file or text) streamed directly to `sys.stdout.buffer`.
 
 ## 14. Out-of-Band Verification (MitM Protection)
 
@@ -179,32 +191,32 @@ The `__init__.py` exposes high-level, asynchronous classes (e.g., `P2PClient`, `
 ## 22. Command Line Interface (CLI) Reference and Parameters
 
 **Global Options:**
-*   `--verbosity`: Logging level (`debug`, `info`, `warning`, `error`, `critical`). Default: `info`.
+*   `--verbosity`: Logging level (`debug`, `info`, `warning`, `error`, `critical`). Default: `error`.
 
 **Command: `serve`**
 | Parameter / Flag | Short | Default | Description |
 | :--- | :--- | :--- | :--- |
-| `--port` | `-p` | `8786` | Server bind port. |
-| `--host` | `-H` | `0.0.0.0` | Bind interface. |
+| `--listen` | `-l` | `0.0.0.0:8786` | Bind address (`host:port` or `[ipv6]:port`). |
 | `--db` | `-d` | `~/.hermod/signaling.db` | SQLite database path. |
 | `--ttl` | `-T` | `3600` | TTL in seconds for channels. |
 
-**Command: `tx` | `send`**
+**Command: `tx` | `send`** *(shown as `send or tx` in help)*
 | Parameter / Flag | Short | Default | Description |
 | :--- | :--- | :--- | :--- |
-| `--file` | `-f` | None | Path to local file. |
-| `--text` | `-t` | None | Literal text. Accepts `-` for `stdin`. |
+| `[INPUT]` | N/A | None | File path, text string, or `-` for stdin. Auto-detected. |
 | `--server` | `-s` | `wss://localhost:8786` | Signaling server URL. |
 | `--verify` | `-v` | `False` | Enforce SAS verification. |
+| `--listen` | `-l` | `:0` | P2P bind address (`host:port`, `[ipv6]:port`, or `:port`). `:0` = OS-assigned. |
 
-**Command: `rx` | `receive`**
+**Command: `rx` | `receive`** *(shown as `receive or rx` in help)*
 | Parameter / Flag | Short | Default | Description |
 | :--- | :--- | :--- | :--- |
 | `code` | N/A | Req. | Transfer code. |
-| `--destination`| `-d` | `./` | Output directory/file path. |
+| `--destination`| `-d` | None | Output directory/file path. When omitted: text is printed, files are saved (or streamed to stdout when stdout is redirected). |
 | `--server` | `-s` | `wss://localhost:8786` | Signaling server URL. |
 | `--verify` | `-v` | `False` | Enforce SAS verification. |
 | `--yes` | `-y` | `False` | Auto-accept prompts. |
+| `--listen` | `-l` | `:0` | P2P bind address (`host:port`, `[ipv6]:port`, or `:port`). `:0` = OS-assigned. |
 
 **Command: `trust`**
 | Parameter / Flag | Short | Default | Description |
@@ -213,13 +225,15 @@ The `__init__.py` exposes high-level, asynchronous classes (e.g., `P2PClient`, `
 
 ## 23. Environment Variables
 
-| Environment Variable | Maps to Flag |
-| :--- | :--- |
-| `HERMOD_SERVER` | `--server` |
-| `HERMOD_PORT` | `--port` |
-| `HERMOD_HOST` | `--host` |
-| `HERMOD_DB_PATH` | `--db` |
-| `HERMOD_DEST_DIR`| `--destination` |
+| Environment Variable | Maps to Flag | Notes |
+| :--- | :--- | :--- |
+| `HERMOD_SERVER` | `--server` | |
+| `HERMOD_LISTEN` | `--listen` | New; takes `host:port` or `[ipv6]:port` |
+| `HERMOD_PORT` | `--listen` (port part) | Deprecated; use `HERMOD_LISTEN` |
+| `HERMOD_HOST` | `--listen` (host part) | Deprecated; use `HERMOD_LISTEN` |
+| `HERMOD_DB_PATH` | `--db` | |
+| `HERMOD_DEST_DIR`| `--destination` | |
+| `HERMOD_P2P_PORT`| `--listen` (port part on send/receive) | Fixed local TCP port for P2P listener |
 
 ## 24. Persistent Configuration Management
 
@@ -234,7 +248,8 @@ The `__init__.py` exposes high-level, asynchronous classes (e.g., `P2PClient`, `
 ## 26. Transfer Resumability (Interruption Recovery)
 
 *   **State Tracking:** Receiver maintains `.hermod_part`.
-*   **Resume Handshake:** `PROTOCOL_HELLO` frame includes `resume_offset`. Cryptographic AEAD nonces factor in this offset to prevent reuse vulnerabilities.
+*   **Resume Handshake:** `PROTOCOL_HELLO` frame includes `resume_offset`.
+*   **Resume Sub-Key:** Resuming a transfer MUST call `derive_resume_key(session_key, resume_counter)` (HKDF-SHA256 with a counter-bound context string) to derive a fresh sub-key for each resumed segment. The original `Session_Key` is never reused; this eliminates the nonce-reuse risk that would arise from restarting a `SecretStream` at a non-zero offset with the same key.
 
 ## 27. Packaging and Distribution
 
