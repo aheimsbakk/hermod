@@ -51,34 +51,35 @@ def medium_file(tmp_path: Path) -> Path:
 
 
 @pytest.fixture(scope="session")
-def tls_cert_dir(tmp_path_factory: pytest.TempPathFactory) -> Path:
-    """Generate a self-signed test certificate once for the entire test session."""
+def tls_certs() -> tuple[str, str]:
+    """Generate a self-signed test certificate once for the entire test session.
+
+    Returns
+    -------
+    tuple[str, str]
+        ``(cert_pem, key_pem)`` ASCII PEM strings.
+    """
     from hermod.server.tls import generate_self_signed
 
-    cert_dir = tmp_path_factory.mktemp("tls")
-    generate_self_signed(
-        cert_dir / "server.crt",
-        cert_dir / "server.key",
+    return generate_self_signed(
         hostname="127.0.0.1",
         key_size=2048,  # RSA-2048 is fast enough for tests
     )
-    return cert_dir
 
 
 @pytest.fixture(scope="session")
-def server_ssl_ctx(tls_cert_dir: Path) -> ssl.SSLContext:
+def server_ssl_ctx(tls_certs: tuple[str, str]) -> ssl.SSLContext:
     """SSL context for the test signaling server."""
     from hermod.server.tls import get_server_ssl_context
 
-    return get_server_ssl_context(
-        tls_cert_dir / "server.crt",
-        tls_cert_dir / "server.key",
-    )
+    cert_pem, key_pem = tls_certs
+    return get_server_ssl_context(cert_pem, key_pem)
 
 
 @pytest.fixture(scope="session")
-def client_ssl_ctx(tls_cert_dir: Path) -> ssl.SSLContext:
+def client_ssl_ctx(tls_certs: tuple[str, str]) -> ssl.SSLContext:
     """Pinned SSL context that trusts only the test server certificate."""
     from hermod.server.tls import get_client_ssl_context
 
-    return get_client_ssl_context(tls_cert_dir / "server.crt")
+    cert_pem, _ = tls_certs
+    return get_client_ssl_context(cert_pem)

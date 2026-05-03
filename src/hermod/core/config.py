@@ -42,14 +42,6 @@ def _default_dest_dir() -> str:
     return str(Path.cwd())
 
 
-def _default_cert_path() -> str:
-    return str(Path.home() / ".hermod" / "server.crt")
-
-
-def _default_key_path() -> str:
-    return str(Path.home() / ".hermod" / "server.key")
-
-
 # ------------------------------------------------------------------
 # Config dataclass
 # ------------------------------------------------------------------
@@ -60,6 +52,10 @@ class HermodConfig:
     """Resolved application configuration.
 
     All fields represent the *final* effective value after merging sources.
+
+    TLS certificate and private key are stored as PEM strings directly in
+    ``config.yaml`` so that the file is the single source of truth — no
+    separate certificate files are written to disk.
     """
 
     server: str = "wss://localhost:4430"
@@ -67,8 +63,8 @@ class HermodConfig:
     host: str = "0.0.0.0"
     db_path: str = field(default_factory=_default_db_path)
     dest_dir: str = field(default_factory=_default_dest_dir)
-    cert_path: str = field(default_factory=_default_cert_path)
-    key_path: str = field(default_factory=_default_key_path)
+    tls_cert: str = ""  # PEM-encoded server certificate (populated on first serve)
+    tls_key: str = ""  # PEM-encoded server private key (populated on first serve)
     ttl: int = 3600
     verbosity: str = "info"
 
@@ -113,8 +109,8 @@ def load_config(
         "host": "0.0.0.0",
         "db_path": _default_db_path(),
         "dest_dir": _default_dest_dir(),
-        "cert_path": _default_cert_path(),
-        "key_path": _default_key_path(),
+        "tls_cert": "",
+        "tls_key": "",
         "ttl": 3600,
         "verbosity": "info",
     }

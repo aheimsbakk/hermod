@@ -4,6 +4,10 @@ TLS certificate management for the signaling server.
 Auto-generates a self-signed X.509 certificate on first run if none exists
 (§10). Clients use certificate pinning via SHA-256 fingerprint rather than
 trusting the system CA store.
+
+Certificates are stored as PEM strings inside ``~/.config/hermod/config.yaml``
+so that the config file is the single source of truth — no certificate files
+are written to disk.
 """
 
 from __future__ import annotations
@@ -13,6 +17,7 @@ import hashlib
 import ipaddress
 import logging
 import ssl
+import tempfile
 from pathlib import Path
 
 from cryptography import x509
@@ -30,27 +35,24 @@ _KEY_SIZE = 4096
 
 
 def generate_self_signed(
-    cert_path: Path,
-    key_path: Path,
     hostname: str = "hermod-signaling",
     key_size: int = _KEY_SIZE,
-) -> None:
-    """Generate and persist a self-signed RSA certificate.
+) -> tuple[str, str]:
+    """Generate a self-signed RSA certificate and return its PEM strings.
 
     Parameters
     ----------
-    cert_path:
-        Destination path for the PEM-encoded certificate.
-    key_path:
-        Destination path for the PEM-encoded private key.
     hostname:
         Common Name / SAN hostname for the certificate.
     key_size:
         RSA key size in bits.  Defaults to 4096; use 2048 in tests for speed.
-    """
-    cert_path.parent.mkdir(parents=True, exist_ok=True)
-    key_path.parent.mkdir(parents=True, exist_ok=True)
 
+    Returns
+    -------
+    tuple[str, str]
+        ``(cert_pem, key_pem)`` — both ASCII PEM strings suitable for
+        storing directly in ``config.yaml``.
+    """
     logger.info("Generating self-signed TLS certificate for %s", hostname)
 
     # Generate RSA private key
@@ -87,67 +89,86 @@ def generate_self_signed(
         .sign(private_key, hashes.SHA256())
     )
 
-    # Write certificate
-    cert_path.write_bytes(cert.public_bytes(serialization.Encoding.PEM))
-    # Write private key (mode 600)
-    key_path.write_bytes(
-        private_key.private_bytes(
-            encoding=serialization.Encoding.PEM,
-            format=serialization.PrivateFormat.TraditionalOpenSSL,
-            encryption_algorithm=serialization.NoEncryption(),
-        )
-    )
-    key_path.chmod(0o600)
-    logger.info("Certificate written to %s", cert_path)
+    cert_pem = cert.public_bytes(serialization.Encoding.PEM).decode("ascii")
+    key_pem = private_key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.TraditionalOpenSSL,
+        encryption_algorithm=serialization.NoEncryption(),
+    ).decode("ascii")
+
+    return cert_pem, key_pem
 
 
-def get_server_ssl_context(cert_path: Path, key_path: Path) -> ssl.SSLContext:
-    """Build an :class:`ssl.SSLContext` for the signaling server.
-
-    Auto-generates the certificate if it does not exist.
+def get_server_ssl_context(cert_pem: str, key_pem: str) -> ssl.SSLContext:
+    """Build an :class:`ssl.SSLContext` for the signaling server from PEM strings.
 
     Parameters
     ----------
-    cert_path:
-        PEM certificate file.
-    key_path:
-        PEM private key file.
+    cert_pem:
+        PEM-encoded certificate string (stored in ``config.yaml``).
+    key_pem:
+        PEM-encoded private key string (stored in ``config.yaml``).
     """
-    if not cert_path.exists() or not key_path.exists():
-        generate_self_signed(cert_path, key_path)
-
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     ctx.minimum_version = ssl.TLSVersion.TLSv1_2
-    ctx.load_cert_chain(certfile=str(cert_path), keyfile=str(key_path))
+
+    # ssl.SSLContext.load_cert_chain only accepts file paths, so we write the
+    # PEM strings to temporary files, load them, and delete immediately.
+    cert_tmp: str | None = None
+    key_tmp: str | None = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".pem", delete=False, mode="wb") as f:
+            f.write(cert_pem.encode("ascii"))
+            cert_tmp = f.name
+
+        with tempfile.NamedTemporaryFile(suffix=".pem", delete=False, mode="wb") as f:
+            f.write(key_pem.encode("ascii"))
+            key_tmp = f.name
+
+        ctx.load_cert_chain(certfile=cert_tmp, keyfile=key_tmp)
+    finally:
+        if cert_tmp:
+            Path(cert_tmp).unlink(missing_ok=True)
+        if key_tmp:
+            Path(key_tmp).unlink(missing_ok=True)
+
     return ctx
 
 
 def get_client_ssl_context(
-    cert_path: Path | None = None,
+    cert_pem: bytes | str | None = None,
 ) -> ssl.SSLContext:
     """Build a client SSL context that trusts only the supplied certificate.
 
     Parameters
     ----------
-    cert_path:
-        The server's PEM certificate to pin.  When ``None`` the standard CA
-        store is used (for testing with ``wss://`` connections).
+    cert_pem:
+        The server's PEM certificate to pin as bytes or string.  When
+        ``None`` the standard CA store is used (for testing with ``wss://``
+        connections).
     """
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
     ctx.minimum_version = ssl.TLSVersion.TLSv1_2
-    if cert_path is not None:
+    if cert_pem is not None:
         ctx.check_hostname = False
         ctx.verify_mode = ssl.CERT_REQUIRED
-        ctx.load_verify_locations(cafile=str(cert_path))
+        pem_str = cert_pem if isinstance(cert_pem, str) else cert_pem.decode("ascii")
+        ctx.load_verify_locations(cadata=pem_str)
     return ctx
 
 
-def fingerprint_sha256(cert_path: Path) -> str:
+def fingerprint_sha256(cert_pem: bytes | str) -> str:
     """Return the SHA-256 fingerprint (hex) of a PEM certificate.
 
     Used by the trust store to pin a server's certificate.
+
+    Parameters
+    ----------
+    cert_pem:
+        PEM-encoded certificate as bytes or string.
     """
-    pem_data = cert_path.read_bytes()
-    cert = x509.load_pem_x509_certificate(pem_data)
+    if isinstance(cert_pem, str):
+        cert_pem = cert_pem.encode("ascii")
+    cert = x509.load_pem_x509_certificate(cert_pem)
     der = cert.public_bytes(serialization.Encoding.DER)
     return hashlib.sha256(der).hexdigest()

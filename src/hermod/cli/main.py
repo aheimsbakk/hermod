@@ -140,13 +140,22 @@ def serve(
 
     cfg = load_config(overrides={"port": port, "host": host, "ttl": ttl})
     db_path = db or cfg.db_path
-    cert_path = Path(cfg.cert_path)
-    key_path = Path(cfg.key_path)
 
-    ssl_context = get_server_ssl_context(cert_path, key_path)
-    # Persist cert_path / key_path so the user can find them in config.yaml
-    save_config(cfg)
-    print_info(f"TLS enabled (cert: {cert_path})")
+    # Generate TLS certificate on first run and persist it to config.yaml.
+    if not cfg.tls_cert or not cfg.tls_key:
+        from hermod.server.tls import generate_self_signed as _gen
+
+        tls_cert, tls_key = _gen()
+        from dataclasses import replace as _replace
+
+        cfg = _replace(cfg, tls_cert=tls_cert, tls_key=tls_key)
+        save_config(cfg)
+        print_info("Generated new TLS certificate — stored in config.yaml")
+    else:
+        save_config(cfg)
+
+    ssl_context = get_server_ssl_context(cfg.tls_cert, cfg.tls_key)
+    print_info("TLS enabled")
     print_info(f"Starting signaling server on {host}:{port}")
 
     loop = asyncio.new_event_loop()
