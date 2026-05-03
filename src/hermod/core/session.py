@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import sys
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -53,7 +54,9 @@ logger = logging.getLogger(__name__)
 
 
 def _pack(msg: dict[str, Any]) -> bytes:
-    return msgpack.packb(msg, use_bin_type=True)
+    result = msgpack.packb(msg, use_bin_type=True)
+    assert result is not None
+    return result
 
 
 def _unpack(data: bytes) -> dict[str, Any]:
@@ -101,12 +104,14 @@ class TransferResult:
         success: bool,
         bytes_transferred: int = 0,
         output_path: Path | None = None,
+        text_content: str | None = None,
         sas: str = "",
         error: str = "",
     ) -> None:
         self.success = success
         self.bytes_transferred = bytes_transferred
         self.output_path = output_path
+        self.text_content = text_content
         self.sas = sas
         self.error = error
 
@@ -291,7 +296,7 @@ class SenderSession:
             logger.debug("Session key derived; SAS=%s", sas)
 
             if self.verify_sas:
-                print(f"\nVerification code (share verbally): {sas}")
+                print(f"\nVerification code (share verbally): {sas}", file=sys.stderr)
                 confirm = input("Peer confirmed? [y/N] ").strip().lower()
                 if confirm != "y":
                     await p2p.close()
@@ -559,7 +564,7 @@ class ReceiverSession:
             logger.debug("Session key derived; SAS=%s", sas)
 
             if self.verify_sas:
-                print(f"\nVerification code (share verbally): {sas}")
+                print(f"\nVerification code (share verbally): {sas}", file=sys.stderr)
                 if not self.auto_accept:
                     confirm = input("Codes match? [y/N] ").strip().lower()
                     if confirm != "y":
@@ -587,9 +592,73 @@ class ReceiverSession:
         name: str = meta_hdr["name"]
         total_size: int = meta_hdr["size"]
         expected_hash: str = meta_hdr["hash"]
+        kind: str = meta_hdr.get("kind", "file")
 
         await write_frame(p2p.writer, {"type": FrameType.ACK})
 
+        if kind == "text":
+            return await self._receive_text(p2p, cipher, sas, total_size, expected_hash)
+        return await self._receive_file(
+            p2p, cipher, sas, name, total_size, expected_hash
+        )
+
+    async def _receive_text(
+        self,
+        p2p: P2PConnection,
+        cipher: AEADCipher,
+        sas: str,
+        total_size: int,
+        expected_hash: str,
+    ) -> TransferResult:
+        """Collect all chunks in memory and return decoded text_content."""
+        chunks: list[bytes] = []
+        total_recv = 0
+        while True:
+            hdr, payload = await read_frame(p2p.reader)
+            frame_type = hdr.get("type")
+
+            if frame_type == FrameType.CHUNK:
+                plaintext = cipher.decrypt(payload)
+                chunks.append(plaintext)
+                total_recv += len(plaintext)
+                if self.progress_callback:
+                    self.progress_callback(total_recv, total_size)
+
+            elif frame_type == FrameType.EOF:
+                break
+
+            elif frame_type == FrameType.ABORT:
+                return TransferResult(success=False, error="Transfer aborted by sender")
+
+            else:
+                raise ValueError(f"Unexpected frame type {frame_type!r}")
+
+        raw = b"".join(chunks)
+        actual_hash = hash_bytes(raw)
+        if actual_hash != expected_hash:
+            raise ValueError(
+                f"Hash mismatch: expected {expected_hash!r}, got {actual_hash!r}"
+            )
+
+        await write_frame(p2p.writer, {"type": FrameType.ACK})
+
+        return TransferResult(
+            success=True,
+            bytes_transferred=total_recv,
+            text_content=raw.decode("utf-8"),
+            sas=sas,
+        )
+
+    async def _receive_file(
+        self,
+        p2p: P2PConnection,
+        cipher: AEADCipher,
+        sas: str,
+        name: str,
+        total_size: int,
+        expected_hash: str,
+    ) -> TransferResult:
+        """Stream chunks to disk under the original filename."""
         output_path = resolve_output_path(self.destination, name)
         writer = PartFileWriter(output_path)
         with writer:

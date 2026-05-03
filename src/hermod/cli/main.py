@@ -366,11 +366,17 @@ def receive(
             result = await session.run()
 
         if result.success:
-            msg = (
-                f"Saved to [cyan]{result.output_path}[/cyan] "
-                f"({result.bytes_transferred:,} bytes)"
-            )
-            print_success(msg)
+            if result.text_content is not None:
+                sys.stdout.write(result.text_content)
+                if not result.text_content.endswith("\n"):
+                    sys.stdout.write("\n")
+                sys.stdout.flush()
+            else:
+                msg = (
+                    f"Saved to [cyan]{result.output_path}[/cyan] "
+                    f"({result.bytes_transferred:,} bytes)"
+                )
+                print_success(msg)
             if result.sas and verify:
                 print_sas(result.sas)
         else:

@@ -129,9 +129,8 @@ class TestTextTransfer:
             assert sender_result.bytes_transferred == len(message.encode())
             assert receiver_result.bytes_transferred == len(message.encode())
 
-            out = receiver_result.output_path
-            assert out is not None and out.exists()
-            assert out.read_text(encoding="utf-8") == message
+            assert receiver_result.text_content == message
+            assert receiver_result.output_path is None
         finally:
             await _stop_server(srv_obj, srv, db)
 
@@ -154,9 +153,7 @@ class TestTextTransfer:
             assert sender_result.success, f"Sender failed: {sender_result.error}"
             assert receiver_result.success, f"Receiver failed: {receiver_result.error}"
 
-            out = receiver_result.output_path
-            assert out is not None
-            assert out.read_text(encoding="utf-8") == message
+            assert receiver_result.text_content == message
         finally:
             await _stop_server(srv_obj, srv, db)
 
@@ -326,9 +323,8 @@ class TestTrustAndTransfer:
             assert r_res.success, f"Text receiver failed: {r_res.error}"
             assert s_res.bytes_transferred == len(message.encode())
             assert r_res.bytes_transferred == len(message.encode())
-            out = r_res.output_path
-            assert out is not None and out.exists()
-            assert out.read_text(encoding="utf-8") == message
+            assert r_res.text_content == message
+            assert r_res.output_path is None
 
             # 4. File transfer: send and verify SHA-256 integrity.
             src = tmp_path / "payload.bin"

@@ -76,9 +76,10 @@ class SignalingDB:
         """Open the database and run DDL migrations."""
         if self._db is not None:
             return
-        self._db = await aiosqlite.connect(self._path)
-        await self._db.executescript(_DDL)
-        await self._db.commit()
+        db = await aiosqlite.connect(self._path)
+        self._db = db
+        await db.executescript(_DDL)
+        await db.commit()
         logger.debug("SignalingDB opened at %s", self._path)
 
     async def close(self) -> None:

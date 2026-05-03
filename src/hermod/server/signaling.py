@@ -51,7 +51,9 @@ logger = logging.getLogger(__name__)
 
 
 def _pack(msg: dict[str, Any]) -> bytes:
-    return msgpack.packb(msg, use_bin_type=True)
+    result = msgpack.packb(msg, use_bin_type=True)
+    assert result is not None
+    return result
 
 
 def _unpack(data: bytes) -> dict[str, Any]:

@@ -18,6 +18,7 @@ Clients MUST ignore unrecognised keys in the MessagePack header (§11).
 
 from __future__ import annotations
 
+import asyncio
 import struct
 from enum import StrEnum
 from typing import Any
@@ -72,6 +73,7 @@ def encode_frame(header: dict[str, Any], payload: bytes = b"") -> bytes:
         raise ValueError("Frame header must contain a 'type' key")
 
     hdr_bytes = msgpack.packb(header, use_bin_type=True)
+    assert hdr_bytes is not None
     prefix = struct.pack(
         _PREFIX_FMT,
         MAGIC,
@@ -125,7 +127,7 @@ def decode_frame(data: bytes) -> tuple[dict[str, Any], bytes]:
     return header, payload
 
 
-async def read_frame(reader: "asyncio.StreamReader") -> tuple[dict[str, Any], bytes]:  # noqa: F821
+async def read_frame(reader: asyncio.StreamReader) -> tuple[dict[str, Any], bytes]:
     """Read exactly one frame from *reader*.
 
     Performs two reads: one for the fixed-size prefix, then one for the
@@ -138,8 +140,6 @@ async def read_frame(reader: "asyncio.StreamReader") -> tuple[dict[str, Any], by
     ValueError
         On protocol violations.
     """
-    import asyncio  # imported here to avoid circular dependency at module level
-
     prefix_data = await reader.readexactly(_PREFIX_SIZE)
     magic, version, hdr_len, payload_len = struct.unpack_from(_PREFIX_FMT, prefix_data)
 
@@ -155,13 +155,11 @@ async def read_frame(reader: "asyncio.StreamReader") -> tuple[dict[str, Any], by
 
 
 async def write_frame(
-    writer: "asyncio.StreamWriter",  # noqa: F821
+    writer: asyncio.StreamWriter,
     header: dict[str, Any],
     payload: bytes = b"",
 ) -> None:
     """Encode and write a single frame to *writer*."""
-    import asyncio  # imported here to avoid circular dependency at module level
-
     data = encode_frame(header, payload)
     writer.write(data)
     await writer.drain()
