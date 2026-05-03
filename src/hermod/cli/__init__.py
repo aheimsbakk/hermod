@@ -1,5 +1,5 @@
 """Hermod CLI package."""
 
-from hermod.cli.main import app
+from hermod.cli.main import main
 
-__all__ = ["app"]
+__all__ = ["main"]
