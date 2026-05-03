@@ -140,6 +140,11 @@ older than `--ttl` seconds. Per-channel limits: `MAX_MESSAGES_PER_CHANNEL=8`,
 CLI Flags > Env Vars (`HERMOD_SERVER`, `HERMOD_PORT`, `HERMOD_HOST`, `HERMOD_DB_PATH`,
 `HERMOD_DEST_DIR`) > `~/.config/hermod/config.yaml` > Application Defaults.
 
+`config.yaml` is the **single source of truth** for all settings. The TLS certificate
+and private key are stored as PEM strings under the `tls_cert` and `tls_key` keys —
+no separate certificate files are written to disk. On first `hermod serve`, the cert
+is auto-generated and saved into config.
+
 ### File Integrity
 Sender pre-computes SHA-256 of the plaintext file and includes it in the META frame.
 Receiver writes to `{dest}.hermod_part` and calls `PartFileWriter.finalise(hash)`

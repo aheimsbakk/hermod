@@ -94,7 +94,8 @@ The signaling server acts strictly as an ephemeral, blind relay using SQLite.
 
 ## 10. Transport Layer Security (TLS) and Trust Model
 
-*   **Server-Side Auto-Generation**: `hermod serve` automatically generates a self-signed X.509 certificate if none exists.
+*   **Server-Side Auto-Generation**: `hermod serve` automatically generates a self-signed X.509 certificate on first run. The PEM certificate and private key are stored as strings directly inside `~/.config/hermod/config.yaml` — no separate certificate files are written to disk.
+*   **Single Config File**: `~/.config/hermod/config.yaml` is the sole persistent configuration store. It contains all settings including the TLS certificate (`tls_cert`) and private key (`tls_key`) as PEM strings.
 *   **Client-Side Trust Store**: Maps server URLs to SHA-256 public certificate fingerprints in `~/.hermod/trust_store.json`.
 *   **Certificate Pinning Enforcement**: The client rejects standard CA validation, explicitly verifying the SHA-256 fingerprint matches the pinned hash.
 
