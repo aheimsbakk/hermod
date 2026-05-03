@@ -2,7 +2,7 @@
 
 ## Current State
 
-All source modules and tests are implemented and passing (149/149, ~70% coverage).
+All source modules and tests are implemented and passing (150/150, ~70% coverage).
 The application is fully functional for its core transfer flows, including ICE-based
 NAT traversal with STUN candidate gathering and a three-layer hybrid key exchange
 (SPAKE2 + ephemeral X25519 + ML-KEM-768).

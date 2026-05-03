@@ -189,6 +189,7 @@ async def get_srflx_candidate(
                 loop.getaddrinfo(
                     stun_host,
                     stun_port,
+                    family=socket.AF_INET,
                     type=socket.SOCK_DGRAM,
                     proto=socket.IPPROTO_UDP,
                 ),

@@ -7,7 +7,9 @@ decoding functions directly.
 
 from __future__ import annotations
 
+import socket
 import struct
+from unittest.mock import patch
 
 import pytest
 
@@ -184,3 +186,42 @@ def test_parse_xor_prefers_over_mapped(tmp_path: pytest.fixture) -> None:  # typ
 
     result = parse_binding_response(header + attrs, txn_id)
     assert result == ("203.0.113.5", 9999)
+
+
+# ---------------------------------------------------------------------------
+# get_srflx_candidate — IPv6 regression
+# ---------------------------------------------------------------------------
+
+
+async def test_get_srflx_getaddrinfo_passes_af_inet() -> None:
+    """getaddrinfo must be called with family=AF_INET.
+
+    Regression: without the family constraint, dual-stack DNS responses
+    could put an IPv6 sockaddr (4-tuple) first. Passing it to an AF_INET
+    datagram transport raised ``TypeError: AF_INET address must be a pair
+    (host, port)``.
+    """
+    import asyncio
+
+    from hermod.network.stun import get_srflx_candidate
+
+    seen_families: list[int] = []
+
+    async def _capture_getaddrinfo(host: str, port: int, **kwargs: object) -> list:
+        family = kwargs.get("family", 0)
+        seen_families.append(family if isinstance(family, int) else 0)
+        return []  # no addresses → _query_one returns None cleanly
+
+    loop = asyncio.get_running_loop()
+    with patch.object(loop, "getaddrinfo", _capture_getaddrinfo):
+        result = await get_srflx_candidate(
+            local_port=0,
+            stun_servers=[("stun.example.com", 3478)],
+            timeout=1.0,
+        )
+
+    assert result is None
+    assert seen_families, "getaddrinfo was never called"
+    assert all(f == socket.AF_INET for f in seen_families), (
+        f"Expected AF_INET ({socket.AF_INET}) for all lookups; got {seen_families}"
+    )
