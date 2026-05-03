@@ -111,10 +111,18 @@ async def test_gather_candidates_srflx_not_duplicated_when_same_as_host(
     listener = PeerListener(host="127.0.0.1", port=0)
     ep = await listener.bind()
     try:
-        # Return same ip as loopback host candidate
-        with patch(
-            "hermod.network.stun.get_srflx_candidate",
-            new=AsyncMock(return_value=("127.0.0.1", ep.port)),
+        # Pin get_local_addresses to loopback only so the host candidate is
+        # 127.0.0.1; STUN is then mocked to return that same IP, verifying
+        # that the deduplication logic drops the srflx entry.
+        with (
+            patch(
+                "hermod.network.ice.get_local_addresses",
+                return_value=[("127.0.0.1", 0)],
+            ),
+            patch(
+                "hermod.network.stun.get_srflx_candidate",
+                new=AsyncMock(return_value=("127.0.0.1", ep.port)),
+            ),
         ):
             candidates = await gather_candidates(listener, stun_timeout=1.0)
 
@@ -217,3 +225,74 @@ async def test_probe_candidate_returns_none_on_refused() -> None:
     c = IceCandidate(ip="127.0.0.1", port=1, candidate_type="host")
     result = await _probe_candidate(c, timeout=1.0)
     assert result is None
+
+
+@pytest.mark.asyncio
+async def test_probe_candidate_respects_delay() -> None:
+    """A non-zero delay parameter must be honoured before attempting connect."""
+    import time
+
+    c = IceCandidate(ip="127.0.0.1", port=1, candidate_type="host")
+    start = time.monotonic()
+    result = await _probe_candidate(c, timeout=1.0, delay=0.15)
+    elapsed = time.monotonic() - start
+
+    assert result is None  # port 1 refused
+    assert elapsed >= 0.14, f"delay not respected: {elapsed:.3f}s"
+
+
+@pytest.mark.asyncio
+async def test_ice_connect_controlled_probe_delay_agrees_on_same_connection() -> None:
+    """Both peers must use the *same* TCP connection when controlled uses probe_delay.
+
+    Without probe_delay both outbound probes and both inbound accepts can
+    complete within the same event-loop iteration.  set-iteration is
+    non-deterministic so each side might pick a different TCP socket, causing
+    all subsequent communication to silently fail.
+
+    With probe_delay=0.1 on the controlled role the controlling side's probe
+    arrives at the controlled listener first.  The controlled peer's
+    accept_task fires before its own probes start, guaranteeing both sides
+    select the same connection.
+    """
+    # Controlling side (sender role)
+    ctrl_listener = PeerListener(host="127.0.0.1", port=0)
+    ctrl_ep = await ctrl_listener.bind()
+
+    # Controlled side (receiver role)
+    ctrd_listener = PeerListener(host="127.0.0.1", port=0)
+    ctrd_ep = await ctrd_listener.bind()
+
+    ctrl_candidate = IceCandidate(
+        ip="127.0.0.1", port=ctrl_ep.port, candidate_type="host"
+    )
+    ctrd_candidate = IceCandidate(
+        ip="127.0.0.1", port=ctrd_ep.port, candidate_type="host"
+    )
+
+    try:
+        # Controlling fires probes immediately; controlled delays by 100 ms.
+        ctrl_task = asyncio.create_task(
+            ice_connect(
+                ctrl_listener, [ctrd_candidate], probe_delay=0.0, total_timeout=5.0
+            )
+        )
+        ctrd_task = asyncio.create_task(
+            ice_connect(
+                ctrd_listener, [ctrl_candidate], probe_delay=0.1, total_timeout=5.0
+            )
+        )
+        ctrl_conn, ctrd_conn = await asyncio.gather(ctrl_task, ctrd_task)
+
+        # Both sides must be on the SAME TCP connection:
+        # - ctrl_conn: outbound probe → remote is ctrd's listener port
+        # - ctrd_conn: inbound accept → remote is ctrl's ephemeral port
+        assert ctrl_conn.remote_endpoint.port == ctrd_ep.port, (
+            "controlling side must have connected to controlled listener port"
+        )
+        assert ctrd_conn.remote_endpoint.port == ctrl_conn.local_endpoint.port, (
+            "controlled side must see controlling side's ephemeral port as remote"
+        )
+    finally:
+        await ctrl_listener.close()
+        await ctrd_listener.close()

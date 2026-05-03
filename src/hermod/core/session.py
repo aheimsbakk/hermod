@@ -238,13 +238,10 @@ class SenderSession:
         logger.debug("SPAKE2 complete")
 
         # Step 4: Set up P2P listener, gather ICE candidates, exchange with peer
-        from hermod.network.socket_utils import get_local_addresses
-
-        local_addrs = get_local_addresses()
-        listen_ip = local_addrs[0][0] if local_addrs else "0.0.0.0"
-
-        listener = PeerListener(host=listen_ip, port=0)
-        local_endpoint = await listener.bind()
+        # Bind to all interfaces so the peer can reach us regardless of which
+        # local IP it resolves; gather_candidates advertises the right IPs.
+        listener = PeerListener(host="0.0.0.0", port=0)
+        await listener.bind()
 
         my_candidates = await gather_candidates(
             listener, stun_timeout=self.stun_timeout
@@ -265,17 +262,17 @@ class SenderSession:
         recv_ep_msg = _unpack(recv_ep_plain)
         peer_candidates = [IceCandidate.from_dict(c) for c in recv_ep_msg["candidates"]]
 
-        # Step 5: ICE connectivity — race accept vs outbound probes
+        # Step 5: ICE connectivity — sender is the ICE controlling role.
+        # Fire probes immediately (probe_delay=0); the receiver waits 100 ms
+        # before probing so that our probe reaches its listener first, ensuring
+        # both sides pick the same TCP connection.
         logger.debug(
-            "ICE connect; my candidates=%d peer candidates=%d",
+            "ICE connect (controlling); my candidates=%d peer candidates=%d",
             len(my_candidates),
             len(peer_candidates),
         )
         try:
             p2p = await ice_connect(listener, peer_candidates)
-        except ConnectionError:
-            await listener.close()
-            raise
         finally:
             await listener.close()
 
@@ -540,12 +537,10 @@ class ReceiverSession:
         ]
         logger.debug("Sender ICE candidates: %s", sender_candidates)
 
-        # Bind our own listener and gather candidates
-        from hermod.network.socket_utils import get_local_addresses
-
-        local_addrs = get_local_addresses()
-        listen_ip = local_addrs[0][0] if local_addrs else "0.0.0.0"
-        listener = PeerListener(host=listen_ip, port=0)
+        # Bind our own listener and gather candidates.
+        # Bind to all interfaces so the sender can reach us regardless of which
+        # local IP it resolves; gather_candidates advertises the right IPs.
+        listener = PeerListener(host="0.0.0.0", port=0)
         await listener.bind()
 
         my_candidates = await gather_candidates(
@@ -559,17 +554,18 @@ class ReceiverSession:
             ws, {"type": "RELAY", "data": _pack({"endpoints": endpoints_enc})}
         )
 
-        # Step 5: ICE connectivity — race accept vs outbound probes
+        # Step 5: ICE connectivity — receiver is the ICE controlled role.
+        # Delay outbound probes by 100 ms so the sender's probe (fired
+        # immediately on its side) arrives at our listener first.  This
+        # guarantees both peers choose the same TCP connection even when both
+        # sides' probes would otherwise complete at the same instant.
         logger.debug(
-            "ICE connect; my candidates=%d sender candidates=%d",
+            "ICE connect (controlled); my candidates=%d sender candidates=%d",
             len(my_candidates),
             len(sender_candidates),
         )
         try:
-            p2p = await ice_connect(listener, sender_candidates)
-        except ConnectionError:
-            await listener.close()
-            raise
+            p2p = await ice_connect(listener, sender_candidates, probe_delay=0.1)
         finally:
             await listener.close()
 

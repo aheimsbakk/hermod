@@ -2,10 +2,27 @@
 
 ## Current State
 
-All source modules and tests are implemented and passing (200/200, ~71% coverage).
+All source modules and tests are implemented and passing (202/202, ~71% coverage).
 The application is fully functional for its core transfer flows, including ICE-based
 NAT traversal with STUN candidate gathering and a three-layer hybrid key exchange
 (SPAKE2 + ephemeral X25519 + ML-KEM-768).
+
+ICE split-connection fix is complete (v0.6.2):
+- **Root cause**: `socket_utils.get_local_addresses()` returned both the primary LAN IP
+  *and* loopback (`127.0.0.1`), causing the sender to fire two simultaneous probes to
+  the same `0.0.0.0` listener.  Both probes succeeded in the same asyncio event-loop
+  tick; `asyncio.wait(FIRST_COMPLETED)` returned both in `done` (a `set`); non-deterministic
+  set iteration made each side pick a *different* TCP connection.
+- **Fix 1** (`socket_utils.py`): loopback is now appended only when no other address is
+  found (offline / pure-container / CI environments).  This limits each peer to one
+  candidate per listener, eliminating simultaneous-success races.
+- **Fix 2** (`ice.py`): the `for t in done:` loop is replaced by `for t in all_tasks: if t
+  not in done: continue` — tasks are visited in insertion order (`accept_task` first, then
+  probes sorted by priority).  When multiple tasks complete in the same tick, this
+  deterministic ordering ensures both sides agree on the same TCP connection.
+- **Probe-delay strategy** (v0.6.1): sender fires probes immediately (controlling role);
+  receiver delays probes by 100 ms (`probe_delay=0.1` in `ice_connect`) so the sender's
+  probe reaches the receiver's listener first.
 
 Config consolidation is complete (v0.6.0):
 - `trusted_servers` (formerly `~/.hermod/trust_store.json`) now lives inside `~/.config/hermod/config.yaml`.
@@ -111,7 +128,18 @@ Legacy read fallback: `{"ip": "...", "port": N}` → single host candidate.
 ### ICE Module (`network/ice.py`)
 - `IceCandidate(ip, port, candidate_type)` — `priority=100` for host, `200` for srflx
 - `gather_candidates(listener, stun_timeout)` — host from `get_local_addresses()` + optional srflx
-- `ice_connect(listener, peer_candidates, probe_timeout, total_timeout)` — asyncio task race
+- `ice_connect(listener, peer_candidates, probe_timeout, total_timeout, probe_delay)` — asyncio task race
+  - `probe_delay` (default `0.0`): sleep before each outbound probe; set to `0.1` on the
+    ICE *controlled* role (receiver) so the sender's probe arrives first.
+  - Done-task iteration is in **`all_tasks` insertion order** (accept first, then probes by
+    priority) — not raw set order — to guarantee deterministic connection selection.
+
+### Candidate Gathering (`network/socket_utils.py`)
+- `get_local_addresses()` uses a UDP probe to `8.8.8.8` to find the default-route IP.
+- Loopback (`127.0.0.1`) is appended **only when no other address is found** (offline /
+  pure-container environments).  This prevents two candidates pointing to the same
+  `0.0.0.0` listener, which would cause two simultaneous successful probes and a
+  non-deterministic split-connection.
 
 ### Default Port and Listen Address
 Changed from `8765` → `8786`. The `host` and `port` fields on `HermodConfig` were replaced by a

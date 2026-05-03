@@ -70,8 +70,14 @@ def get_local_addresses() -> list[tuple[str, int]]:
     except OSError:
         pass
 
-    # Always include loopback as a candidate
-    if not any(ip == "127.0.0.1" for ip, _ in addrs):
+    # Include loopback only when no other address was found.
+    # Adding loopback alongside a real interface IP would advertise two
+    # candidates that both reach the same 0.0.0.0 listener; the peer would
+    # then fire two simultaneous probes, both succeed, and each side could
+    # non-deterministically pick a *different* TCP connection (split-connection
+    # bug).  Loopback as sole fallback is still useful for offline / pure
+    # container environments and in-process unit tests.
+    if not addrs:
         addrs.append(("127.0.0.1", 0))
 
     return addrs

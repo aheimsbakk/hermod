@@ -161,11 +161,22 @@ async def gather_candidates(
 async def _probe_candidate(
     candidate: IceCandidate,
     timeout: float,
+    *,
+    delay: float = 0.0,
 ) -> P2PConnection | None:
     """Try a single outbound TCP connection to *candidate*.
 
+    Parameters
+    ----------
+    delay:
+        Optional seconds to sleep before attempting the connection.  Use this
+        on the ICE *controlled* role to let the controlling side's probe arrive
+        first so both peers agree on the same TCP connection.
+
     Returns a :class:`P2PConnection` on success, or ``None`` on any error.
     """
+    if delay > 0.0:
+        await asyncio.sleep(delay)
     ep = candidate.to_endpoint()
     try:
         logger.debug("ICE probe → %s (%s)", ep, candidate.candidate_type)
@@ -193,6 +204,7 @@ async def ice_connect(
     *,
     probe_timeout: float = _PROBE_TIMEOUT,
     total_timeout: float = _ICE_TOTAL_TIMEOUT,
+    probe_delay: float = 0.0,
 ) -> P2PConnection:
     """Race inbound accept against outbound probes to *peer_candidates*.
 
@@ -209,6 +221,13 @@ async def ice_connect(
         Per-probe TCP connect timeout.
     total_timeout:
         Maximum total time before raising ``ConnectionError``.
+    probe_delay:
+        Seconds to wait before firing each outbound probe.  Set this to a
+        small positive value (e.g. ``0.1``) on the ICE *controlled* role so
+        the controlling peer's inbound probe arrives first.  Both sides then
+        agree on the same TCP connection, preventing the split-connection
+        failure that occurs when probes from both sides complete
+        simultaneously and each peer picks its own outbound socket.
 
     Returns
     -------
@@ -231,7 +250,8 @@ async def ice_connect(
     # Outbound probe tasks (one per peer candidate)
     probe_tasks: list[asyncio.Task[P2PConnection | None]] = [
         asyncio.create_task(
-            _probe_candidate(c, probe_timeout), name=f"ice-probe-{c.ip}:{c.port}"
+            _probe_candidate(c, probe_timeout, delay=probe_delay),
+            name=f"ice-probe-{c.ip}:{c.port}",
         )
         for c in sorted_candidates
     ]
@@ -257,7 +277,19 @@ async def ice_connect(
                 timeout=time_left,
                 return_when=asyncio.FIRST_COMPLETED,
             )
-            for t in done:
+            # Iterate in *insertion* order (accept_task first, then probes by
+            # priority) rather than over the raw ``done`` set whose iteration
+            # order is non-deterministic.  When multiple tasks finish in the
+            # same event-loop tick — e.g. two simultaneous probes on a host
+            # with multiple IPs — this guarantees both peers choose the same
+            # TCP connection: the receiver prefers its accept (the first
+            # inbound connection stored by _handler) and the sender prefers
+            # the probe to the highest-priority candidate (which is also the
+            # first probe task created, i.e. the one most likely to have
+            # arrived at the receiver's accept queue first).
+            for t in all_tasks:
+                if t not in done:
+                    continue
                 try:
                     val = t.result()
                 except Exception as exc:
