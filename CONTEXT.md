@@ -2,10 +2,17 @@
 
 ## Current State
 
-All source modules and tests are implemented and passing (179/179, ~71% coverage).
+All source modules and tests are implemented and passing (200/200, ~71% coverage).
 The application is fully functional for its core transfer flows, including ICE-based
 NAT traversal with STUN candidate gathering and a three-layer hybrid key exchange
 (SPAKE2 + ephemeral X25519 + ML-KEM-768).
+
+Config consolidation is complete (v0.6.0):
+- `trusted_servers` (formerly `~/.hermod/trust_store.json`) now lives inside `~/.config/hermod/config.yaml`.
+- `host` + `port` fields replaced by a single `listen: str` field (`host:port` / `[ipv6]:port`).
+- `parse_listen` / `format_listen` helpers in `core/config.py` handle IPv4 and IPv6.
+- `hermod serve` uses `--listen/-l`; `hermod trust` auto-saves the server URL as the default.
+- `HERMOD_LISTEN` env var added; `HERMOD_HOST` / `HERMOD_PORT` retained for backward compatibility.
 
 Appendix B security hardening is complete:
 - **§1**: HMAC-SHA256 MAC binding on PQ_INIT / PQ_RESPONSE frames (MitM prevention).
@@ -34,13 +41,13 @@ Appendix B security hardening is complete:
 | Server: Rate Limiting | `src/hermod/server/rate_limit.py` | ✅ Complete |
 | Server: TLS | `src/hermod/server/tls.py` | ✅ Complete |
 | Server: Signaling | `src/hermod/server/signaling.py` | ✅ Complete |
-| Core: Config | `src/hermod/core/config.py` | ✅ Complete (default port 8786) |
-| Core: Trust Store | `src/hermod/core/trust.py` | ✅ Complete |
+| Core: Config | `src/hermod/core/config.py` | ✅ Complete (`listen` field, `parse_listen`/`format_listen`, `trusted_servers`) |
+| Core: Trust Store | `src/hermod/core/trust.py` | ✅ Complete (persists to `config.yaml` via `trusted_servers`) |
 | Core: Streaming | `src/hermod/core/streaming.py` | ✅ Complete |
 | Core: Transfer Code | `src/hermod/core/transfer_code.py` | ✅ Complete |
 | Core: Session | `src/hermod/core/session.py` | ✅ Complete (ICE, stun_timeout param) |
 | CLI: UI | `src/hermod/cli/ui.py` | ✅ Complete |
-| CLI: Main | `src/hermod/cli/main.py` | ✅ Complete (send/receive aliases) |
+| CLI: Main | `src/hermod/cli/main.py` | ✅ Complete (`serve --listen`, `trust` auto-saves server URL, send/receive aliases) |
 
 ## Key Architectural Decisions
 
@@ -106,8 +113,17 @@ Legacy read fallback: `{"ip": "...", "port": N}` → single host candidate.
 - `gather_candidates(listener, stun_timeout)` — host from `get_local_addresses()` + optional srflx
 - `ice_connect(listener, peer_candidates, probe_timeout, total_timeout)` — asyncio task race
 
-### Default Port
-Changed from `8765` → `8786` in `core/config.py` (both `HermodConfig` dataclass and `load_config` defaults dict), `server/signaling.py` (`start()` and `run_server()` signatures), and `cli/main.py` (`serve` command default).
+### Default Port and Listen Address
+Changed from `8765` → `8786`. The `host` and `port` fields on `HermodConfig` were replaced by a
+single `listen: str` field (default `"0.0.0.0:8786"`). `HermodConfig.host` and `HermodConfig.port`
+are now computed `@property` values derived from `listen` via `parse_listen`.
+
+`parse_listen(s)` handles:
+- `"host:port"` → `(host, port)`
+- `"[ipv6host]:port"` → `(ipv6host, port)` (brackets stripped for use with `socket.connect`)
+- bare `"host"` or `"[ipv6]"` → uses `DEFAULT_PORT = 8786`
+
+`format_listen(host, port)` emits `"[host]:port"` for IPv6 addresses (RFC 3986), `"host:port"` otherwise.
 
 ### CLI Aliases
 `hermod send` → `hermod tx` (same function); `hermod receive` → `hermod rx` (same function).
@@ -190,13 +206,25 @@ parses literal blocks correctly). Two tests in `TestSaveConfig` enforce this:
 `test_yaml_no_consecutive_blank_lines` and `test_yaml_pem_round_trips`.
 
 ### Configuration Hierarchy
-CLI Flags > Env Vars (`HERMOD_SERVER`, `HERMOD_PORT`, `HERMOD_HOST`, `HERMOD_DB_PATH`,
-`HERMOD_DEST_DIR`) > `~/.config/hermod/config.yaml` > Application Defaults.
+CLI Flags > Env Vars (`HERMOD_SERVER`, `HERMOD_LISTEN`, `HERMOD_DB_PATH`,
+`HERMOD_DEST_DIR`; deprecated: `HERMOD_PORT`, `HERMOD_HOST`) > `~/.config/hermod/config.yaml` > Application Defaults.
 
-`config.yaml` is the **single source of truth** for all settings. The TLS certificate
-and private key are stored as PEM strings under the `tls_cert` and `tls_key` keys —
-no separate certificate files are written to disk. On first `hermod serve`, the cert
-is auto-generated and saved into config.
+`config.yaml` is the **single source of truth** for all settings. It stores:
+- Runtime settings (`server`, `listen`, `db_path`, `dest_dir`, `ttl`, `verbosity`)
+- TLS certificate and private key (`tls_cert`, `tls_key` — PEM strings as `|` block scalars)
+- Pinned server certificates (`trusted_servers` — replaces the former `~/.hermod/trust_store.json`)
+
+`TrustStore` reads and writes the `trusted_servers` mapping directly via `load_config`/`save_config`.
+`hermod trust <host:port>` fetches the server certificate, pins it, and also saves the server URL
+as the `server:` default so subsequent `tx`/`rx` calls work without `--server`.
+
+The file is written with `chmod 0o600` (owner read/write only) because it contains TLS private key material.
+
+### Trust Store Migration
+The `~/.hermod/trust_store.json` file is no longer created or read. Any existing pinned
+certificates must be re-pinned with `hermod trust <host:port>`.
+
+`TrustStore.__init__` accepts `config_path: Path | None = None` (replaces the former `path` argument).
 
 ### File Integrity
 Sender pre-computes SHA-256 of the plaintext file and includes it in the META frame.

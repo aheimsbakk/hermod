@@ -2,7 +2,7 @@
 Client-side TLS certificate trust store.
 
 Maps server URLs to their SHA-256 public certificate fingerprints and PEM
-bytes in ``~/.hermod/trust_store.json`` (§10).
+bytes in ``~/.config/hermod/config.yaml`` under the ``trusted_servers`` key.
 
 The client refuses standard CA validation and instead verifies that the
 server's certificate fingerprint matches the pinned value.
@@ -10,16 +10,13 @@ server's certificate fingerprint matches the pinned value.
 
 from __future__ import annotations
 
-import json
+import dataclasses
 import logging
 import ssl
 import tempfile
 from pathlib import Path
-from typing import Any
 
 logger = logging.getLogger(__name__)
-
-_DEFAULT_STORE_PATH = Path.home() / ".hermod" / "trust_store.json"
 
 # Internal store format: {url: {"fingerprint": str, "cert_pem": str}}
 _StoreEntry = dict[str, str]
@@ -28,14 +25,18 @@ _StoreEntry = dict[str, str]
 class TrustStore:
     """Persists server URL → SHA-256 fingerprint + PEM certificate mappings.
 
+    Data lives under ``trusted_servers`` in the Hermod config file
+    (``~/.config/hermod/config.yaml``), replacing the former
+    ``~/.hermod/trust_store.json``.
+
     Parameters
     ----------
-    path:
-        Path to the JSON store file.
+    config_path:
+        Explicit path to ``config.yaml``.  ``None`` uses the platform default.
     """
 
-    def __init__(self, path: Path = _DEFAULT_STORE_PATH) -> None:
-        self._path = path
+    def __init__(self, config_path: Path | None = None) -> None:
+        self._config_path = config_path
         self._store: dict[str, _StoreEntry] = {}
         self._load()
 
@@ -103,24 +104,23 @@ class TrustStore:
     # ------------------------------------------------------------------
 
     def _load(self) -> None:
-        if self._path.exists():
-            try:
-                raw: Any = json.loads(self._path.read_text(encoding="utf-8"))
-                if isinstance(raw, dict):
-                    self._store = {
-                        str(k): {sk: str(sv) for sk, sv in v.items()}
-                        for k, v in raw.items()
-                        if isinstance(v, dict)
-                    }
-            except (json.JSONDecodeError, OSError) as exc:
-                logger.warning(
-                    "Failed to load trust store from %s: %s", self._path, exc
-                )
+        from hermod.core.config import load_config
+
+        cfg = load_config(config_path=self._config_path)
+        raw = cfg.trusted_servers
+        if isinstance(raw, dict):
+            self._store = {
+                str(k): {sk: str(sv) for sk, sv in v.items()}
+                for k, v in raw.items()
+                if isinstance(v, dict)
+            }
 
     def _save(self) -> None:
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        self._path.write_text(json.dumps(self._store, indent=2), encoding="utf-8")
-        self._path.chmod(0o600)
+        from hermod.core.config import load_config, save_config
+
+        cfg = load_config(config_path=self._config_path)
+        updated = dataclasses.replace(cfg, trusted_servers=dict(self._store))
+        save_config(updated, path=self._config_path)
 
 
 # ------------------------------------------------------------------

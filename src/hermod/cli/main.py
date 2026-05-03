@@ -37,7 +37,7 @@ from hermod.cli.ui import (
     print_transfer_code,
     print_warning,
 )
-from hermod.core.config import load_config
+from hermod.core.config import format_listen, load_config, parse_listen
 from hermod.core.session import ReceiverSession, SenderSession
 from hermod.core.transfer_code import parse_code
 from hermod.core.trust import TrustStore
@@ -135,10 +135,10 @@ def _require_ssl_context(server_url: str) -> ssl.SSLContext:
 
 @app.command()
 def serve(
-    port: Annotated[int, typer.Option("--port", "-p", help="Bind port.")] = 8786,
-    host: Annotated[
-        str, typer.Option("--host", "-H", help="Bind interface.")
-    ] = "0.0.0.0",
+    listen: Annotated[
+        str,
+        typer.Option("--listen", "-l", help="Bind address (host:port or [ipv6]:port)."),
+    ] = "",
     db: Annotated[
         str,
         typer.Option("--db", "-d", help="SQLite database path."),
@@ -153,7 +153,7 @@ def serve(
     from hermod.server.signaling import run_server
     from hermod.server.tls import get_server_ssl_context
 
-    cfg = load_config(overrides={"port": port, "host": host, "ttl": ttl})
+    cfg = load_config(overrides={"listen": listen or None, "ttl": ttl})
     db_path = db or cfg.db_path
 
     # Generate TLS certificate on first run and persist it to config.yaml.
@@ -171,7 +171,7 @@ def serve(
 
     ssl_context = get_server_ssl_context(cfg.tls_cert, cfg.tls_key)
     print_info("TLS enabled")
-    print_info(f"Starting signaling server on {host}:{port}")
+    print_info(f"Starting signaling server on {cfg.host}:{cfg.port}")
 
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
@@ -182,8 +182,8 @@ def serve(
         # and raise RuntimeError, leaving the sweep task pending.
         task: asyncio.Task[None] = asyncio.create_task(
             run_server(
-                host=host,
-                port=port,
+                host=cfg.host,
+                port=cfg.port,
                 db_path=db_path,
                 ttl=ttl,
                 ssl_context=ssl_context,
@@ -437,18 +437,15 @@ def trust(
     from cryptography import x509
     from cryptography.hazmat.primitives import serialization
 
-    if ":" in target:
-        host, _, port_str = target.rpartition(":")
-        try:
-            port = int(port_str)
-        except ValueError:
-            print_error(f"Invalid port in target: {port_str!r}")
-            raise typer.Exit(code=1)
-    else:
-        host = target
-        port = load_config().port
+    from hermod.core.config import save_config
 
-    url = f"wss://{host}:{port}"
+    try:
+        host, port = parse_listen(target)
+    except ValueError as exc:
+        print_error(str(exc))
+        raise typer.Exit(code=1)
+
+    url = f"wss://{format_listen(host, port)}"
     print_info(f"Fetching certificate from {host}:{port}...")
 
     try:
@@ -471,6 +468,13 @@ def trust(
 
         store = TrustStore()
         store.add(url, fingerprint, cert_pem)
+
+        # Also persist this server as the default so tx/rx work without --server.
+        from dataclasses import replace as _replace
+
+        _cfg = load_config()
+        if _cfg.server != url:
+            save_config(_replace(_cfg, server=url))
 
         print_success(f"Certificate pinned for {url}")
         _console.print(f"  SHA-256: [dim]{fingerprint}[/dim]")

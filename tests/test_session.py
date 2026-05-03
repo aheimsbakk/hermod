@@ -300,7 +300,7 @@ class TestTrustAndTransfer:
             cert_obj = x509.load_der_x509_certificate(der)
             cert_pem_bytes = cert_obj.public_bytes(serialization.Encoding.PEM)
 
-            store = TrustStore(path=tmp_path / "trust_store.json")
+            store = TrustStore(config_path=tmp_path / "config.yaml")
             store.add(url, fingerprint, cert_pem_bytes)
 
             pinned_fp = store.get(url)

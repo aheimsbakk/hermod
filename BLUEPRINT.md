@@ -17,7 +17,7 @@ The CLI supports overriding the default signaling server to allow user-defined i
 
 ```bash
 # Start the signaling and NAT helper service on port 443 (requires elevated privileges)
-hermod serve --port 443 --db /var/lib/hermod/signaling.db --ttl 3600
+hermod serve --listen 0.0.0.0:443 --db /var/lib/hermod/signaling.db --ttl 3600
 
 # Fetch and pin the public certificate of a specific server
 hermod trust my-relay.local:8443
@@ -100,7 +100,7 @@ The signaling server acts strictly as an ephemeral, blind relay using SQLite.
 
 *   **Server-Side Auto-Generation**: `hermod serve` automatically generates a self-signed X.509 certificate on first run. The PEM certificate and private key are stored as strings directly inside `~/.config/hermod/config.yaml` — no separate certificate files are written to disk.
 *   **Single Config File**: `~/.config/hermod/config.yaml` is the sole persistent configuration store. It contains all settings including the TLS certificate (`tls_cert`) and private key (`tls_key`) as PEM strings.
-*   **Client-Side Trust Store**: Maps server URLs to SHA-256 public certificate fingerprints in `~/.hermod/trust_store.json`.
+*   **Client-Side Trust Store**: Maps server URLs to SHA-256 public certificate fingerprints and full PEM certificates in the `trusted_servers` section of `~/.config/hermod/config.yaml`.  The former `~/.hermod/trust_store.json` file is no longer used.
 *   **Certificate Pinning Enforcement**: The client rejects standard CA validation, explicitly verifying the SHA-256 fingerprint matches the pinned hash.
 
 ## 11. P2P Wire Protocol and Extensibility
@@ -189,8 +189,7 @@ The `__init__.py` exposes high-level, asynchronous classes (e.g., `P2PClient`, `
 **Command: `serve`**
 | Parameter / Flag | Short | Default | Description |
 | :--- | :--- | :--- | :--- |
-| `--port` | `-p` | `8786` | Server bind port. |
-| `--host` | `-H` | `0.0.0.0` | Bind interface. |
+| `--listen` | `-l` | `0.0.0.0:8786` | Bind address (`host:port` or `[ipv6]:port`). |
 | `--db` | `-d` | `~/.hermod/signaling.db` | SQLite database path. |
 | `--ttl` | `-T` | `3600` | TTL in seconds for channels. |
 
@@ -218,13 +217,14 @@ The `__init__.py` exposes high-level, asynchronous classes (e.g., `P2PClient`, `
 
 ## 23. Environment Variables
 
-| Environment Variable | Maps to Flag |
-| :--- | :--- |
-| `HERMOD_SERVER` | `--server` |
-| `HERMOD_PORT` | `--port` |
-| `HERMOD_HOST` | `--host` |
-| `HERMOD_DB_PATH` | `--db` |
-| `HERMOD_DEST_DIR`| `--destination` |
+| Environment Variable | Maps to Flag | Notes |
+| :--- | :--- | :--- |
+| `HERMOD_SERVER` | `--server` | |
+| `HERMOD_LISTEN` | `--listen` | New; takes `host:port` or `[ipv6]:port` |
+| `HERMOD_PORT` | `--listen` (port part) | Deprecated; use `HERMOD_LISTEN` |
+| `HERMOD_HOST` | `--listen` (host part) | Deprecated; use `HERMOD_LISTEN` |
+| `HERMOD_DB_PATH` | `--db` | |
+| `HERMOD_DEST_DIR`| `--destination` | |
 
 ## 24. Persistent Configuration Management
 
