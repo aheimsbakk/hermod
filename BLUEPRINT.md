@@ -87,7 +87,7 @@ The signaling server acts strictly as an ephemeral, blind relay using SQLite.
 *   **Language**: Python 3.12+
 *   **Package Manager**: `uv` (Astral).
 *   **Testing**: `pytest` and `pytest-cov` (mandating strict test coverage).
-*   **CLI Framework**: `Typer`.
+*   **CLI Framework**: Python stdlib `argparse`. Entry point: `hermod.cli.main:main`.
 *   **Cryptographic Dependencies**: 
     *   `cryptography`: Classical DH, HKDF, HMAC, X.509.
     *   `pynacl`: XChaCha20-Poly1305 AEAD and `crypto_secretstream` (libsodium bindings).

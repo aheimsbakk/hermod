@@ -107,7 +107,7 @@ Appendix B security hardening is complete:
 | Core: Transfer Code | `src/hermod/core/transfer_code.py` | ✅ Complete |
 | Core: Session | `src/hermod/core/session.py` | ✅ Complete (ICE, stun_timeout, p2p_port params; `raw_bytes` send path; `output_sink` receive path) |
 | CLI: UI | `src/hermod/cli/ui.py` | ✅ Complete |
-| CLI: Main | `src/hermod/cli/main.py` | ✅ Complete (auto-detect send INPUT arg; stdout-streaming receive; `output_sink` wired to `ReceiverSession`) |
+| CLI: Main | `src/hermod/cli/main.py` | ✅ Complete (argparse; auto-detect send INPUT arg; stdout-streaming receive; `output_sink` wired to `ReceiverSession`) |
 
 ## Key Architectural Decisions
 
@@ -205,6 +205,13 @@ Aliases are registered via `app.command(name="tx")(transmit)` / `app.command(nam
 `_ALIAS_MAP = {"tx": "send", "rx": "receive"}` drives the suppression logic.
 `ctx.default_map` entries exist for both canonical names AND their aliases so that
 `hermod send --help`, `hermod tx --help`, etc. all show the effective configured defaults.
+
+### CLI Framework: stdlib argparse (replaces Typer + Click)
+`typer` and `click` removed from `pyproject.toml`. `src/hermod/cli/main.py` uses
+`argparse.ArgumentParser` with `add_subparsers`. Aliases (`tx`, `rx`) are registered
+via the `aliases=` parameter on `add_parser`. Entry point changed from `app` to `main`.
+`typer.Exit` → `sys.exit(N)`. `ctx.default_map` replaced by loading config inside
+`_build_parser()` and baking effective defaults directly into `default=` on each argument.
 
 ### websockets v16 API
 `from websockets.asyncio.server import serve` (not `websockets.server`).
