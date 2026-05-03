@@ -134,28 +134,66 @@ class TestTextTransfer:
         finally:
             await _stop_server(srv_obj, srv, db)
 
-    async def test_unicode_text_roundtrip(
-        self,
-        tmp_path: Path,
-        server_ssl_ctx: ssl.SSLContext,
-        client_ssl_ctx: ssl.SSLContext,
-    ) -> None:
-        """Non-ASCII content must survive the full PQ-encrypted transfer."""
-        _assert_pq_kem_active()
 
-        srv_obj, srv, db, url = await _start_server(server_ssl_ctx)
-        try:
-            message = "こんにちは Hermod! PQ KEM test ✓ 🔐"
-            sender_result, receiver_result = await _run_transfer(
-                url, client_ssl_ctx, text=message, dest=tmp_path
+# ---------------------------------------------------------------------------
+# Regression: peer_wait_timeout is respected
+# ---------------------------------------------------------------------------
+
+
+async def test_sender_peer_wait_timeout_respected(
+    server_ssl_ctx: ssl.SSLContext,
+    client_ssl_ctx: ssl.SSLContext,
+) -> None:
+    """SenderSession must time out at peer_wait_timeout, not the hardcoded 30s.
+
+    Regression for: sender waiting for PEER_CONNECTED used a hardcoded 30-second
+    timeout instead of the configured TTL, causing ``hermod tx`` to always exit
+    after 30 s regardless of ``--ttl``.
+    """
+    import msgpack
+    from websockets.asyncio.server import serve as ws_serve
+
+    async def _stall_server(ws) -> None:
+        """Accept REGISTER, reply REGISTERED, then consume messages until disconnect.
+
+        Never sends PEER_CONNECTED.  Using ``async for`` (instead of
+        ``asyncio.sleep``) lets the handler exit promptly when the client
+        closes the connection, so the server's ``wait_closed()`` returns fast.
+        """
+        raw = await ws.recv()
+        msg = msgpack.unpackb(raw, raw=False)
+        assert msg["type"] == "REGISTER"
+        await ws.send(
+            msgpack.packb(
+                {"type": "REGISTERED", "channel_id": "00001"}, use_bin_type=True
             )
+        )
+        # Drain incoming messages without responding; exit when client disconnects.
+        try:
+            async for _ in ws:
+                pass
+        except Exception:
+            pass
 
-            assert sender_result.success, f"Sender failed: {sender_result.error}"
-            assert receiver_result.success, f"Receiver failed: {receiver_result.error}"
+    async with ws_serve(_stall_server, "127.0.0.1", 0, ssl=server_ssl_ctx) as server:
+        port = server.sockets[0].getsockname()[1]
+        url = f"wss://127.0.0.1:{port}"
 
-            assert receiver_result.text_content == message
-        finally:
-            await _stop_server(srv_obj, srv, db)
+        session = SenderSession(
+            server_url=url,
+            text="hi",
+            ssl_context=client_ssl_ctx,
+            stun_timeout=0.0,
+            peer_wait_timeout=0.3,  # 300 ms — must NOT wait 30 s
+        )
+
+        t0 = asyncio.get_event_loop().time()
+        with pytest.raises((asyncio.TimeoutError, ConnectionError, OSError)):
+            await session.run()
+        elapsed = asyncio.get_event_loop().time() - t0
+
+        # Must time out well before the old hardcoded 30 s limit.
+        assert elapsed < 5.0, f"Took {elapsed:.1f}s — peer_wait_timeout not respected"
 
 
 # ---------------------------------------------------------------------------

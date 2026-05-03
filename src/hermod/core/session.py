@@ -79,8 +79,21 @@ async def _ws_send(ws: Any, msg: dict[str, Any]) -> None:
     await ws.send(_pack(msg))
 
 
-async def _ws_recv(ws: Any, expected_type: str | None = None) -> dict[str, Any]:
+async def _ws_recv(
+    ws: Any, expected_type: str | None = None, timeout: float = 30.0
+) -> dict[str, Any]:
     """Receive and unpack one WebSocket message.
+
+    Parameters
+    ----------
+    ws:
+        Open WebSocket connection.
+    expected_type:
+        If given, raise ``ValueError`` when the received type does not match.
+    timeout:
+        Maximum seconds to wait for the next message.  Defaults to 30 s for
+        protocol exchanges; callers that wait for an event driven by a human
+        (e.g. ``PEER_CONNECTED``) should pass the configured TTL instead.
 
     Raises
     ------
@@ -88,8 +101,10 @@ async def _ws_recv(ws: Any, expected_type: str | None = None) -> dict[str, Any]:
         If the message type is ``ERROR``.
     ValueError
         If *expected_type* is given and does not match.
+    asyncio.TimeoutError
+        If no message arrives within *timeout* seconds.
     """
-    raw = await asyncio.wait_for(ws.recv(), timeout=30.0)
+    raw = await asyncio.wait_for(ws.recv(), timeout=timeout)
     if isinstance(raw, str):
         raw = raw.encode()
     msg = _unpack(raw)
@@ -161,6 +176,7 @@ class SenderSession:
         verify_sas: bool = False,
         progress_callback: Any = None,
         stun_timeout: float = 2.0,
+        peer_wait_timeout: float = 3600.0,
     ) -> None:
         if file_path is None and text is None:
             raise ValueError("Either file_path or text must be provided")
@@ -174,6 +190,7 @@ class SenderSession:
         self.verify_sas = verify_sas
         self.progress_callback = progress_callback
         self.stun_timeout = stun_timeout
+        self.peer_wait_timeout = peer_wait_timeout
         self.code_callback: Callable[[str], None] | None = None
         self._transfer_code = ""
 
@@ -207,8 +224,10 @@ class SenderSession:
         msg_a = pake.start()
         await _ws_send(ws, {"type": "RELAY", "data": _pack({"pake": msg_a})})
 
-        # Wait for peer to join; server sends PEER_CONNECTED
-        await _ws_recv(ws, "PEER_CONNECTED")
+        # Wait for peer to join; server sends PEER_CONNECTED.
+        # Use peer_wait_timeout here — this is the only wait driven by a human
+        # (the receiver starting hermod rx), which may take up to the TTL.
+        await _ws_recv(ws, "PEER_CONNECTED", timeout=self.peer_wait_timeout)
         logger.debug("Peer connected")
 
         # Receive PAKE_B

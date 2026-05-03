@@ -277,6 +277,7 @@ def transmit(
         ssl_context=ssl_context,
         verify_sas=verify,
         progress_callback=_on_progress,
+        peer_wait_timeout=float(cfg.ttl),
     )
 
     # Display the transfer code as soon as the channel is registered,
