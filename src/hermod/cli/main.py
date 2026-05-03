@@ -161,15 +161,11 @@ def serve(
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
 
-    def _shutdown(sig_name: str) -> None:
-        print_info(f"Received {sig_name}; shutting down...")
-        loop.stop()
-
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        loop.add_signal_handler(sig, _shutdown, sig.name)
-
-    try:
-        loop.run_until_complete(
+    async def _main() -> None:
+        # Wrap run_server in a Task so the signal handler can cancel it cleanly.
+        # Calling loop.stop() instead would abort run_until_complete mid-flight
+        # and raise RuntimeError, leaving the sweep task pending.
+        task: asyncio.Task[None] = asyncio.create_task(
             run_server(
                 host=host,
                 port=port,
@@ -178,6 +174,21 @@ def serve(
                 ssl_context=ssl_context,
             )
         )
+
+        def _shutdown(sig_name: str) -> None:
+            print_info(f"Received {sig_name}; shutting down...")
+            task.cancel()
+
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            loop.add_signal_handler(sig, _shutdown, sig.name)
+
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass  # clean shutdown — run_server's finally blocks already ran
+
+    try:
+        loop.run_until_complete(_main())
     except (KeyboardInterrupt, SystemExit):
         pass
     finally:
