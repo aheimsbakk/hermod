@@ -1,10 +1,11 @@
 [project]
 name = "hermod-p2p"
-version = "0.2.0"
+version = "0.3.0"
 description = "Secure peer-to-peer file and text transfer with hybrid post-quantum cryptography"
 requires-python = ">=3.12"
 dependencies = [
     "cryptography>=43.0.0",
+    "kyber-py>=1.2.0",
     "spake2>=0.9",
     "msgpack>=1.0.8",
     "typer>=0.12.0",

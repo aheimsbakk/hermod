@@ -1,11 +1,15 @@
 """
 Key Encapsulation Mechanism (KEM) abstraction.
 
-Primary implementation uses ML-KEM-768 (NIST FIPS 203) via ``liboqs-python``.
-When the native liboqs shared library is unavailable, a structural X25519
-fallback is used automatically. The fallback is **NOT post-quantum secure**
-and logs a clear warning; it exists solely to allow the test suite to run
-in environments where the C library cannot be compiled.
+Primary implementation uses ML-KEM-768 (NIST FIPS 203).  Two backends are
+tried in order:
+
+1. **liboqs-python** (``oqs`` package) — preferred when the native liboqs
+   shared library is present.
+2. **kyber-py** (``kyber_py`` package) — pure-Python FIPS 203 ML-KEM-768;
+   no C compilation required; slower but always installable via uv/pip.
+3. **X25519 fallback** — used only when neither PQ library is available;
+   **NOT post-quantum secure**; logs a clear warning.
 """
 
 from __future__ import annotations
@@ -17,23 +21,36 @@ from typing import Protocol, runtime_checkable
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Attempt to load liboqs at module import time
+# Backend detection (module import time)
 # ---------------------------------------------------------------------------
+
+# Tier 1 — liboqs (native C library)
 try:
     import oqs as _oqs  # type: ignore[import-untyped]
 
-    # Probe that the shared library loaded and ML-KEM-768 is available.
     _probe = _oqs.KeyEncapsulation("ML-KEM-768")
     _probe.free()
     del _probe
     _HAS_OQS: bool = True
 except Exception:  # pragma: no cover – only triggered when liboqs absent
     _HAS_OQS = False
+
+# Tier 2 — kyber-py (pure Python, always installable)
+try:
+    from kyber_py.ml_kem import ML_KEM_768 as _ML_KEM_768  # type: ignore[import-untyped]
+
+    _HAS_KYBER_PY: bool = True
+except Exception:  # pragma: no cover
+    _HAS_KYBER_PY = False
+
+if not _HAS_OQS and not _HAS_KYBER_PY:  # pragma: no cover
     logger.warning(
-        "liboqs shared library not found. Falling back to X25519 KEM "
-        "(NOT post-quantum secure). Install liboqs-python with a bundled "
-        "liboqs build to enable ML-KEM-768."
+        "No post-quantum KEM library found (liboqs-python or kyber-py). "
+        "Falling back to X25519 (NOT post-quantum secure). "
+        "Run: uv add kyber-py"
     )
+elif not _HAS_OQS and _HAS_KYBER_PY:
+    logger.debug("liboqs unavailable; using kyber-py for ML-KEM-768.")
 
 
 # ---------------------------------------------------------------------------
@@ -59,7 +76,7 @@ class KEMEngine(Protocol):
 
 
 # ---------------------------------------------------------------------------
-# ML-KEM-768 implementation (liboqs)
+# ML-KEM-768 — Tier 1: liboqs
 # ---------------------------------------------------------------------------
 
 
@@ -107,6 +124,58 @@ class MLKEM768:
                 self._kem.free()
             except Exception:  # noqa: BLE001
                 pass
+
+
+# ---------------------------------------------------------------------------
+# ML-KEM-768 — Tier 2: kyber-py (pure Python)
+# ---------------------------------------------------------------------------
+
+
+class MLKEM768KyberPy:
+    """ML-KEM-768 KEM backed by the pure-Python ``kyber-py`` package.
+
+    Implements the same NIST FIPS 203 spec as liboqs without requiring a
+    native C library.  Key/ciphertext sizes are identical to liboqs:
+
+    * Encapsulation key (public key): 1184 bytes
+    * Ciphertext: 1088 bytes
+    * Shared secret: 32 bytes
+
+    Raises
+    ------
+    RuntimeError
+        If ``kyber-py`` is not installed.
+    """
+
+    def __init__(self) -> None:
+        if not _HAS_KYBER_PY:
+            raise RuntimeError("kyber-py is not installed. Run: uv add kyber-py")
+
+    def generate_keypair(self) -> bytes:
+        """Generate keypair; return encapsulation key (public key) bytes."""
+        from kyber_py.ml_kem import ML_KEM_768  # type: ignore[import-untyped]
+
+        ek, self._dk = ML_KEM_768.keygen()
+        self._ek = ek
+        return ek
+
+    def encapsulate(self, public_key: bytes) -> tuple[bytes, bytes]:
+        """Return ``(ciphertext, shared_secret)`` for *public_key*.
+
+        ``kyber-py`` returns ``(shared_secret, ciphertext)`` from
+        ``encaps()``; this method reorders to match the ``KEMEngine``
+        protocol ``(ciphertext, shared_secret)``.
+        """
+        from kyber_py.ml_kem import ML_KEM_768  # type: ignore[import-untyped]
+
+        shared_secret, ciphertext = ML_KEM_768.encaps(public_key)
+        return ciphertext, shared_secret
+
+    def decapsulate(self, ciphertext: bytes) -> bytes:
+        """Decapsulate and return the shared secret."""
+        from kyber_py.ml_kem import ML_KEM_768  # type: ignore[import-untyped]
+
+        return ML_KEM_768.decaps(self._dk, ciphertext)
 
 
 # ---------------------------------------------------------------------------
@@ -172,14 +241,16 @@ class X25519KEMFallback:
 # ---------------------------------------------------------------------------
 
 
-def get_kem() -> MLKEM768 | X25519KEMFallback:
+def get_kem() -> MLKEM768 | MLKEM768KyberPy | X25519KEMFallback:
     """Return the best available KEM implementation.
 
-    Prefers ML-KEM-768; falls back to X25519 with a logged warning.
+    Priority: liboqs → kyber-py → X25519 (non-PQ fallback).
     """
     if _HAS_OQS:
         return MLKEM768()
-    return X25519KEMFallback()
+    if _HAS_KYBER_PY:
+        return MLKEM768KyberPy()
+    return X25519KEMFallback()  # pragma: no cover
 
 
 def generate_kem_salt() -> bytes:

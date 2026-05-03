@@ -9,8 +9,8 @@ transfer flow defined in the blueprint (§6):
 3. SPAKE2 PAKE exchange via signaling relay
 4. Encrypt and exchange P2P endpoint candidates
 5. Establish direct P2P TCP connection
-6. ML-KEM key encapsulation over P2P link
-7. HKDF-SHA256 session key derivation
+6. ML-KEM + ephemeral X25519 key exchange over P2P link
+7. HKDF-SHA256 session key derivation (k_classical ‖ k_ecdh ‖ k_pq)
 8. Encrypted payload transfer over P2P link
 9. Hash verification and teardown
 """
@@ -36,6 +36,7 @@ from hermod.core.streaming import (
 )
 from hermod.core.transfer_code import build_code, generate_words, parse_code
 from hermod.crypto.aead import AEADCipher
+from hermod.crypto.ecdh import EphemeralX25519
 from hermod.crypto.kdf import derive_sas, derive_session_key
 from hermod.crypto.kem import generate_kem_salt, get_kem
 from hermod.crypto.pake import SPAKE2Adapter
@@ -226,20 +227,7 @@ class SenderSession:
         ep_data = _unpack(relay_ep["data"])
         recv_ep_plain = aead_ep.decrypt(ep_data["endpoints"])
         recv_ep_msg = _unpack(recv_ep_plain)
-
-        if "candidates" in recv_ep_msg:
-            peer_candidates = [
-                IceCandidate.from_dict(c) for c in recv_ep_msg["candidates"]
-            ]
-        else:
-            # Legacy single-endpoint fallback
-            peer_candidates = [
-                IceCandidate(
-                    ip=str(recv_ep_msg.get("ip", "127.0.0.1")),
-                    port=int(recv_ep_msg.get("port", 0)),
-                    candidate_type="host",
-                )
-            ]
+        peer_candidates = [IceCandidate.from_dict(c) for c in recv_ep_msg["candidates"]]
 
         # Step 5: ICE connectivity — race accept vs outbound probes
         logger.debug(
@@ -270,24 +258,35 @@ class SenderSession:
     ) -> TransferResult:
         """Execute post-connection crypto and transfer."""
         try:
-            # Step 6: ML-KEM – sender generates keypair
+            # Step 6a: ML-KEM – sender generates keypair + ephemeral X25519 keypair
             kem = get_kem()
             pk_kem = kem.generate_keypair()
             salt = generate_kem_salt()
+            dh = EphemeralX25519()
+            pk_ecdh = dh.public_key_bytes()
 
             await write_frame(
                 p2p.writer,
-                {"type": FrameType.PQ_INIT, "pk": pk_kem, "salt": salt},
+                {
+                    "type": FrameType.PQ_INIT,
+                    "pk": pk_kem,
+                    "salt": salt,
+                    "pk_ecdh": pk_ecdh,
+                },
             )
 
             hdr, _ = await read_frame(p2p.reader)
             if hdr.get("type") != FrameType.PQ_RESPONSE:
                 raise ValueError(f"Expected PQ_RESPONSE, got {hdr.get('type')!r}")
             ciphertext: bytes = hdr["ct"]
-            k_pq = kem.decapsulate(ciphertext)
+            peer_pk_ecdh: bytes = hdr["pk_ecdh"]
 
-            # Step 7: Derive session key
-            session_key = derive_session_key(k_classical, k_pq, salt)
+            # Step 6b: Complete both key exchanges
+            k_pq = kem.decapsulate(ciphertext)
+            k_ecdh = dh.exchange(peer_pk_ecdh)
+
+            # Step 7: Derive session key from all three secrets
+            session_key = derive_session_key(k_classical, k_ecdh, k_pq, salt)
             sas = derive_sas(session_key)
             logger.debug("Session key derived; SAS=%s", sas)
 
@@ -484,20 +483,9 @@ class ReceiverSession:
         ep_data = _unpack(relay_ep["data"])
         sender_ep_plain = aead_ep.decrypt(ep_data["endpoints"])
         sender_ep_msg = _unpack(sender_ep_plain)
-
-        if "candidates" in sender_ep_msg:
-            sender_candidates = [
-                IceCandidate.from_dict(c) for c in sender_ep_msg["candidates"]
-            ]
-        else:
-            # Legacy single-endpoint fallback
-            sender_candidates = [
-                IceCandidate(
-                    ip=str(sender_ep_msg.get("ip", "127.0.0.1")),
-                    port=int(sender_ep_msg.get("port", 0)),
-                    candidate_type="host",
-                )
-            ]
+        sender_candidates = [
+            IceCandidate.from_dict(c) for c in sender_ep_msg["candidates"]
+        ]
         logger.debug("Sender ICE candidates: %s", sender_candidates)
 
         # Bind our own listener and gather candidates
@@ -543,23 +531,30 @@ class ReceiverSession:
     async def _run_p2p(self, p2p: P2PConnection, k_classical: bytes) -> TransferResult:
         """Execute post-connection crypto and receive."""
         try:
-            # Step 6: ML-KEM – receiver encapsulates
+            # Step 6a: ML-KEM – receiver reads PQ_INIT, encapsulates + generates X25519
             hdr, _ = await read_frame(p2p.reader)
             if hdr.get("type") != FrameType.PQ_INIT:
                 raise ValueError(f"Expected PQ_INIT, got {hdr.get('type')!r}")
             pk_kem: bytes = hdr["pk"]
             salt: bytes = hdr["salt"]
+            sender_pk_ecdh: bytes = hdr["pk_ecdh"]
 
             kem = get_kem()
             ciphertext, k_pq = kem.encapsulate(pk_kem)
 
+            dh = EphemeralX25519()
+            pk_ecdh = dh.public_key_bytes()
+
             await write_frame(
                 p2p.writer,
-                {"type": FrameType.PQ_RESPONSE, "ct": ciphertext},
+                {"type": FrameType.PQ_RESPONSE, "ct": ciphertext, "pk_ecdh": pk_ecdh},
             )
 
-            # Step 7: Derive session key
-            session_key = derive_session_key(k_classical, k_pq, salt)
+            # Step 6b: Complete X25519 exchange
+            k_ecdh = dh.exchange(sender_pk_ecdh)
+
+            # Step 7: Derive session key from all three secrets
+            session_key = derive_session_key(k_classical, k_ecdh, k_pq, salt)
             sas = derive_sas(session_key)
             logger.debug("Session key derived; SAS=%s", sas)
 

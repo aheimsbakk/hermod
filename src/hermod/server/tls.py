@@ -33,8 +33,9 @@ def generate_self_signed(
     cert_path: Path,
     key_path: Path,
     hostname: str = "hermod-signaling",
+    key_size: int = _KEY_SIZE,
 ) -> None:
-    """Generate and persist a self-signed RSA-4096 certificate.
+    """Generate and persist a self-signed RSA certificate.
 
     Parameters
     ----------
@@ -44,6 +45,8 @@ def generate_self_signed(
         Destination path for the PEM-encoded private key.
     hostname:
         Common Name / SAN hostname for the certificate.
+    key_size:
+        RSA key size in bits.  Defaults to 4096; use 2048 in tests for speed.
     """
     cert_path.parent.mkdir(parents=True, exist_ok=True)
     key_path.parent.mkdir(parents=True, exist_ok=True)
@@ -53,7 +56,7 @@ def generate_self_signed(
     # Generate RSA private key
     private_key: RSAPrivateKey = generate_private_key(
         public_exponent=65537,
-        key_size=_KEY_SIZE,
+        key_size=key_size,
     )
 
     # Build the certificate

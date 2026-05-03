@@ -42,6 +42,14 @@ def _default_dest_dir() -> str:
     return str(Path.cwd())
 
 
+def _default_cert_path() -> str:
+    return str(Path.home() / ".hermod" / "server.crt")
+
+
+def _default_key_path() -> str:
+    return str(Path.home() / ".hermod" / "server.key")
+
+
 # ------------------------------------------------------------------
 # Config dataclass
 # ------------------------------------------------------------------
@@ -59,6 +67,8 @@ class HermodConfig:
     host: str = "0.0.0.0"
     db_path: str = field(default_factory=_default_db_path)
     dest_dir: str = field(default_factory=_default_dest_dir)
+    cert_path: str = field(default_factory=_default_cert_path)
+    key_path: str = field(default_factory=_default_key_path)
     ttl: int = 3600
     verbosity: str = "info"
 
@@ -103,6 +113,8 @@ def load_config(
         "host": "0.0.0.0",
         "db_path": _default_db_path(),
         "dest_dir": _default_dest_dir(),
+        "cert_path": _default_cert_path(),
+        "key_path": _default_key_path(),
         "ttl": 3600,
         "verbosity": "info",
     }

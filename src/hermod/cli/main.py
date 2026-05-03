@@ -9,6 +9,9 @@ Implements the commands described in the blueprint (§3, §22):
 
 Configuration resolution: CLI Flags > Env Vars > config.yaml > Defaults.
 Signal handling for SIGINT/SIGTERM causes a clean async shutdown (§28).
+
+TLS is always required.  Clients must pin the server certificate with
+``hermod trust`` before running ``tx`` or ``rx``.
 """
 
 from __future__ import annotations
@@ -16,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import signal
+import ssl
 import sys
 from pathlib import Path
 from typing import Annotated, Optional
@@ -79,6 +83,37 @@ def _global_options(
 
 
 # ---------------------------------------------------------------------------
+# Trust enforcement helper
+# ---------------------------------------------------------------------------
+
+
+def _require_ssl_context(server_url: str) -> ssl.SSLContext:
+    """Return a pinned SSL context for *server_url*, or exit with an error.
+
+    Clients must run ``hermod trust <host:port>`` before sending or receiving.
+    """
+    from hermod.core.trust import TrustStore, pinned_ssl_context
+
+    store = TrustStore()
+    if not store.is_trusted(server_url):
+        print_error(
+            f"Server {server_url!r} is not trusted.\nRun: hermod trust <host:port>"
+        )
+        raise typer.Exit(code=1)
+
+    fingerprint = store.get(server_url)
+    cert_pem = store.get_cert_pem(server_url)
+    if fingerprint is None or cert_pem is None:
+        print_error(
+            f"Trust entry for {server_url!r} is incomplete (missing cert PEM).\n"
+            "Re-run: hermod trust <host:port>"
+        )
+        raise typer.Exit(code=1)
+
+    return pinned_ssl_context(fingerprint, cert_pem)
+
+
+# ---------------------------------------------------------------------------
 # serve
 # ---------------------------------------------------------------------------
 
@@ -97,31 +132,21 @@ def serve(
         int,
         typer.Option("--ttl", "-T", help="Channel TTL in seconds."),
     ] = 3600,
-    no_tls: Annotated[
-        bool,
-        typer.Option("--no-tls", help="Disable TLS (plain WebSocket, for testing)."),
-    ] = False,
 ) -> None:
-    """Start the signaling and NAT helper service."""
+    """Start the signaling and NAT helper service (TLS always enabled)."""
+    from hermod.core.config import save_config
+    from hermod.server.signaling import run_server
+    from hermod.server.tls import get_server_ssl_context
+
     cfg = load_config(overrides={"port": port, "host": host, "ttl": ttl})
     db_path = db or cfg.db_path
+    cert_path = Path(cfg.cert_path)
+    key_path = Path(cfg.key_path)
 
-    ssl_context = None
-    if not no_tls:
-        cert_dir = Path.home() / ".hermod"
-        try:
-            from hermod.server.tls import get_server_ssl_context
-
-            ssl_context = get_server_ssl_context(
-                cert_dir / "server.crt",
-                cert_dir / "server.key",
-            )
-            print_info(f"TLS enabled (cert: {cert_dir / 'server.crt'})")
-        except Exception as exc:
-            print_warning(f"TLS setup failed ({exc}); falling back to plain WS")
-
-    from hermod.server.signaling import run_server
-
+    ssl_context = get_server_ssl_context(cert_path, key_path)
+    # Persist cert_path / key_path so the user can find them in config.yaml
+    save_config(cfg)
+    print_info(f"TLS enabled (cert: {cert_path})")
     print_info(f"Starting signaling server on {host}:{port}")
 
     loop = asyncio.new_event_loop()
@@ -176,6 +201,7 @@ def transmit(
 ) -> None:
     """Send a file or text to a peer."""
     cfg = load_config(overrides={"server": server})
+    ssl_context = _require_ssl_context(cfg.server)
 
     # Resolve payload
     resolved_text: str | None = None
@@ -213,6 +239,7 @@ def transmit(
         server_url=cfg.server,
         file_path=resolved_file,
         text=resolved_text,
+        ssl_context=ssl_context,
         verify_sas=verify,
         progress_callback=_on_progress,
     )
@@ -278,6 +305,7 @@ def receive(
 ) -> None:
     """Receive a file or text from a peer."""
     cfg = load_config(overrides={"server": server, "dest_dir": str(destination)})
+    ssl_context = _require_ssl_context(cfg.server)
 
     try:
         parse_code(code)
@@ -301,6 +329,7 @@ def receive(
         server_url=cfg.server,
         code=code,
         destination=dest,
+        ssl_context=ssl_context,
         verify_sas=verify,
         auto_accept=yes,
         progress_callback=_on_progress,
@@ -353,7 +382,9 @@ def trust(
     """Fetch and pin the public certificate of a signaling server."""
     import hashlib
     import socket as _socket
-    import ssl
+
+    from cryptography import x509
+    from cryptography.hazmat.primitives import serialization
 
     if ":" in target:
         host, _, port_str = target.rpartition(":")
@@ -383,8 +414,12 @@ def trust(
 
         fingerprint = hashlib.sha256(der).hexdigest()
 
+        # Convert DER → PEM so clients can build a pinned SSL context
+        cert_obj = x509.load_der_x509_certificate(der)
+        cert_pem = cert_obj.public_bytes(serialization.Encoding.PEM)
+
         store = TrustStore()
-        store.add(url, fingerprint)
+        store.add(url, fingerprint, cert_pem)
 
         print_success(f"Certificate pinned for {url}")
         _console.print(f"  SHA-256: [dim]{fingerprint}[/dim]")

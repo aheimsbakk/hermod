@@ -9,8 +9,9 @@ import os
 import pytest
 
 from hermod.crypto.aead import AEADCipher
+from hermod.crypto.ecdh import EphemeralX25519
 from hermod.crypto.kdf import derive_sas, derive_session_key
-from hermod.crypto.kem import X25519KEMFallback, get_kem
+from hermod.crypto.kem import MLKEM768KyberPy, X25519KEMFallback, get_kem
 from hermod.crypto.pake import SPAKE2Adapter
 
 
@@ -81,26 +82,35 @@ class TestAEADCipher:
 class TestKDF:
     def _make_inputs(self):
         k_c = os.urandom(32)
+        k_e = os.urandom(32)
         k_pq = os.urandom(32)
         salt = os.urandom(32)
-        return k_c, k_pq, salt
+        return k_c, k_e, k_pq, salt
 
     def test_derive_session_key_length(self) -> None:
-        k_c, k_pq, salt = self._make_inputs()
-        key = derive_session_key(k_c, k_pq, salt)
+        k_c, k_e, k_pq, salt = self._make_inputs()
+        key = derive_session_key(k_c, k_e, k_pq, salt)
         assert len(key) == 32
 
     def test_derive_session_key_deterministic(self) -> None:
-        k_c, k_pq, salt = self._make_inputs()
-        assert derive_session_key(k_c, k_pq, salt) == derive_session_key(
-            k_c, k_pq, salt
+        k_c, k_e, k_pq, salt = self._make_inputs()
+        assert derive_session_key(k_c, k_e, k_pq, salt) == derive_session_key(
+            k_c, k_e, k_pq, salt
         )
 
     def test_derive_session_key_different_salt(self) -> None:
-        k_c, k_pq, _ = self._make_inputs()
-        key1 = derive_session_key(k_c, k_pq, os.urandom(32))
-        key2 = derive_session_key(k_c, k_pq, os.urandom(32))
+        k_c, k_e, k_pq, _ = self._make_inputs()
+        key1 = derive_session_key(k_c, k_e, k_pq, os.urandom(32))
+        key2 = derive_session_key(k_c, k_e, k_pq, os.urandom(32))
         assert key1 != key2
+
+    def test_derive_session_key_all_secrets_contribute(self) -> None:
+        """Changing any single secret must change the derived key."""
+        k_c, k_e, k_pq, salt = self._make_inputs()
+        base = derive_session_key(k_c, k_e, k_pq, salt)
+        assert derive_session_key(os.urandom(32), k_e, k_pq, salt) != base
+        assert derive_session_key(k_c, os.urandom(32), k_pq, salt) != base
+        assert derive_session_key(k_c, k_e, os.urandom(32), salt) != base
 
     def test_derive_sas_format(self) -> None:
         key = os.urandom(32)
@@ -119,15 +129,105 @@ class TestKDF:
 
     def test_empty_classical_key_raises(self) -> None:
         with pytest.raises(ValueError):
-            derive_session_key(b"", os.urandom(32), os.urandom(32))
+            derive_session_key(b"", os.urandom(32), os.urandom(32), os.urandom(32))
+
+    def test_empty_ecdh_key_raises(self) -> None:
+        with pytest.raises(ValueError):
+            derive_session_key(os.urandom(32), b"", os.urandom(32), os.urandom(32))
 
     def test_empty_pq_key_raises(self) -> None:
         with pytest.raises(ValueError):
-            derive_session_key(os.urandom(32), b"", os.urandom(32))
+            derive_session_key(os.urandom(32), os.urandom(32), b"", os.urandom(32))
 
     def test_empty_salt_raises(self) -> None:
         with pytest.raises(ValueError):
-            derive_session_key(os.urandom(32), os.urandom(32), b"")
+            derive_session_key(os.urandom(32), os.urandom(32), os.urandom(32), b"")
+
+
+# ---------------------------------------------------------------------------
+# Ephemeral X25519 ECDH
+# ---------------------------------------------------------------------------
+
+
+class TestEphemeralX25519:
+    def test_roundtrip_shared_secret_matches(self) -> None:
+        a = EphemeralX25519()
+        b = EphemeralX25519()
+        k_a = a.exchange(b.public_key_bytes())
+        k_b = b.exchange(a.public_key_bytes())
+        assert k_a == k_b
+
+    def test_shared_secret_is_32_bytes(self) -> None:
+        a = EphemeralX25519()
+        b = EphemeralX25519()
+        k = a.exchange(b.public_key_bytes())
+        assert len(k) == 32
+
+    def test_public_key_is_32_bytes(self) -> None:
+        assert len(EphemeralX25519().public_key_bytes()) == 32
+
+    def test_different_pairs_produce_different_secrets(self) -> None:
+        a1, b1 = EphemeralX25519(), EphemeralX25519()
+        a2, b2 = EphemeralX25519(), EphemeralX25519()
+        assert a1.exchange(b1.public_key_bytes()) != a2.exchange(b2.public_key_bytes())
+
+    def test_exchange_twice_raises(self) -> None:
+        a = EphemeralX25519()
+        b = EphemeralX25519()
+        a.exchange(b.public_key_bytes())
+        with pytest.raises(RuntimeError, match="once"):
+            a.exchange(b.public_key_bytes())
+
+    def test_wrong_key_length_raises(self) -> None:
+        a = EphemeralX25519()
+        with pytest.raises(ValueError, match="32 bytes"):
+            a.exchange(b"\x00" * 16)
+
+
+# ---------------------------------------------------------------------------
+# KEM — kyber-py ML-KEM-768 backend
+# ---------------------------------------------------------------------------
+
+
+class TestMLKEM768KyberPy:
+    def test_roundtrip(self) -> None:
+        receiver = MLKEM768KyberPy()
+        pk = receiver.generate_keypair()
+        ct, k_enc = MLKEM768KyberPy().encapsulate(pk)
+        k_dec = receiver.decapsulate(ct)
+        assert k_enc == k_dec
+
+    def test_shared_secret_is_32_bytes(self) -> None:
+        receiver = MLKEM768KyberPy()
+        pk = receiver.generate_keypair()
+        _, k = MLKEM768KyberPy().encapsulate(pk)
+        assert len(k) == 32
+
+    def test_encapsulation_key_is_1184_bytes(self) -> None:
+        pk = MLKEM768KyberPy().generate_keypair()
+        assert len(pk) == 1184
+
+    def test_ciphertext_is_1088_bytes(self) -> None:
+        receiver = MLKEM768KyberPy()
+        pk = receiver.generate_keypair()
+        ct, _ = MLKEM768KyberPy().encapsulate(pk)
+        assert len(ct) == 1088
+
+    def test_two_encapsulations_produce_different_secrets(self) -> None:
+        receiver = MLKEM768KyberPy()
+        pk = receiver.generate_keypair()
+        _, k1 = MLKEM768KyberPy().encapsulate(pk)
+        _, k2 = MLKEM768KyberPy().encapsulate(pk)
+        assert k1 != k2
+
+    def test_wrong_ciphertext_produces_wrong_secret(self) -> None:
+        receiver = MLKEM768KyberPy()
+        pk = receiver.generate_keypair()
+        ct, k_enc = MLKEM768KyberPy().encapsulate(pk)
+        # Corrupt a byte in the ciphertext
+        bad_ct = bytes([ct[0] ^ 0xFF]) + ct[1:]
+        k_bad = receiver.decapsulate(bad_ct)
+        assert k_bad != k_enc
 
 
 # ---------------------------------------------------------------------------
@@ -162,6 +262,8 @@ class TestX25519KEMFallback:
 
     def test_get_kem_returns_kem_engine(self) -> None:
         kem = get_kem()
+        # kyber-py is installed, so get_kem() must prefer it over X25519
+        assert isinstance(kem, MLKEM768KyberPy)
         pk = kem.generate_keypair()
         ct, k_enc = kem.encapsulate(pk)
         k_dec = kem.decapsulate(ct)

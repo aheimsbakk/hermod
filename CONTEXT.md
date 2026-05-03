@@ -2,9 +2,10 @@
 
 ## Current State
 
-All source modules and tests are implemented and passing (129/129, ~70% coverage).
+All source modules and tests are implemented and passing (146/146, ~70% coverage).
 The application is fully functional for its core transfer flows, including ICE-based
-NAT traversal with STUN candidate gathering.
+NAT traversal with STUN candidate gathering and a three-layer hybrid key exchange
+(SPAKE2 + ephemeral X25519 + ML-KEM-768).
 
 ## Module Map
 
@@ -12,7 +13,8 @@ NAT traversal with STUN candidate gathering.
 |---|---|---|
 | Crypto: AEAD | `src/hermod/crypto/aead.py` | ✅ Complete |
 | Crypto: KDF | `src/hermod/crypto/kdf.py` | ✅ Complete |
-| Crypto: KEM | `src/hermod/crypto/kem.py` | ✅ Complete (X25519 fallback active) |
+| Crypto: ECDH | `src/hermod/crypto/ecdh.py` | ✅ Complete (EphemeralX25519) |
+| Crypto: KEM | `src/hermod/crypto/kem.py` | ✅ Complete (kyber-py ML-KEM-768 active) |
 | Crypto: PAKE | `src/hermod/crypto/pake.py` | ✅ Complete |
 | Network: Wire | `src/hermod/network/wire.py` | ✅ Complete |
 | Network: P2P | `src/hermod/network/p2p.py` | ✅ Complete (SO_REUSEPORT, backlog=5) |
@@ -33,11 +35,20 @@ NAT traversal with STUN candidate gathering.
 
 ## Key Architectural Decisions
 
-### KEM Fallback
-`liboqs-python` is installed but the native C library is unavailable in this environment.
-`get_kem()` in `crypto/kem.py` detects this at import time and returns `X25519KEMFallback`.
-The fallback is clearly logged as non-PQ. Production deployments must install a full
-liboqs build to enable `MLKEM768`.
+### KEM Backend Priority
+`get_kem()` in `crypto/kem.py` selects the best available backend at import time:
+
+1. **`MLKEM768`** — liboqs native C library (fastest; requires compiled shared lib)
+2. **`MLKEM768KyberPy`** — pure-Python `kyber-py` package (always installable, no build required; **currently active**)
+3. **`X25519KEMFallback`** — classical DH; **NOT post-quantum**; only if neither PQ library is installed
+
+`kyber-py>=1.2.0` is a core dependency in `pyproject.toml`.
+`liboqs-python` is retained as an optional extra (`[pq]`) for environments with a compiled liboqs build.
+
+Key/ciphertext sizes for ML-KEM-768 (both backends):
+- Encapsulation key (public key): 1184 bytes
+- Ciphertext: 1088 bytes
+- Shared secret: 32 bytes
 
 ### Transfer Code Format
 `{channel_id}-{word1}-{word2}-{word3}` where:
@@ -65,8 +76,10 @@ Server → Client: `REGISTERED`, `JOINED_OK`, `PEER_CONNECTED`, `RELAY`, `PEER_D
 3. Receiver joins with JOIN + code; PAKE (SPAKE2) exchange via RELAY messages
 4. Both sides bind a `PeerListener`, gather ICE candidates (host + optional srflx via STUN), encrypt their candidate list with `k_classical[:32]`, and exchange via RELAY
 5. Both sides call `ice_connect(listener, peer_candidates)` which races inbound TCP accept vs outbound probes; first connection wins
-6. Sender sends PQ_INIT (public key + salt); receiver returns PQ_RESPONSE (ciphertext)
-7. Both derive `session_key = HKDF(k_classical ‖ k_pq, salt, "hermod-session-v1")`
+6. **Sender** sends `PQ_INIT`: `{ pk_kem, salt, pk_ecdh }` (ML-KEM-768 public key + random salt + X25519 public key)  
+   **Receiver** sends `PQ_RESPONSE`: `{ ct, pk_ecdh }` (ML-KEM-768 ciphertext + X25519 public key)  
+   Both compute `k_pq` (ML-KEM decapsulate/encapsulate) and `k_ecdh` (X25519 DH) from the same two frames
+7. Both derive `session_key = HKDF(k_classical ‖ k_ecdh ‖ k_pq, salt, "hermod-session-v2")`
 8. META → ACK → CHUNK frames → EOF → ACK; receiver verifies SHA-256
 
 ### ICE Candidate Exchange Wire Format
@@ -98,9 +111,25 @@ Server handler signature: `async def handler(ws: ServerConnection)`.
 `ws.remote_address` is `(host, port)` tuple.
 `srv.serve_forever()` blocks; `srv.close()` + `await srv.wait_closed()` for teardown.
 
-### HKDF Key Derivation
-- Session key: `HKDF(SHA256, 32, salt=random_32, info=b"hermod-session-v1").derive(k_classical ‖ k_pq)`
-- SAS: `HKDF(SHA256, 3, salt=None, info=b"hermod-sas-v1").derive(session_key)` → 6 hex chars
+### Ephemeral X25519 ECDH (`crypto/ecdh.py`)
+`EphemeralX25519` wraps `cryptography`'s X25519 with a one-shot guard:
+- `public_key_bytes()` → 32-byte raw public key
+- `exchange(peer_pk_bytes)` → 32-byte shared secret; raises `RuntimeError` if called twice
+
+The ECDH public keys are piggybacked on the existing `PQ_INIT` / `PQ_RESPONSE` frames
+as the `pk_ecdh` field — no additional round-trip required.
+
+### Key Derivation (v2)
+```
+session_key = HKDF-SHA256(
+    ikm  = k_classical ‖ k_ecdh ‖ k_pq,
+    salt = random 32 bytes (from PQ_INIT frame),
+    info = b"hermod-session-v2",
+    len  = 32
+)
+```
+Security property: session key is secure as long as **any one** of the three
+input secrets is secure. An attacker must break all three independently.
 
 ### Signaling DB (aiosqlite)
 In-memory (`:memory:`) for tests. WAL mode for production. TTL sweep removes channels
@@ -118,7 +147,6 @@ which verifies and renames atomically.
 
 ## Known Limitations / Future Work
 
-- `liboqs` C library not available in this environment → X25519 fallback only
 - Transfer resumption (`resume_offset`) is scaffolded in `ChunkedFileReader` /
   `PartFileWriter` but the session layer does not yet negotiate resume offsets
 - CLI tests (`cli/main.py`, `cli/ui.py`) not covered by the test suite (0% coverage)
@@ -126,6 +154,8 @@ which verifies and renames atomically.
 - TLS auto-generation (`server/tls.py`) is untested (36% coverage)
 - `socket_utils.py` `get_local_addresses()` platform-specific paths untested (47%)
 - Rate limiter edge cases (per-channel, LRU eviction) partially tested (85%)
+- `kyber-py` is pure Python and slower than a native C KEM; for high-throughput
+  production use, consider building liboqs and installing `liboqs-python` (optional `pq` extra)
 
 ## Test Infrastructure
 

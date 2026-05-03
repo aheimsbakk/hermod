@@ -1,8 +1,8 @@
 """
 Client-side TLS certificate trust store.
 
-Maps server URLs to their SHA-256 public certificate fingerprints in
-``~/.hermod/trust_store.json`` (§10).
+Maps server URLs to their SHA-256 public certificate fingerprints and PEM
+bytes in ``~/.hermod/trust_store.json`` (§10).
 
 The client refuses standard CA validation and instead verifies that the
 server's certificate fingerprint matches the pinned value.
@@ -21,9 +21,12 @@ logger = logging.getLogger(__name__)
 
 _DEFAULT_STORE_PATH = Path.home() / ".hermod" / "trust_store.json"
 
+# Internal store format: {url: {"fingerprint": str, "cert_pem": str}}
+_StoreEntry = dict[str, str]
+
 
 class TrustStore:
-    """Persists server URL → SHA-256 fingerprint mappings.
+    """Persists server URL → SHA-256 fingerprint + PEM certificate mappings.
 
     Parameters
     ----------
@@ -33,15 +36,15 @@ class TrustStore:
 
     def __init__(self, path: Path = _DEFAULT_STORE_PATH) -> None:
         self._path = path
-        self._store: dict[str, str] = {}
+        self._store: dict[str, _StoreEntry] = {}
         self._load()
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
 
-    def add(self, url: str, fingerprint: str) -> None:
-        """Pin *fingerprint* for *url*.
+    def add(self, url: str, fingerprint: str, cert_pem: bytes | None = None) -> None:
+        """Pin *fingerprint* (and optionally *cert_pem*) for *url*.
 
         Parameters
         ----------
@@ -49,14 +52,32 @@ class TrustStore:
             Server URL (e.g. ``"wss://my-relay.local:8443"``).
         fingerprint:
             Hex-encoded SHA-256 fingerprint of the server's DER certificate.
+        cert_pem:
+            PEM-encoded server certificate bytes.  Required for clients to
+            build a pinned SSL context; omit only if unavailable.
         """
-        self._store[url] = fingerprint.lower()
+        entry: _StoreEntry = {"fingerprint": fingerprint.lower()}
+        if cert_pem is not None:
+            # PEM is ASCII; store as plain string
+            entry["cert_pem"] = cert_pem.decode("ascii")
+        self._store[url] = entry
         self._save()
         logger.info("Pinned certificate for %s", url)
 
     def get(self, url: str) -> str | None:
         """Return the pinned fingerprint for *url*, or ``None`` if not pinned."""
-        return self._store.get(url)
+        entry = self._store.get(url)
+        if entry is None:
+            return None
+        return entry.get("fingerprint")
+
+    def get_cert_pem(self, url: str) -> bytes | None:
+        """Return the pinned PEM certificate for *url*, or ``None``."""
+        entry = self._store.get(url)
+        if entry is None:
+            return None
+        pem = entry.get("cert_pem")
+        return pem.encode("ascii") if pem else None
 
     def remove(self, url: str) -> bool:
         """Remove the pinned certificate for *url*.
@@ -74,8 +95,8 @@ class TrustStore:
         return url in self._store
 
     def all_entries(self) -> dict[str, str]:
-        """Return a copy of all pinned entries."""
-        return dict(self._store)
+        """Return a copy of all pinned entries as ``{url: fingerprint}``."""
+        return {url: entry.get("fingerprint", "") for url, entry in self._store.items()}
 
     # ------------------------------------------------------------------
     # Persistence helpers
@@ -86,7 +107,11 @@ class TrustStore:
             try:
                 raw: Any = json.loads(self._path.read_text(encoding="utf-8"))
                 if isinstance(raw, dict):
-                    self._store = {str(k): str(v) for k, v in raw.items()}
+                    self._store = {
+                        str(k): {sk: str(sv) for sk, sv in v.items()}
+                        for k, v in raw.items()
+                        if isinstance(v, dict)
+                    }
             except (json.JSONDecodeError, OSError) as exc:
                 logger.warning(
                     "Failed to load trust store from %s: %s", self._path, exc

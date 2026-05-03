@@ -35,11 +35,13 @@ hermod rx 7-rapid-blue-fox --destination /secure/folder/
 The security model assumes the signaling server is untrusted and anticipates future "Store Now, Decrypt Later" (SNDL) attacks utilizing quantum computers. Hermod implements a Hybrid Key Exchange mechanism.
 
 *   **Transfer Code Allocation**: A short, cryptographically secure random code is generated (e.g., `7-rapid-blue-fox`). The integer acts as the channel ID. The string acts as the shared secret for classical authentication.
-*   **Layer 1: Classical Authentication (PAKE)**: Clients execute a classical PAKE protocol (e.g., CPace or SPAKE2 over Elliptic Curves) via the signaling server. This prevents offline dictionary attacks and yields a classical shared secret ($K_{classical}$).
+*   **Layer 1: Classical Authentication (PAKE)**: Clients execute a classical PAKE protocol (SPAKE2 over Elliptic Curves) via the signaling server. This prevents offline dictionary attacks and yields a classical shared secret ($K_{classical}$).
 *   **Signaling Encryption**: ICE candidates for NAT traversal are encrypted using $K_{classical}$ and exchanged via the signaling server.
-*   **Layer 2: Post-Quantum Encapsulation (KEM)**: Upon P2P connection establishment, clients perform a secondary key exchange using a NIST-standardized PQ KEM (e.g., ML-KEM-768). The receiver encapsulates a PQ shared secret ($K_{pq}$) and returns the ciphertext. 
-*   **Key Derivation (Composite Key)**: Both clients utilize a Key Derivation Function (HKDF-SHA256) to bind the secrets:
-    `Session_Key = HKDF(Salt, K_classical || K_pq)`
+*   **Layer 2: Ephemeral X25519 DH**: Upon P2P connection establishment, clients perform an ephemeral X25519 Diffie-Hellman exchange, yielding a classical shared secret ($K_{ecdh}$). This layer provides defence-in-depth: if the PQ KEM is ever broken by a *classical* computer, $K_{ecdh}$ keeps the session secure.
+*   **Layer 3: Post-Quantum Encapsulation (KEM)**: Clients perform a secondary key exchange using NIST FIPS 203 ML-KEM-768. The receiver encapsulates a PQ shared secret ($K_{pq}$) and returns the ciphertext.
+*   **Key Derivation (Composite Key)**: All three secrets are bound together via HKDF-SHA256:
+    `Session_Key = HKDF(Salt, K_classical ‖ K_ecdh ‖ K_pq, info="hermod-session-v2")`
+    An attacker must break **all three** independently to recover the session key.
 *   **Symmetric Payload Encryption**: All data transmitted over the P2P connection is encrypted using AES-256-GCM or ChaCha20-Poly1305 keyed with the composite `Session_Key`.
 
 ## 5. Network Protocol and NAT Traversal
@@ -59,7 +61,7 @@ Data transmission is strictly constrained to the P2P channel.
 4.  **Handshake**: Sender and receiver execute Layer 1 PAKE over the signaling channel.
 5.  **Endpoint Exchange**: Clients encrypt and swap network endpoints.
 6.  **P2P Establishment**: Clients perform NAT punch-through.
-7.  **PQ Upgrade**: Clients execute Layer 2 ML-KEM over the direct P2P link.
+7.  **PQ + ECDH Upgrade**: Clients execute Layer 2 ephemeral X25519 DH and Layer 3 ML-KEM over the direct P2P link (piggybacked on the same two frames).
 8.  **Data Transfer**: The signaling channel is dropped. The payload is encrypted with the `Session_Key` and transmitted directly.
 9.  **Verification**: The receiver decrypts the payload, verifies integrity, saves the data, and closes the connection.
 
@@ -86,7 +88,8 @@ The signaling server acts strictly as an ephemeral, blind relay using SQLite.
 *   **Cryptographic Dependencies**: 
     *   `cryptography`: Symmetrical encryption, hashing, X.509.
     *   `spake2`: Classical PAKE.
-    *   `liboqs-python`: Post-Quantum KEM.
+    *   `kyber-py`: Post-Quantum KEM (pure-Python FIPS 203 ML-KEM-768; no native build required).
+    *   `liboqs-python` *(optional)*: Native C-backed ML-KEM-768; preferred when the shared library is available.
     *   `msgpack`: Binary serialization.
 
 ## 10. Transport Layer Security (TLS) and Trust Model
