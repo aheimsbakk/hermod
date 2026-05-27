@@ -2,14 +2,14 @@
 # update.sh - Download/update agentic template files from GitHub
 #
 # Downloads AGENTS.md, opencode.json, and all files under .opencode/ (and
-# the legacy agents/ path) from https://github.com/aheimsbakk/agentic-template
+# the legacy agents/ path) from https://github.com/aheimsbakk/agentic-opencode
 # into the current directory or a specified target directory.
 
 set -euo pipefail
 
 # ─── Constants ────────────────────────────────────────────────────────────────
 
-readonly REPO="aheimsbakk/agentic-template"
+readonly REPO="aheimsbakk/agentic-opencode"
 readonly GITHUB_RAW="https://raw.githubusercontent.com/${REPO}"
 readonly GITHUB_API="https://api.github.com/repos/${REPO}"
 readonly VERSION="1.3.0"
