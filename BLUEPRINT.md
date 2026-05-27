@@ -38,7 +38,7 @@ hermod rx 7-rapid-blue-fox --destination /secure/folder/
 The security model assumes the signaling server is untrusted. End-to-end encryption is established via a hybrid approach utilizing classical PAKE and standard TLS 1.3 cipher suites.
 
 * **Transfer Code Allocation**: A cryptographically secure random code is generated (e.g., `7-rapid-blue-fox`). The integer identifies the signaling channel. The string acts as the shared secret for classical authentication.
-* **Classical Authentication (PAKE)**: Clients execute a classical SPAKE2 protocol via the signaling server to prevent offline dictionary attacks and yield a shared classical secret ($K_{classical}$) [Source: RFC 9382 The SPAKE2+ Password-Authenticated Key Exchange (PAKE) Protocol, IETF, 2023, https://datatracker.ietf.org/doc/html/rfc9382].
+* **Classical Authentication (PAKE)**: Clients execute a classical CPace protocol via the signaling server to prevent offline dictionary attacks and yield a shared classical secret ($K_{classical}$) [Source: RFC 9496 The CPace Password-Authenticated Key Exchange (PAKE), IETF, 2023, https://datatracker.ietf.org/doc/html/rfc9496].
 * **Signaling Encryption**: Network endpoint candidates for NAT traversal are encrypted using AES-256-GCM or ChaCha20-Poly1305 keyed by $K_{classical}$ before transiting the relay server.
 * **Transport Layer Security (TLS 1.3)**: Upon successful UDP hole punching, a QUIC connection is initialized. The protocol natively performs a TLS 1.3 handshake to derive the session keys and establish forward secrecy [Source: RFC 8446 The Transport Layer Security (TLS) Protocol Version 1.3, IETF, 2018, https://datatracker.ietf.org/doc/html/rfc8446]. The application defaults to the hybrid post-quantum key exchange mechanism `X25519MLKEM768` [Source: Go 1.24 Release Notes, The Go Programming Language, 2025, https://go.dev/doc/go1.24].
 * **Cipher Configuration and Initialization**: Cryptographic parameters are managed via `config.yaml`. During application startup, the configuration parser verifies the existence of the `tls_configuration` block. If omitted or missing, the application automatically populates the file with the hardcoded secure defaults and flushes the changes to disk. This ensures operational transparency for the user.
@@ -66,15 +66,15 @@ Data transmission is constrained to the UDP-based P2P channel to maximize NAT tr
 
 ## 6. Execution Flow
 
-1. **Initialization**: The sender executes `hermod tx <file>`. The client generates a random transfer code and connects to `hermod serve`.
-2. **Allocation**: The sender allocates a channel ID on the server.
-3. **Connection**: The receiver executes `hermod rx <code>` and connects to the signaling channel.
-4. **Handshake**: Sender and receiver complete the SPAKE2 exchange over the relay to derive $K_{classical}$.
-5. **Endpoint Exchange**: Clients encrypt their local and public UDP endpoints with $K_{classical}$ and exchange them via the relay.
-6. **P2P Establishment**: Clients execute concurrent UDP hole punching.
-7. **QUIC Upgrade**: Upon socket availability, the QUIC TLS 1.3 handshake is executed over the direct UDP link.
-8. **Data Transfer**: The signaling channel is terminated. Payload metadata and bytes are written to bidirectional QUIC streams. The receiver streams the payload into a temporary file (filename.hermod_tmp).
-9. **Verification**: The receiver reads the stream to completion and verifies the cryptographic hash (if applicable). Upon successful validation, the temporary file is renamed to its final specified output name. If the connection drops prematurely or validation fails, the .hermod_tmp file is deleted.
+1.  **Initialization**: The sender executes `hermod tx <input>`. The client generates a random transfer code and connects to `hermod serve`.
+2.  **Allocation**: The sender allocates a channel ID on the server.
+3.  **Connection**: The receiver executes `hermod rx <code>` and connects to the signaling channel.
+4.  **Handshake**: Sender and receiver complete the CPace exchange over the relay to derive $K_{classical}$.
+5.  **Endpoint Exchange**: Clients encrypt their local and public UDP endpoints with $K_{classical}$ and exchange them via the relay.
+6.  **P2P Establishment**: Clients execute concurrent UDP hole punching.
+7.  **QUIC Upgrade**: Upon socket availability, the QUIC TLS 1.3 handshake is executed over the direct UDP link.
+8.  **Data Transfer**: The signaling channel is terminated. Payload metadata and bytes are written to bidirectional QUIC streams. The receiver streams the payload into a temporary file (`filename.hermod_tmp`).
+9.  **Verification**: The receiver reads the stream to completion and verifies the cryptographic hash (if applicable). Upon successful validation, the temporary file is renamed to its final specified output name. If the connection drops prematurely or validation fails, the `.hermod_tmp` file is deleted.
 
 ## 7. Server Storage and Zero-Knowledge Properties
 
@@ -91,13 +91,16 @@ The signaling server operates strictly as an ephemeral, blind relay.
 
 ## 9. Technology Stack and Tooling
 
-* **Language**: Go 1.22+
+* **Language**: Go 1.24+ (Required for native FIPS 203 ML-KEM support via `crypto/tls`) [Source: Go 1.24 Release Notes, The Go Programming Language, 2025, https://go.dev/doc/go1.24]
+* **Cryptography (PAKE)**: `github.com/cloudflare/circl` (Provides RFC 9496 CPace implementation)
 * **QUIC Implementation**: `github.com/quic-go/quic-go`
 * **CLI Framework**: `github.com/spf13/cobra`
 * **Configuration**: `github.com/yaml/go-yaml`
 * **Terminal UI**: `github.com/schollz/progressbar/v3` (Thread-safe progress indication)
 * **TTY Detection**: `github.com/mattn/go-isatty` (POSIX-compliant terminal detection)
-* **Server Database**: `gitlab.com/cznic/sqlite` (CGO-free SQLite implementation)
+* **Server Database**: On of:
+  * `gitlab.com/cznic/sqlite` (CGO-free SQLite implementation)
+  * `github.com/ncruces/go-sqlite3`
 
 ## 10. Transport Layer Security (TLS) and Trust Model
 
