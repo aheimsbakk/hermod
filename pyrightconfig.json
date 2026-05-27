@@ -1,9 +1,0 @@
-{
-    "pythonVersion": "3.13",
-    "pythonPlatform": "Linux",
-    "venvPath": ".",
-    "venv": ".venv",
-    "include": ["src"],
-    "typeCheckingMode": "standard",
-    "reportMissingModuleSource": "none"
-}
