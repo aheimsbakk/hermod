@@ -47,6 +47,6 @@ func runTrust(serverArg string) error {
 		return fmt.Errorf("save config: %w", err)
 	}
 
-	fmt.Printf("Pinned %s\n  fingerprint: %s\n", serverURL, fp)
+	printStatus("Pinned %s\n  fingerprint: %s", serverURL, fp)
 	return nil
 }

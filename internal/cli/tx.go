@@ -372,10 +372,10 @@ func performSASVerification(tlsState tls.ConnectionState) error {
 	}
 
 	words := crypto.SASFromBytes(material)
-	fmt.Printf("\n=== Out-of-Band Verification ===\n")
-	fmt.Printf("SAS: %s\n\n", crypto.SASString(words))
-	fmt.Println(crypto.Identicon(material[:16]))
-	fmt.Println("Compare these values with the other end. Do they match? [y/N]: ")
+	fmt.Fprintf(os.Stderr, "\n=== Out-of-Band Verification ===\n")
+	fmt.Fprintf(os.Stderr, "SAS: %s\n\n", crypto.SASString(words))
+	fmt.Fprintln(os.Stderr, crypto.Identicon(material[:16]))
+	fmt.Fprint(os.Stderr, "Compare these values with the other end. Do they match? [y/N]: ")
 
 	var answer string
 	fmt.Scanln(&answer)

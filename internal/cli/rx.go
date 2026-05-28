@@ -260,12 +260,12 @@ func receivePayload(ctx context.Context, meta *transfer.Metadata, r io.Reader, d
 		// Interactive terminal
 		switch meta.Kind {
 		case transfer.KindText, transfer.KindStream:
-			// Print to stdout
+			// Print to stdout; trailing newline to stderr so it doesn't pollute piped output.
 			_, err := io.Copy(os.Stdout, r)
 			if err != nil {
 				return err
 			}
-			fmt.Println()
+			fmt.Fprintln(os.Stderr)
 			logDebug("text received, printed to stdout")
 			return nil
 
