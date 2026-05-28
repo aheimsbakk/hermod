@@ -13,3 +13,6 @@ cover*.out
 
 # OS
 .DS_Store
+
+# todo.txt temp files
+todo.txt.tmp

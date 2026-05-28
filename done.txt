@@ -1,0 +1,11 @@
+x 2026-05-28 2026-05-28 Create BLUEPRINT.md and CONTEXT.md +hermod +setup pri:A
+x 2026-05-28 2026-05-28 Implement CLI commands (serve, trust, tx, rx) +hermod +impl pri:B
+x 2026-05-28 2026-05-28 Implement config package (YAML load/save, defaults) +hermod +impl pri:B
+x 2026-05-28 2026-05-28 Implement crypto package (CPace, ephemeral X.509, AES-GCM, SAS, identicon) +hermod +impl pri:B
+x 2026-05-28 2026-05-28 Implement network package (UDP mux, hole punching, QUIC transport) +hermod +impl pri:B
+x 2026-05-28 2026-05-28 Implement server package (SQLite store, WebSocket signaling, rate limiting, TTL GC) +hermod +impl pri:B
+x 2026-05-28 2026-05-28 Implement transfer package (payload classification, stream, metadata) +hermod +impl pri:B
+x 2026-05-28 2026-05-28 Scaffold go.mod and project structure +hermod +setup pri:A
+x 2026-05-28 2026-05-28 Validate coverage threshold and race detector +hermod +test pri:C
+x 2026-05-28 2026-05-28 Write E2E testscript tests +hermod +test pri:C
+x 2026-05-28 2026-05-28 Write unit tests for all packages (>=80% coverage) +hermod +test pri:C
