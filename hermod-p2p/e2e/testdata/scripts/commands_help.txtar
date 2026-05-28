@@ -1,0 +1,7 @@
+# Test: hermod tx --help
+exec hermod tx --help
+stdout 'INPUT'
+
+# Test: hermod rx --help
+exec hermod rx --help
+stdout 'CODE'

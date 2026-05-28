@@ -1,0 +1,4 @@
+# Test: hermod help output
+exec hermod --help
+stdout 'hermod'
+stdout 'QUIC'

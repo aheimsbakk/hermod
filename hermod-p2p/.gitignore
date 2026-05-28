@@ -1,0 +1,16 @@
+# Build output
+hermod
+hermod-p2p/hermod
+
+# Test coverage artifacts
+*.out
+cover*.out
+
+# Environment
+.env
+
+# Temp/AI workflow files
+.handoff/
+
+# OS
+.DS_Store
