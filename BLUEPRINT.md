@@ -2,270 +2,260 @@
 
 ## 1. System Overview
 
-Hermod is a secure, peer-to-peer (P2P) file and text transfer application. The architecture relies on a centralized signaling and NAT punch-through helper server to establish connections, while enforcing strict P2P data transmission. The server facilitates initial rendezvous and cryptographic key exchange but never handles or routes the actual payload.
+The application is named after Hermod, the messenger of the gods in Norse mythology, recognized as the primary courier of the Æsir and best known for his journey to the underworld (Hel) to negotiate the return of the god Baldr [Source: Hermod, Store norske leksikon, 2024, https://snl.no/Hermod_-_norr%C3%B8n_mytologi].
+
+Hermod is a secure, peer-to-peer (P2P) file and text transfer application written in Go. The architecture relies on a centralized signaling and NAT punch-through helper server to establish connections, while enforcing strict P2P data transmission. The server facilitates initial rendezvous and cryptographic key exchange but never handles or routes the actual payload. All P2P data transport is executed via the QUIC protocol over UDP [Source: RFC 9000 QUIC: A UDP-Based Multiplexed and Secure Transport, IETF, 2021, https://datatracker.ietf.org/doc/html/rfc9000].
 
 ## 2. Component Architecture
 
-*   **Hermod Client (`tx` / `rx`)**: The local application executing on the sender and receiver machines. It handles file I/O, cryptographic operations, local network binding, and P2P connection establishment.
-*   **Hermod Signaling Server (`serve`)**: A lightweight service responsible for state management of pending transfers. It acts as a mailbox for connection intent, routes encrypted handshake messages between peers, and provides IP discovery (STUN-like functionality) for NAT traversal.
-*   **Signaling Channel**: A WebSocket or HTTPS long-polling connection between the clients and the server.
-*   **P2P Channel**: A direct UDP or TCP connection established between clients via NAT hole punching.
+* **Hermod Client (`tx` / `rx`)**: A compiled Go binary executing on the sender and receiver machines. It handles file I/O, cryptographic operations, local UDP network binding, and direct P2P connection establishment via QUIC.
+* **Hermod Signaling Server (`serve`)**: A lightweight Go service responsible for the state management of pending transfers. It acts as a mailbox for connection intent, routes encrypted handshake messages between peers, and provides IP discovery (STUN-like functionality) for NAT traversal.
+* **Signaling Channel**: A WebSocket connection established over TLS 1.3 between the clients and the server. This channel strictly adheres to the global cryptographic parameters defined in the client and server configurations.
+* **P2P Channel**: A direct UDP connection established between clients via NAT hole punching, secured by TLS 1.3 integrated directly into the QUIC layer [Source: RFC 9001 Using TLS to Secure QUIC, IETF, 2021, https://datatracker.ietf.org/doc/html/rfc9001].
 
 ## 3. Command Line Interface (CLI)
 
-The CLI supports overriding the default signaling server to allow user-defined infrastructure, explicit trust management, and configuration resolution based on a strict hierarchy: CLI Flags > Environment Variables > `config.yaml` > Application Defaults.
+The CLI resolves configuration based on a strict hierarchy: CLI Flags > Environment Variables > `config.yaml` > Application Defaults.
 
 ```bash
-# Start the signaling and NAT helper service on port 443 (requires elevated privileges)
-hermod serve --listen 0.0.0.0:443 --db /var/lib/hermod/signaling.db --ttl 3600
+# Start the signaling and NAT helper service
+hermod serve --listen 0.0.0.0:4376 --db /var/lib/hermod/signaling.db --ttl 600
 
 # Fetch and pin the public certificate of a specific server
-hermod trust my-relay.local:8443
+hermod trust my-relay.local:4376
 
-# Send a file or text (explicit flags or stdin)
-hermod tx --file /path/to/document.pdf
-echo "Secret text" | hermod tx --text -
+# Send a file or text (explicit paths or stdin via auto-detection)
+hermod tx /path/to/document.pdf
+echo "Secret text" | hermod tx - --words 4
 
-# Receive a file or text
-hermod rx 7-rapid-blue-fox --destination /secure/folder/
+# Receive a payload
+hermod rx 65535-rapid-blue-fox --destination /secure/folder/
 ```
 
 ## 4. Cryptographic Design
 
-The security model assumes the signaling server is untrusted and anticipates future "Store Now, Decrypt Later" (SNDL) attacks utilizing quantum computers. Hermod implements a Hybrid Key Exchange mechanism.
+The security model assumes the signaling server is untrusted. End-to-end encryption is established via a hybrid approach utilizing classical PAKE and standard TLS 1.3 cipher suites, bound together via cryptographic commitment.
 
-*   **Transfer Code Allocation**: A short, cryptographically secure random code is generated (e.g., `7-rapid-blue-fox`). The integer acts as the channel ID. The string acts as the shared secret for classical authentication.
-*   **Layer 1: Classical Authentication (PAKE)**: Clients execute a classical PAKE protocol (SPAKE2 over Elliptic Curves) via the signaling server. This prevents offline dictionary attacks and yields a classical shared secret ($K_{classical}$).
-*   **Signaling Encryption**: ICE candidates for NAT traversal are encrypted using $K_{classical}$ (XChaCha20-Poly1305, 192-bit nonce) and exchanged via the signaling server.
-*   **Layer 2: Ephemeral X25519 DH**: Upon P2P connection establishment, clients perform an ephemeral X25519 Diffie-Hellman exchange, yielding a classical shared secret ($K_{ecdh}$). This layer provides defence-in-depth: if the PQ KEM is ever broken by a *classical* computer, $K_{ecdh}$ keeps the session secure.
-*   **Layer 3: Post-Quantum Encapsulation (KEM)**: Clients perform a secondary key exchange using NIST FIPS 203 ML-KEM-768. The receiver encapsulates a PQ shared secret ($K_{pq}$) and returns the ciphertext.
-*   **MitM Protection (Appendix B §1)**: All cryptographic material in `PQ_INIT` and `PQ_RESPONSE` frames is authenticated with HMAC-SHA256 keyed by $K_{classical}$. The receiver MUST verify the MAC tag before using any received public key or ciphertext. This prevents a network-level attacker from substituting ephemeral keys after NAT punch-through.
-*   **Key Derivation (Composite Key)**: All three secrets are bound together via HKDF-SHA256:
-    `Session_Key = HKDF(Salt, K_classical ‖ K_ecdh ‖ K_pq, info="hermod-session-v2")`
-    An attacker must break **all three** independently to recover the session key.
-*   **Symmetric Payload Encryption (Appendix B §2 & §3)**: All payload data is encrypted using `pynacl` `crypto_secretstream` (XChaCha20-Poly1305 with automatic key ratcheting and per-block nonce rotation). The 24-byte stream header is piggybacked on the `META` wire frame. A `TAG_FINAL` tag on the last encrypted chunk provides cryptographic proof against truncation attacks.
-*   **Ad-hoc AEAD**: Small messages (ICE candidates) use `AEADCipher` — XChaCha20-Poly1305 via `pynacl` bindings with a 192-bit random nonce.
-*   **Resume Sub-Key (Appendix B §2)**: Resuming a transfer calls `derive_resume_key(session_key, resume_counter)` which runs HKDF-SHA256 with a counter-bound context. The original `Session_Key` is never reused across resume segments.
+* **Transfer Code Allocation**: A cryptographically secure random code is generated (e.g., `65535-rapid-blue-fox`). The integer identifies the signaling channel and is generated as a random 16-bit integer between 0 and 65535. The string acts as the shared secret for classical authentication. The initiating client utilizes a Cryptographically Secure Pseudo-Random Number Generator (CSPRNG) to generate the transfer code. The code consists of the integer channel ID and a minimum of three words selected from a localized EFF Short Wordlist. The default length of the word list is 3 words, overridable via the `--words` CLI flag. This guarantees a minimum entropy of ~38 bits for the default configuration, rendering online guessing mathematically infeasible within the session parameters [Source: EFF Dice-Generated Passphrases, Electronic Frontier Foundation, 2016, https://www.eff.org/dice].
+* **Classical Authentication (PAKE)**: Clients execute a classical CPace protocol via the signaling server to prevent offline dictionary attacks and yield a shared classical secret ($K_{classical}$) [Source: RFC 9496 The CPace Password-Authenticated Key Exchange (PAKE), IETF, 2023, https://datatracker.ietf.org/doc/html/rfc9496].
+* **Signaling Encryption & Certificate Commitment**: Prior to UDP hole punching, clients generate ephemeral X.509 certificates. The SHA-256 fingerprint of the local certificate is bundled with the NAT traversal candidates. This payload is encrypted using AES-256-GCM keyed by $K_{classical}$ and exchanged via the relay.
+* **Transport Layer Security (TLS 1.3)**: Upon successful UDP hole punching, a QUIC connection is initialized. The application defaults to the hybrid post-quantum key exchange mechanism `X25519MLKEM768` [Source: Go 1.24 Release Notes, The Go Programming Language, 2025, https://go.dev/doc/go1.24].
+* **Machine Authentication (MitM Prevention)**: During the TLS 1.3 handshake, standard PKI verification is bypassed. The `VerifyPeerCertificate` callback strictly validates that the presented peer certificate's SHA-256 hash matches the cryptographic commitment received over the secure signaling channel. A mismatch instantly terminates the connection.
 
-## 5. Network Protocol and NAT Traversal
+```yaml
+# Auto-populated default structure in config.yaml upon first execution
+tls_configuration:
+  prefer_curves:
+    - X25519MLKEM768
+    - X25519
+    - CurveP256
+  cipher_suites:
+    - TLS_AES_256_GCM_SHA384
+    - TLS_CHACHA20_POLY1305_SHA256
+```
 
-Data transmission is strictly constrained to the P2P channel.
+## 5. Signaling Server Architecture and State Management
 
-*   **Endpoint Discovery**: The `serve` component inspects incoming connections to determine public IP addresses.
-*   **ICE (Interactive Connectivity Establishment)**: Both peers independently gather candidates: host candidates from local interfaces (`socket_utils.get_local_addresses`) and an optional server-reflexive (srflx) candidate via STUN (`network/stun.py`, RFC 5389). STUN queries three public servers concurrently; the first valid XOR-MAPPED-ADDRESS wins. Passing `stun_timeout=0.0` skips STUN entirely (used in tests). `get_local_addresses` returns the default-route IP (via UDP probe to `8.8.8.8`) and appends loopback only when no other address is found, preventing multiple candidates from resolving to the same `0.0.0.0` listener.
-*   **Encrypted Exchange**: Candidate lists are serialised as `{"candidates": [{"type": "host"|"srflx", "ip": ..., "port": ...}, ...]}`, encrypted with $K_{classical}$ and exchanged via the signaling relay. A legacy fallback decodes the old `{"ip": ..., "port": ...}` single-endpoint format.
-*   **Asymmetric Connectivity Race**: Sender is the ICE *controlling* role — fires outbound probes immediately. Receiver is the ICE *controlled* role — delays probes by 100 ms so the sender's probe arrives at the receiver's listener first. Both sides call `ice_connect()`; when multiple tasks complete simultaneously the winning task is selected in insertion order (`accept_task` first, then probes by priority) to guarantee a deterministic, split-connection-free result.
+* **State Storage**: The server utilizes an in-memory SQLite database to track active channel IDs, WebSocket file descriptors, and CPace handshake states.
+* **Brute-Force Mitigation (Rate Limiting)**: The server implements a Token Bucket algorithm grouped per `/32` for IPv4 addresses and per `/64` for IPv6 network prefixes. The server strictly enforces a maximum of 3 failed CPace handshake attempts per channel ID. Upon the third failed cryptographic validation, the server immediately drops the WebSocket connections, invalidates the channel ID, and purges the associated state from the database.
+* **Session Time-To-Live (TTL)**: Channels have an absolute maximum lifespan of 600 seconds (10 minutes) from the time of allocation. A background garbage collection routine sweeps the database every 60 seconds and permanently deletes expired channels to prevent resource exhaustion and narrow the attack window for online guessing.
 
-## 6. Execution Flow
+## 6. Network Protocol and NAT Traversal
 
-1.  **Initialization**: Sender runs `hermod tx`. The client generates a random code and connects to `hermod serve`.
-2.  **Allocation**: Sender allocates a channel ID on the server and waits.
-3.  **Connection**: Receiver runs `hermod rx <code>`. The client connects to the corresponding channel on `hermod serve`.
-4.  **Handshake**: Sender and receiver execute Layer 1 PAKE over the signaling channel.
-5.  **Endpoint Exchange**: Clients encrypt and swap network endpoints.
-6.  **P2P Establishment**: Clients perform NAT punch-through.
-7.  **PQ + ECDH Upgrade**: Clients execute Layer 2 ephemeral X25519 DH and Layer 3 ML-KEM over the direct P2P link (piggybacked on the same two frames).
-8.  **Data Transfer**: The signaling channel is dropped. The payload is encrypted with the `Session_Key` and transmitted directly.
-9.  **Verification**: The receiver decrypts the payload, verifies integrity, saves the data, and closes the connection.
+Data transmission is constrained to the UDP-based P2P channel to maximize NAT traversal success rates.
 
-## 7. Server Storage and Zero-Knowledge Properties
+* **Endpoint Discovery**: The `serve` component inspects incoming connections to determine public IP addresses (Server-Reflexive addresses).
+* **Socket Multiplexing**: The client binds a single local UDP socket using OS-level `SO_REUSEADDR` and `SO_REUSEPORT` flags. This socket is managed by an application-layer packet multiplexer that reads all incoming UDP datagrams. The multiplexer inspects the first byte of each payload to differentiate between QUIC packet headers and custom STUN/NAT probes, routing them to the QUIC library or the local traversal logic respectively.
+* **UDP Hole Punching**: Both peers simultaneously transmit UDP datagrams to each other's public and local endpoints. The stateless nature of UDP allows outward datagrams to establish port mappings in the respective NAT gateways, permitting incoming packets from the peer [Source: RFC 5128 State of Peer-to-Peer (P2P) Communication across Network Address Translators (NATs), IETF, 2008, https://datatracker.ietf.org/doc/html/rfc5128].
+* **Asymmetric Connectivity**: To resolve connection initialization conflicts over the punched UDP hole, the sender consistently operates as the QUIC client (initiator) and the receiver as the QUIC server (listener).
 
-The signaling server acts strictly as an ephemeral, blind relay using SQLite.
+## 7. Execution Flow
 
-*   **No Metadata:** The server is never informed about the payload type, size, or names.
-*   **Encrypted Payloads:** The database stores only the `channel_id` and opaque binary blobs.
-*   **Time-To-Live (TTL):** A background routine sweeps the database. Channels exceeding the `--ttl` threshold (default 3600s) are permanently deleted (`ON DELETE CASCADE`).
+1.  **Initialization**: The sender executes `hermod tx <input>`. The client generates a random transfer code and connects to `hermod serve`.
+2.  **Allocation**: The sender allocates a channel ID on the server.
+3.  **Connection**: The receiver executes `hermod rx <code>` and connects to the signaling channel.
+4.  **Handshake**: Sender and receiver complete the CPace exchange over the relay to derive $K_{classical}$.
+5.  **Endpoint and Certificate Exchange**: Clients generate ephemeral X.509 certificates. They bundle their local/public UDP endpoints and their certificate's SHA-256 fingerprint into a payload, encrypt it with $K_{classical}$, and exchange it via the relay.
+6.  **P2P Establishment**: Clients execute concurrent UDP hole punching.
+7.  **QUIC Upgrade & Authentication**: Upon socket availability, the QUIC TLS 1.3 handshake is executed. Clients mutually authenticate by verifying the peer's certificate hash against the decrypted fingerprint from Step 5.
+8.  **Data Transfer**: The signaling channel is terminated. Payload metadata and bytes are written to bidirectional QUIC streams. The receiver streams the payload into a temporary file (`filename.hermod_tmp`).
+9.  **Verification**: The receiver reads the stream to completion and verifies the payload cryptographic hash. Upon successful validation, the temporary file is renamed to its final specified output name. If the connection drops prematurely or validation fails, the `.hermod_tmp` file is deleted.
 
-## 8. DDoS Protection and Anti-Spam Mechanisms
+## 8. Server Storage and Zero-Knowledge Properties
 
-*   **Message Count Limits:** Hard limits on signaling messages per channel (e.g., max 4-6). Exceeding this drops the channel.
-*   **Payload Size Limits:** Signaling messages are hard-limited (e.g., 4096 bytes).
-*   **Token Bucket Rate Limiting:** Per IP Address and Per Channel rate limits. Client IPs are hashed with a daily rotating salt.
+The signaling server operates strictly as an ephemeral, blind relay.
 
-## 9. Technology Stack and Tooling
+* **No Metadata**: The server cannot observe payload types, sizes, or file names.
+* **Opaque Storage**: The database stores only channel IDs and encrypted binary blobs.
+* **Time-To-Live (TTL)**: A background routine periodically executes `DELETE` statements on channels exceeding the TTL threshold (default 600s).
 
-*   **Language**: Python 3.12+
-*   **Package Manager**: `uv` (Astral).
-*   **Testing**: `pytest` and `pytest-cov` (mandating strict test coverage).
-*   **CLI Framework**: Python stdlib `argparse`. Entry point: `hermod.cli.main:main`.
-*   **Cryptographic Dependencies**: 
-    *   `cryptography`: Classical DH, HKDF, HMAC, X.509.
-    *   `pynacl`: XChaCha20-Poly1305 AEAD and `crypto_secretstream` (libsodium bindings).
-    *   `spake2`: Classical PAKE.
-    *   `kyber-py`: Post-Quantum KEM (pure-Python FIPS 203 ML-KEM-768; no native build required).
-    *   `liboqs-python` *(optional)*: Native C-backed ML-KEM-768; preferred when the shared library is available.
-    *   `msgpack`: Binary serialization.
+## 9. DDoS Protection and Anti-Spam Mechanisms
 
-## 10. Transport Layer Security (TLS) and Trust Model
+* **Message Constraints**: Hard limits exist on signaling messages per channel to prevent relay saturation.
+* **Rate Limiting**: Client IPs are hashed with a daily rotating salt in memory to prevent tracking.
 
-*   **Server-Side Auto-Generation**: `hermod serve` automatically generates a self-signed X.509 certificate on first run. The PEM certificate and private key are stored as strings directly inside `~/.config/hermod/config.yaml` — no separate certificate files are written to disk.
-*   **Single Config File**: `~/.config/hermod/config.yaml` is the sole persistent configuration store. It contains all settings including the TLS certificate (`tls_cert`) and private key (`tls_key`) as PEM strings.
-*   **Client-Side Trust Store**: Maps server URLs to SHA-256 public certificate fingerprints and full PEM certificates in the `trusted_servers` section of `~/.config/hermod/config.yaml`.  The former `~/.hermod/trust_store.json` file is no longer used.
-*   **Certificate Pinning Enforcement**: The client rejects standard CA validation, explicitly verifying the SHA-256 fingerprint matches the pinned hash.
+## 10. Technology Stack and Tooling
 
-## 11. P2P Wire Protocol and Extensibility
+* **Language**: Go 1.24+ (Required for native FIPS 203 ML-KEM support via `crypto/tls`) [Source: Go 1.24 Release Notes, The Go Programming Language, 2025, https://go.dev/doc/go1.24]
+* **Cryptography (PAKE)**: `github.com/cloudflare/circl` (Provides RFC 9496 CPace implementation)
+* **QUIC Implementation**: `github.com/quic-go/quic-go`
+* **CLI Framework**: `github.com/spf13/cobra`
+* **Configuration**: `github.com/yaml/go-yaml`
+* **Terminal UI**: `github.com/schollz/progressbar/v3` (Thread-safe progress indication)
+* **TTY Detection**: `github.com/mattn/go-isatty` (POSIX-compliant terminal detection)
+* **Server Database**: On of:
+  * `gitlab.com/cznic/sqlite` (CGO-free SQLite implementation)
+  * `github.com/ncruces/go-sqlite3`
 
-The P2P connection utilizes a versioned, MessagePack frame-based "Header-Payload" protocol.
+## 11. Transport Layer Security (TLS) and Trust Model
 
-*   **Frame Structure**:
-    1.  **Magic Bytes (2 bytes)**: Protocol identifier (`HD`).
-    2.  **Version (1 byte)**: Protocol version (`0x01`).
-    3.  **Header Length (4 bytes)**: MessagePack header size.
-    4.  **Payload Length (8 bytes)**: Raw payload size.
-    5.  **Header**: MessagePack encoded dictionary.
-    6.  **Payload**: Raw encrypted binary data.
-*   **META Frame Extension**: The `META` frame header carries a `stream_header` field (24 bytes) — the libsodium `crypto_secretstream` initialisation header. The receiver passes this to `SecretStreamPull` before processing any `CHUNK` frames.
-*   **Extensibility**: Clients strictly ignore unrecognized keys in the MessagePack header.
+* **Unified TLS Configuration**: The application enforces a singular `tls.Config` generation mechanism. The cryptographic preferences defined in `config.yaml` (defaulting to the hybrid post-quantum `X25519MLKEM768` exchange) are injected identically into both the HTTP/WebSocket client-server transport and the QUIC P2P transport.
+* **Server-Side Auto-Generation**: `hermod serve` automatically generates a self-signed X.509 certificate on first execution. The PEM certificate and private key are persisted as strings directly inside `~/.config/hermod/config.yaml`.
+* **Client-Side Trust Store**: Maps server URLs to SHA-256 public certificate fingerprints in the `trusted_servers` section of `config.yaml`.
+* **Certificate Pinning Enforcement**: The client bypasses standard CA validation, explicitly verifying that the presented certificate's SHA-256 fingerprint matches the pinned hash.
 
-## 12. Software Architecture: Cryptographic Abstraction
+## 12. P2P Transport Protocol
 
-Hermod employs the Strategy Design Pattern for Layer 1 authentication to isolate unmaintained dependencies.
+The application relies entirely on QUIC for framing, multiplexing, ordered delivery, and congestion control.
 
-*   **Interface Definition**: A strict `PAKEEngine` Protocol defines required methods.
-*   **Adapter Pattern**: The `spake2` library is completely isolated within a concrete adapter class.
+* **Stream Segregation**: The sender opens a QUIC stream for metadata (filename, size, SHA-256 hash) and a subsequent stream for the raw payload.
+* **No Application-Layer Framing**: Files are copied directly from the OS file descriptor (via `io.Reader`) into the QUIC stream (`io.Writer`). Encryption is handled transparently by the QUIC TLS 1.3 layer.
 
-## 13. Payload Detection and Typing
+## 13. Software Architecture: Interfaces and Injection
 
-*   **Auto-Detection on Send**: The CLI resolves payload type from the positional `INPUT` argument:
-    *   Argument is `-` or stdin is piped and no argument given → read `sys.stdin.buffer`; if the bytes decode as UTF-8 they are sent as `kind="text"`, otherwise as `kind="file"` named `"stdin"`.
-    *   Argument resolves to an existing path → sent as `kind="file"` with the original filename.
-    *   Any other argument string → sent as `kind="text"`.
-*   **No Explicit Flags**: `--file` (`-f`) and `--text` (`-t`) have been removed; auto-detection replaces them.
-*   **Auto-Detection on Receive**: The CLI streams output based on whether `--destination` was given and whether stdout is a terminal:
-    *   `--destination` given → always save file / print text (terminal behavior unchanged).
-    *   No `--destination` and stdout is a terminal → text printed to stdout, file saved with original name in the configured dest dir.
-    *   No `--destination` and stdout is redirected/piped → **all payload bytes** (file or text) streamed directly to `sys.stdout.buffer`.
+The Go implementation utilizes structural typing and interfaces to maintain modularity.
 
-## 14. Out-of-Band Verification (MitM Protection)
+* **Storage Interface**: A `SignalingStore` interface defines the required methods for the server, allowing the SQLite implementation to be swapped for in-memory stores during testing.
+* **Transport Abstraction**: Network operations accept standard `net.Conn` and `net.PacketConn` interfaces.
 
-*   **The `--verify` Flag**: Pauses transmission immediately after `Session_Key` derivation.
-*   **SAS Generation**: Derives a short, deterministic human-readable string (e.g., 6-character hex) via HKDF-SHA256 from the `Session_Key`. Requires manual user confirmation.
+## 14. Payload Processing and Stream Handling
 
-## 15. File Streaming and Memory Management
+* **Raw Stream Transport (No Validation)**: The sender executes no UTF-8 heuristic validation, content sniffing, or teletype inspection. Piped data via `stdin` is treated strictly as an opaque byte stream.
+* **Type Assignment on Send**: Resolves payload metadata from the positional argument:
+    * Argument `-` or piped `os.Stdin` → Transmitted as `kind="stream"`.
+    * Existing file path → Transmitted as `kind="file"` with the original filename.
+    * Arbitrary string → Transmitted as `kind="text"`.
+* **Context-Aware Routing on Receive**:
+    * `--destination` explicitly provided → Saves the incoming stream or file to the specified path.
+    * No destination, `stdout` is redirected (piped) → Streams all bytes directly to `os.Stdout`, ignoring payload `kind`.
+    * No destination, `stdout` is an interactive terminal:
+        * Payload `kind="text"` or `kind="stream"` → Prints all payload bytes directly to the terminal via `stdout`. No blocking mechanism is applied.
+        * Payload `kind="file"` → Blocks writing to `stdout` to prevent terminal state corruption. Saves the payload locally to disk using the transmitted filename.
 
-*   **Chunk Size:** Files are read and transmitted in fixed-size chunks (e.g., 1MB).
-*   **Frame Encapsulation:** Each chunk is individually encrypted via AEAD and wrapped in a P2P frame containing a sequence number.
-*   **EOF Signal:** The final frame contains `is_eof: true`.
+## 15. Out-of-Band Verification (MitM Protection)
 
-## 16. End-to-End File Integrity
+* **The `--verify` Flag**: Pauses transmission immediately after the QUIC connection is established.
+* **Key Material Extraction**: Extracts 256 bits (32 bytes) of cryptographic material from the QUIC session using TLS 1.3 Keying Material Exporters bound to a specific context string.
+* **SAS Generation**: Converts the extracted key material into a 6-to-8 word Short Authentication String (SAS) sequence using a standardized word list (e.g., PGP Word List) to reduce cognitive errors during manual cross-device comparison.
+* **Visual Fingerprint (Identicon)**: Generates a symmetrical visual representation utilizing 128 bits (16 bytes) of the exported key material to provide a secondary visual verification channel.
+    * **Geometry and Aspect Ratio**: The component utilizes a physical grid of 8 rows and 16 columns of characters.
+    * **Entropy and Symmetry**: The algorithm reads the 128 bits sequentially, mapping each 2-bit segment to a specific Unicode Block Element character (`U+0020` for 00, `U+2580` for 01, `U+2584` for 10, `U+2588` for 11). The 8 left-most columns represent the 128 bits of entropy. The right-most 8 columns exactly mirror the left side to optimize the pattern for rapid human cognitive processing.
+    * **Border Elements**: The frame is rendered using standard single-line Unicode box-drawing characters (e.g., `U+2554`, `U+2550`, `U+2551`).
+* **Verification Enforcement**: Requires explicit manual user confirmation of both the SAS sequence and the Visual Fingerprint match across both endpoints before QUIC data streams are unblocked.
 
-*   **Pre-computation:** Sender computes a SHA-256 hash of the entire plaintext file, included in the initial metadata frame.
-*   **Verification:** Receiver computes the SHA-256 hash of the saved file and compares it to the metadata hash.
+## 16. File Streaming and Memory Management
 
-## 17. User Interface and Feedback
+* **Zero-Copy Optimizations**: Memory overhead is minimized by utilizing `io.Copy` to stream data directly from disk to the network interface in optimized chunk sizes dictated by the Go runtime and QUIC buffers.
+* **Memory Footprint**: The application does not load complete files into RAM.
 
-*   **UI Library:** Utilizes the `rich` Python library.
-*   **Progress Indicators:** Displays dynamic progress bars, transfer speeds, and ETAs.
+## 17. End-to-End File Integrity
 
-## 18. Network Socket Specifics for NAT Traversal
+* **Pre-computation**: The sender computes a SHA-256 hash of the entire plaintext file, transmitting the sum in the metadata stream.
+* **Verification**: The receiver utilizes an `io.TeeReader` to compute the SHA-256 hash concurrently as the payload is written to disk, validating the sum upon stream completion.
 
-*   **Socket Multiplexing:** Local sockets used for signaling must be the same used for P2P connection.
-*   **OS Flags:** Configured with `SO_REUSEADDR` and `SO_REUSEPORT`.
+## 18. User Interface and Feedback
+
+* **Progress Indicators**: Renders dynamic, thread-safe progress bars, transfer speeds, and ETAs via `progressbar/v3`.
+* **Context-Aware Degradation**: Utilizes `go-isatty` to perform strict TTY detection. Suppresses all UI rendering and gracefully degrades to a raw binary stream when standard output is piped or redirected, preventing corruption of the data stream.
 
 ## 19. Configuration and Environment Defaults
 
-*   **Collision Handling:** Automatically appends counters to existing filenames (e.g., `document(1).pdf`).
+* **Collision Handling**: Automatically appends incrementing integers to existing filenames to prevent overwriting (e.g., `document(1).pdf`).
 
-## 20. Project Structure and Modular Library Design
-
-Hermod is a modular, reusable library utilizing the standard `src/` layout.
+## 20. Project Structure
 
 ```text
 hermod-p2p/
-├── pyproject.toml
-├── src/
+├── go.mod
+├── go.sum
+├── cmd/
 │   └── hermod/
-│       ├── __init__.py     # Public API
-│       ├── core/           # State machine, streaming logic
-│       ├── crypto/         # PAKE adapter, KEM, AEAD
-│       ├── network/        # P2P wire protocol, sockets
-│       ├── server/         # Signaling, SQLite
-│       └── cli/            # Typer, Rich UI
-└── tests/
+│       └── main.go         
+├── internal/
+│   ├── cli/                
+│   ├── config/             
+│   ├── crypto/             
+│   ├── network/            
+│   └── server/             
+└── pkg/
+    └── transfer/           
+
 ```
 
-## 21. Library Public API
-
-The `__init__.py` exposes high-level, asynchronous classes (e.g., `P2PClient`, `FilePayload`) for third-party integration.
-
-## 22. Command Line Interface (CLI) Reference and Parameters
-
-**Global Options:**
-*   `--verbosity`: Logging level (`debug`, `info`, `warning`, `error`, `critical`). Default: `error`.
+## 21. CLI Parameter Reference
 
 **Command: `serve`**
-| Parameter / Flag | Short | Default | Description |
-| :--- | :--- | :--- | :--- |
-| `--listen` | `-l` | `0.0.0.0:8786` | Bind address (`host:port` or `[ipv6]:port`). |
-| `--db` | `-d` | `~/.hermod/signaling.db` | SQLite database path. |
-| `--ttl` | `-T` | `3600` | TTL in seconds for channels. |
 
-**Command: `tx` | `send`** *(shown as `send or tx` in help)*
-| Parameter / Flag | Short | Default | Description |
-| :--- | :--- | :--- | :--- |
-| `[INPUT]` | N/A | None | File path, text string, or `-` for stdin. Auto-detected. |
-| `--server` | `-s` | `wss://localhost:8786` | Signaling server URL. |
-| `--verify` | `-v` | `False` | Enforce SAS verification. |
-| `--listen` | `-l` | `:0` | P2P bind address (`host:port`, `[ipv6]:port`, or `:port`). `:0` = OS-assigned. |
+* `--listen` (`-l`): Bind address (`host:port`). Default: `0.0.0.0:4376`. Assigning port `0` triggers automatic ephemeral allocation.
+* `--db` (`-d`): SQLite database path. Default: `~/.config/hermod/signaling.db`.
+* `--ttl` (`-T`): TTL in seconds for channels. Default: `600`.
+* `--rate-limit`: Token bucket permitted requests per second per IP prefix. Default: `5`.
+* `--rate-burst`: Token bucket maximum burst capacity per IP prefix. Default: `15`.
 
-**Command: `rx` | `receive`** *(shown as `receive or rx` in help)*
-| Parameter / Flag | Short | Default | Description |
-| :--- | :--- | :--- | :--- |
-| `code` | N/A | Req. | Transfer code. |
-| `--destination`| `-d` | None | Output directory/file path. When omitted: text is printed, files are saved (or streamed to stdout when stdout is redirected). |
-| `--server` | `-s` | `wss://localhost:8786` | Signaling server URL. |
-| `--verify` | `-v` | `False` | Enforce SAS verification. |
-| `--yes` | `-y` | `False` | Auto-accept prompts. |
-| `--listen` | `-l` | `:0` | P2P bind address (`host:port`, `[ipv6]:port`, or `:port`). `:0` = OS-assigned. |
+**Command: `tx` | `send`**
 
-**Command: `trust`**
-| Parameter / Flag | Short | Default | Description |
-| :--- | :--- | :--- | :--- |
-| `target` | N/A | Req. | Hostname/IP format (`domain` or `domain:port`). |
+* `[INPUT]`: File path, text string, or `-`.
+* `--server` (`-s`): Signaling server URL. Default: `wss://localhost:4376`.
+* `--words` (`-w`): Number of words for the transfer code shared secret. Default: `3`.
+* `--verify` (`-v`): Enforce SAS verification.
+* `--listen` (`-l`): Local UDP bind address. Default: `:0` (OS-assigned).
 
-## 23. Environment Variables
+**Command: `rx` | `receive`**
 
-| Environment Variable | Maps to Flag | Notes |
-| :--- | :--- | :--- |
-| `HERMOD_SERVER` | `--server` | |
-| `HERMOD_LISTEN` | `--listen` | New; takes `host:port` or `[ipv6]:port` |
-| `HERMOD_PORT` | `--listen` (port part) | Deprecated; use `HERMOD_LISTEN` |
-| `HERMOD_HOST` | `--listen` (host part) | Deprecated; use `HERMOD_LISTEN` |
-| `HERMOD_DB_PATH` | `--db` | |
-| `HERMOD_DEST_DIR`| `--destination` | |
-| `HERMOD_P2P_PORT`| `--listen` (port part on send/receive) | Fixed local TCP port for P2P listener |
+* `[CODE]`: Transfer code.
+* `--destination` (`-d`): Output directory/file path.
+* `--server` (`-s`): Signaling server URL. Default: `wss://localhost:4376`.
+* `--verify` (`-v`): Enforce SAS verification.
+* `--listen` (`-l`): Local UDP bind address. Default: `:0`.
 
-## 24. Persistent Configuration Management
+## 22. Environment Variables
 
-*   **Format:** `YAML` (`config.yaml`).
-*   **Location:** `~/.config/hermod/config.yaml` or `%APPDATA%\Hermod\config.yaml`.
+* `HERMOD_SERVER`: Maps to `--server`.
+* `HERMOD_LISTEN`: Maps to `--listen`.
+* `HERMOD_DB_PATH`: Maps to `--db`.
+* `HERMOD_DEST_DIR`: Maps to `--destination`.
 
-## 25. Logging and Diagnostics
+## 23. Persistent Configuration Management
 
-*   **Log Levels:** Uses standard `logging.WARNING`, `logging.DEBUG`, etc.
-*   **Output:** Suppressed from `stdout` unless `--verbosity debug` is active. Appended to rolling log `~/.local/state/hermod/app.log`. Sensitive data is strictly masked.
+* **Format**: YAML (`config.yaml`).
+* **Location**: `~/.config/hermod/config.yaml` or `%APPDATA%\Hermod\config.yaml`.
 
-## 26. Transfer Resumability (Interruption Recovery)
+## 24. Logging and Diagnostics
 
-*   **State Tracking:** Receiver maintains `.hermod_part`.
-*   **Resume Handshake:** `PROTOCOL_HELLO` frame includes `resume_offset`.
-*   **Resume Sub-Key:** Resuming a transfer MUST call `derive_resume_key(session_key, resume_counter)` (HKDF-SHA256 with a counter-bound context string) to derive a fresh sub-key for each resumed segment. The original `Session_Key` is never reused; this eliminates the nonce-reuse risk that would arise from restarting a `SecretStream` at a non-zero offset with the same key.
+* **Implementation**: Utilizes Go's structured logging package `log/slog`.
+* **Output**: Suppressed from stdout. Output is appended to a rolling log at `~/.local/state/hermod/app.log`.
 
-## 27. Packaging and Distribution
+## 25. Packaging and Distribution
 
-*   **Distribution:** Distributed as an isolated CLI tool via `uvx hermod-p2p` and `pipx install hermod-p2p`.
-*   **Standalone Binaries:** CI/CD pipeline compiles standalone executables via PyInstaller/Nuitka.
+* **Compilation**: Distributed as a statically linked binary.
+* **Cross-Compilation**: The absence of CGO dependencies allows deterministic cross-compilation across Windows, macOS, and Linux targets natively via `GOOS` and `GOARCH` flags.
 
-## 28. Signal Handling and Graceful Shutdown
+## 26. Signal Handling and Graceful Shutdown
 
-*   **Asynchronous Registration:** Custom handlers for SIGINT and SIGTERM via `asyncio`.
-*   **Client Exit:** Dispatches `PROTOCOL_ABORT` frame, flushes buffers, and closes `.hermod_part` safely.
-*   **Server Exit:** Rejects new connections, sends `1001 Going Away` to existing clients, executes SQLite WAL checkpoint, and closes file handles to prevent corruption.
+* **Context Cancellation**: OS signals (`SIGINT`, `SIGTERM`) are captured using `os/signal` and propagated down the execution stack via `context.Context`.
+* **Cleanup**: Triggers immediate closure of QUIC streams. The receiver unconditionally deletes any incomplete payload files (.hermod_tmp) from the local disk to prevent artifact accumulation. Server closes database handles cleanly to avoid WAL corruption.
 
----
+## 27. Testing and Quality Assurance
 
-### Appendix A: Cryptographic and Serialization Specifications
-
-*   **SPAKE2**: RFC 9382 (`[https://www.rfc-editor.org/rfc/rfc9382.txt](https://www.rfc-editor.org/rfc/rfc9382.txt)`)
-*   **ML-KEM**: NIST FIPS 203 (`[https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.203.pdf](https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.203.pdf)`)
-*   **MessagePack**: Format Spec (`[https://github.com/msgpack/msgpack/blob/master/spec.md](https://github.com/msgpack/msgpack/blob/master/spec.md)`)
+* **Test Coverage Requirement**: The project mandates a minimum of 80% statement coverage. The build process must abort with an error code if the total coverage falls below this threshold. Coverage is calculated utilizing the standard command `go test -coverprofile=coverage.out ./...`.
+* **Test Framework**: All testing executes via Go's native `testing` package. No external assertion libraries (e.g., `testify`) are utilized, maintaining standardized Go paradigms and minimizing dependencies.
+* **Unit Testing**: Isolated testing of cryptographic state machines, payload classification, and NAT traversal candidate generation. Mock objects are implemented exclusively via interface substitution (e.g., passing a memory-backed `SignalingStore` instead of the SQLite implementation).
+* **End-to-End (E2E) Testing**: E2E tests are implemented using `github.com/rogpeppe/go-internal/testscript` for declarative testing of the compiled CLI binaries.
+* **E2E Execution Flow**:
+    1. The test harness compiles a temporary `hermod` executable.
+    2. A `testscript` routine starts `hermod serve` in the background, bound to a local network interface (`localhost`).
+    3. The routine executes `hermod tx` with an automatically generated test file.
+    4. The routine parses standard output (`stdout`) to extract the generated transfer code.
+    5. The routine executes `hermod rx` concurrently.
+    6. The test harness evaluates process exit codes and performs a SHA-256 hash comparison of the initial payload and the received payload to verify QUIC transport integrity and file I/O operations.
+* **Concurrency Verification**: All tests are executed with the `-race` flag enabled (`go test -race ./...`) for deterministic detection of data races in asynchronous UDP operations and QUIC stream handling.
