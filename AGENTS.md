@@ -8,7 +8,6 @@ Coding workflows: architecture -> implementation -> testing -> zero problems -> 
 
 - **No CI/CD:** Do not create GitHub Actions or any CI/CD under `.github`.
 - **Commit Messages:** Use Conventional Commits format for all commits: `<type>(<scope>): <short summary>`. Types: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`, `perf`. Reference the version when bumping (e.g. `chore(release): bump to v1.2.0`).
-- **Docs with Code:** Whenever code changes affect CLI flags, env vars, behaviour, or public API — update `README.md`, `BLUEPRINT.md`, `CONTEXT.md`, and `docs/` in the **same commit**. Never leave docs stale.
 
 ## Documentation Files
 

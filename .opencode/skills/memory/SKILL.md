@@ -1,6 +1,6 @@
 ---
 name: memory
-description: Store and recall persistent context across sessions — user preferences, architectural decisions, recurring patterns, and warnings. Load this skill before recommending tools, frameworks, or patterns; when the user says "remember", "recall", "last time", or references a past session; when the user states a rule or preference; or when a decision worth preserving is reached.
+description: Store and recall persistent context across sessions — user preferences, architectural decisions, recurring patterns, and warnings. Always load this skill and check, if exists, `docs/memory/INDEX.md` for relevance. Load this skill before recommending tools, frameworks, or patterns; when the user says "remember", "recall", "last time", or references a past session; when the user states a rule or preference; or when a decision worth preserving is reached.
 compatibility: opencode
 ---
 

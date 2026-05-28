@@ -473,7 +473,7 @@ func promptSASVerificationFrom(tlsState tls.ConnectionState, r io.Reader) (bool,
 	}
 
 	words := crypto.SASFromBytes(material)
-	fmt.Fprintf(os.Stderr, "\n=== Out-of-Band Verification ===\n")
+	fmt.Fprintf(os.Stderr, "=== Out-of-Band Verification ===\n")
 	fmt.Fprintf(os.Stderr, "SAS: %s\n", crypto.SASString(words))
 	fmt.Fprintln(os.Stderr, crypto.Identicon(material[:16]))
 	fmt.Fprint(os.Stderr, "Compare these values with the other end. Do they match? [y/N]: ")
