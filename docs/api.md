@@ -261,9 +261,17 @@ func ServerFingerprint(cfg *Config) (string, error)
 Returns the SHA-256 fingerprint of the server certificate stored in `cfg`.
 
 ```go
+func PinServer(cfg *Config, serverURL, fingerprint string)
+```
+Stores `fingerprint` in `cfg.TrustedServers[serverURL]`. Does not write to disk — call `Save` after.
+
+```go
+func SetDefaultServer(cfg *Config, serverURL string)
+```
+Sets `cfg.ServerURL` to `serverURL`. Does not write to disk — call `Save` after. Called automatically by `trust` and by `tx`/`rx` when `-s` is explicitly provided.
+
+```go
 func Path() string   // full path to config.yaml
-func Dir() string    // config directory
-func LogPath() string
 ```
 
 ---

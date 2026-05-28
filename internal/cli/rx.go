@@ -37,25 +37,33 @@ func newRxCmd() *cobra.Command {
 		Short:   "Receive a payload using a transfer code",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runRx(args[0], destination, serverURL, verify, listenUDP)
+			return runRx(args[0], destination, serverURL, verify, listenUDP, cmd.Flags().Changed("server"))
 		},
 	}
 
 	cmd.Flags().StringVarP(&destination, "destination", "d", envOrDefault("HERMOD_DEST_DIR", ""), "Output directory or file path")
-	cmd.Flags().StringVarP(&serverURL, "server", "s", envOrDefault("HERMOD_SERVER", "wss://localhost:4376"), "Signaling server URL")
+	cmd.Flags().StringVarP(&serverURL, "server", "s", configServerURL(), "Signaling server URL")
 	cmd.Flags().BoolVarP(&verify, "verify", "v", false, "Enforce SAS out-of-band verification")
 	cmd.Flags().StringVarP(&listenUDP, "listen", "l", envOrDefault("HERMOD_LISTEN", ":0"), "Local UDP bind address")
 
 	return cmd
 }
 
-func runRx(code, destination, serverURL string, verify bool, listenUDP string) error {
+func runRx(code, destination, serverURL string, verify bool, listenUDP string, saveServer bool) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
 	cfg, err := config.Load()
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
+	}
+
+	if saveServer && serverURL != cfg.ServerURL {
+		config.SetDefaultServer(cfg, serverURL)
+		if err := config.Save(cfg); err != nil {
+			return fmt.Errorf("save config: %w", err)
+		}
+		printStatus("Default server set to %s", serverURL)
 	}
 
 	// Parse transfer code

@@ -163,6 +163,23 @@ func TestPinServerNilMap(t *testing.T) {
 	}
 }
 
+func TestSetDefaultServer(t *testing.T) {
+	cfg := config.Default()
+	config.SetDefaultServer(cfg, "wss://new.example.com:4376")
+	if cfg.ServerURL != "wss://new.example.com:4376" {
+		t.Fatalf("expected %q, got %q", "wss://new.example.com:4376", cfg.ServerURL)
+	}
+}
+
+func TestTrustSetsDefaultServer(t *testing.T) {
+	cfg := config.Default()
+	config.PinServer(cfg, "wss://example.com:4376", "aabb")
+	config.SetDefaultServer(cfg, "wss://example.com:4376")
+	if cfg.ServerURL != "wss://example.com:4376" {
+		t.Fatalf("expected server URL to be set, got %q", cfg.ServerURL)
+	}
+}
+
 func TestLogPath(t *testing.T) {
 	p := config.LogPath()
 	if p == "" {

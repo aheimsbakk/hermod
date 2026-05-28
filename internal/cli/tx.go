@@ -49,11 +49,11 @@ func newTxCmd() *cobra.Command {
 			if len(args) > 0 {
 				input = args[0]
 			}
-			return runTx(input, serverURL, numWords, verify, listenUDP)
+			return runTx(input, serverURL, numWords, verify, listenUDP, cmd.Flags().Changed("server"))
 		},
 	}
 
-	cmd.Flags().StringVarP(&serverURL, "server", "s", envOrDefault("HERMOD_SERVER", "wss://localhost:4376"), "Signaling server URL")
+	cmd.Flags().StringVarP(&serverURL, "server", "s", configServerURL(), "Signaling server URL")
 	cmd.Flags().IntVarP(&numWords, "words", "w", 3, "Number of words in transfer code")
 	cmd.Flags().BoolVarP(&verify, "verify", "v", false, "Enforce SAS out-of-band verification")
 	cmd.Flags().StringVarP(&listenUDP, "listen", "l", envOrDefault("HERMOD_LISTEN", ":0"), "Local UDP bind address")
@@ -61,13 +61,21 @@ func newTxCmd() *cobra.Command {
 	return cmd
 }
 
-func runTx(input, serverURL string, numWords int, verify bool, listenUDP string) error {
+func runTx(input, serverURL string, numWords int, verify bool, listenUDP string, saveServer bool) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
 	cfg, err := config.Load()
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
+	}
+
+	if saveServer && serverURL != cfg.ServerURL {
+		config.SetDefaultServer(cfg, serverURL)
+		if err := config.Save(cfg); err != nil {
+			return fmt.Errorf("save config: %w", err)
+		}
+		printStatus("Default server set to %s", serverURL)
 	}
 
 	// Determine payload kind

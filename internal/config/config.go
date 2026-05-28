@@ -202,3 +202,9 @@ func PinServer(cfg *Config, serverURL, fingerprint string) {
 	}
 	cfg.TrustedServers[serverURL] = fingerprint
 }
+
+// SetDefaultServer sets cfg.ServerURL to serverURL.
+// Call Save after to persist the change.
+func SetDefaultServer(cfg *Config, serverURL string) {
+	cfg.ServerURL = serverURL
+}

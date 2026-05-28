@@ -104,3 +104,18 @@ func envOrDefault(key, def string) string {
 	}
 	return def
 }
+
+// configServerURL returns the default server URL using this priority order:
+//  1. HERMOD_SERVER environment variable
+//  2. server_url stored in the config file
+//  3. hardcoded fallback ("wss://localhost:4376")
+func configServerURL() string {
+	if v := os.Getenv("HERMOD_SERVER"); v != "" {
+		return v
+	}
+	cfg, err := config.Load()
+	if err == nil && cfg.ServerURL != "" {
+		return cfg.ServerURL
+	}
+	return "wss://localhost:4376"
+}

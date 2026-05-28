@@ -30,7 +30,7 @@ All data is end-to-end encrypted and never passes through the signaling server.`
 
 	root.PersistentFlags().StringVar(
 		&verboseStr, "verbose", "none",
-		`Log verbosity: none, error, warning, info, debug (default: none)`,
+		`Log verbosity: none, error, warning, info, debug`,
 	)
 
 	root.AddCommand(newServeCmd())

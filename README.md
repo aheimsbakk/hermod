@@ -56,8 +56,7 @@ hermod tx [INPUT] [flags]
 
 | Flag | Default | Description |
 |---|---|---|
-| `-s`, `--server` | `wss://localhost:4376` | Signaling server URL |
-| `-w`, `--words` | `3` | Number of words in the transfer code |
+| `-s`, `--server` | `wss://localhost:4376` | Signaling server URL (saved as default when specified) |
 | `-l`, `--listen` | `:0` | Local UDP bind address |
 | `-v`, `--verify` | off | Require out-of-band SAS verification (symmetric — enforced on both sides) |
 | `--verbose` | `none` | Log verbosity: `none`, `error`, `warning`, `info`, `debug` |
@@ -85,7 +84,7 @@ hermod rx [CODE] [flags]
 
 | Flag | Default | Description |
 |---|---|---|
-| `-s`, `--server` | `wss://localhost:4376` | Signaling server URL |
+| `-s`, `--server` | `wss://localhost:4376` | Signaling server URL (saved as default when specified) |
 | `-d`, `--destination` | current directory | Output path |
 | `-l`, `--listen` | `:0` | Local UDP bind address |
 | `-v`, `--verify` | off | Require out-of-band SAS verification (symmetric — enforced on both sides) |
@@ -124,7 +123,7 @@ You can also set the bind address via the `HERMOD_LISTEN` environment variable.
 hermod trust [SERVER_URL]
 ```
 
-Connects to the server, fetches its certificate fingerprint, and saves it to the local config. Subsequent connections to that server verify the fingerprint.
+Connects to the server, fetches its certificate fingerprint, saves it to the local config, and sets the server as the default for future `tx` and `rx` calls.
 
 ```bash
 ./hermod trust wss://relay.example.com:4376

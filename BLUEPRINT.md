@@ -23,7 +23,7 @@ VERSION                     — current version (0.2.0)
 
 ### Config (config.yaml)
 ```
-server_url: wss://localhost:4376
+server_url: wss://localhost:4376   # updated when trust is run or -s is used in tx/rx
 listen: :0
 tls_configuration:
   prefer_curves: [X25519MLKEM768, X25519, CurveP256]

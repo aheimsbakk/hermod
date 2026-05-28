@@ -42,11 +42,12 @@ func runTrust(serverArg string) error {
 	}
 
 	config.PinServer(cfg, serverURL, fp)
+	config.SetDefaultServer(cfg, serverURL)
 
 	if err := config.Save(cfg); err != nil {
 		return fmt.Errorf("save config: %w", err)
 	}
 
-	printStatus("Pinned %s\n  fingerprint: %s", serverURL, fp)
+	printStatus("Pinned %s\n  fingerprint: %s\n  set as default server", serverURL, fp)
 	return nil
 }
