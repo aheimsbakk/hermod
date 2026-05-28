@@ -5,6 +5,7 @@
 ```
 cmd/hermod/main.go          — binary entry, cobra root
 internal/cli/               — serve, trust, tx, rx commands
+internal/cli/verbosity.go   — --verbose flag parsing, slog/stdlog wiring
 internal/config/            — YAML config load/save, TLS helpers, cert generation
 internal/crypto/            — CPace PAKE (P-256), AES-256-GCM, SAS, identicon, transfer codes
 internal/server/            — MemoryStore SignalingStore, WebSocket relay, rate limiter, TTL GC
@@ -15,7 +16,7 @@ docs/protocol.md            — wire protocol specification
 docs/api.md                 — internal package API reference
 docs/worklogs/              — session worklogs
 scripts/                    — bump-version.sh, validate-worklog.sh
-VERSION                     — current version (0.1.0)
+VERSION                     — current version (0.2.0)
 ```
 
 ## Key Data Models

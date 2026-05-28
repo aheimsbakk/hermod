@@ -60,6 +60,7 @@ hermod tx [INPUT] [flags]
 | `-w`, `--words` | `3` | Number of words in the transfer code |
 | `-l`, `--listen` | `:0` | Local UDP bind address |
 | `-v`, `--verify` | off | Require out-of-band SAS verification |
+| `--verbose` | `none` | Log verbosity: `none`, `error`, `warning`, `info`, `debug` |
 
 **Examples:**
 ```bash
@@ -88,6 +89,7 @@ hermod rx [CODE] [flags]
 | `-d`, `--destination` | current directory | Output path |
 | `-l`, `--listen` | `:0` | Local UDP bind address |
 | `-v`, `--verify` | off | Require out-of-band SAS verification |
+| `--verbose` | `none` | Log verbosity: `none`, `error`, `warning`, `info`, `debug` |
 
 **Examples:**
 ```bash
@@ -110,6 +112,7 @@ hermod serve [flags]
 | `-T`, `--ttl` | `600` | Channel TTL in seconds |
 | `--rate-limit` | `5` | Requests per second per IP prefix |
 | `--rate-burst` | `15` | Burst capacity per IP prefix |
+| `--verbose` | `none` | Log verbosity: `none`, `error`, `warning`, `info`, `debug` |
 
 The server generates a self-signed TLS certificate on first run and saves it to the config directory (`~/.config/hermod/` on Linux).
 
@@ -138,7 +141,13 @@ Hermod stores its config in:
 - Linux/macOS: `~/.config/hermod/config.yaml`
 - The server certificate PEM is stored in the same file
 
-No environment variables are required for normal use. The only supported env var is `HERMOD_LISTEN` for the serve command.
+No environment variables are required for normal use. Supported env vars:
+
+| Variable | Commands | Description |
+|---|---|---|
+| `HERMOD_SERVER` | `tx`, `rx` | Default signaling server URL |
+| `HERMOD_LISTEN` | `tx`, `rx`, `serve` | Default UDP / TCP bind address |
+| `HERMOD_DEST_DIR` | `rx` | Default output directory |
 
 ## How it works
 
