@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"os/signal"
 	"strings"
@@ -147,7 +148,7 @@ func runRx(code, destination, serverURL string, verify bool, listenUDP string) e
 	if err != nil {
 		localEPs = []string{}
 	}
-	publicEP := fmt.Sprintf("%s:%d", publicIP, localAddr.Port)
+	publicEP := net.JoinHostPort(publicIP, fmt.Sprintf("%d", localAddr.Port))
 	myBundle := network.EndpointBundle{
 		LocalEndpoints:  localEPs,
 		PublicEndpoint:  publicEP,

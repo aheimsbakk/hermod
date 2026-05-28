@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"math/big"
+	"net"
 	"os"
 	"os/signal"
 	"strings"
@@ -159,7 +160,7 @@ func runTx(input, serverURL string, numWords int, verify bool, listenUDP string)
 	if err != nil {
 		localEPs = []string{}
 	}
-	publicEP := fmt.Sprintf("%s:%d", publicIP, localAddr.Port)
+	publicEP := net.JoinHostPort(publicIP, fmt.Sprintf("%d", localAddr.Port))
 
 	bundle := network.EndpointBundle{
 		LocalEndpoints:  localEPs,
