@@ -53,7 +53,7 @@ Implementation: `MemoryStore` (default, in-process). SQLite removed.
 
 ### EndpointBundle (JSON, AES-256-GCM encrypted, relayed via signaling)
 ```json
-{"local_endpoints":["192.168.1.5:51234"],"public_endpoint":"1.2.3.4:51234","cert_fingerprint":"hex"}
+{"local_endpoints":["192.168.1.5:51234"],"public_endpoint":"1.2.3.4:51234","cert_fingerprint":"hex","require_verify":false}
 ```
 
 ## Interfaces
@@ -72,5 +72,5 @@ Implementation: `MemoryStore` (default, in-process). SQLite removed.
 5. UDP hole punch to peer candidates
 6. QUIC connection (TLS 1.3, ephemeral RSA-2048 certs, fingerprint-pinned)
 7. Stream 0: 4-byte-prefixed JSON metadata; Stream 1: raw payload bytes
-8. Receiver verifies SHA-256; optional SAS out-of-band confirmation
+8. Receiver verifies SHA-256; optional SAS out-of-band confirmation (symmetric: if either side uses `-v`, both are enforced)
 9. Receiver sends ack stream; sender waits before closing QUIC connection

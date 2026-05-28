@@ -17,6 +17,7 @@ type EndpointBundle struct {
 	LocalEndpoints  []string `json:"local_endpoints"`  // host:port UDP candidates
 	PublicEndpoint  string   `json:"public_endpoint"`  // server-reflexive host:port
 	CertFingerprint string   `json:"cert_fingerprint"` // SHA-256 hex of ephemeral TLS cert
+	RequireVerify   bool     `json:"require_verify"`   // true if this side requires SAS verification
 }
 
 // EncodeCPaceMsg serializes a CPaceMsg to JSON.

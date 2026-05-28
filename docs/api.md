@@ -131,12 +131,13 @@ type EndpointBundle struct {
     LocalEndpoints  []string
     PublicEndpoint  string
     CertFingerprint string
+    RequireVerify   bool
 }
 
 func EncodeEndpointBundle(b EndpointBundle) ([]byte, error)
 func DecodeEndpointBundle(data []byte) (EndpointBundle, error)
 ```
-JSON serialisation for the encrypted endpoint exchange.
+JSON serialisation for the encrypted endpoint exchange. `RequireVerify` is `true` when the local peer was started with `--verify`. After decoding the peer bundle, the caller merges the flags: `verify = local || peer.RequireVerify`.
 
 ```go
 func LocalEndpoints(localPort int) ([]string, error)

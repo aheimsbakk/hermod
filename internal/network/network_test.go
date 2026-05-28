@@ -168,6 +168,45 @@ func TestPacketMuxMethods(t *testing.T) {
 	mux.Close() // void — just ensure no panic
 }
 
+// TestEndpointBundleRequireVerify ensures RequireVerify round-trips through JSON.
+func TestEndpointBundleRequireVerify(t *testing.T) {
+	bundle := network.EndpointBundle{
+		LocalEndpoints:  []string{"192.168.1.1:4376"},
+		PublicEndpoint:  "1.2.3.4:4376",
+		CertFingerprint: "aabbccdd",
+		RequireVerify:   true,
+	}
+	data, err := network.EncodeEndpointBundle(bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := network.DecodeEndpointBundle(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !decoded.RequireVerify {
+		t.Fatal("RequireVerify should be true after round-trip")
+	}
+
+	// A bundle without RequireVerify should default to false
+	bundleNoVerify := network.EndpointBundle{
+		LocalEndpoints:  []string{"192.168.1.1:4376"},
+		PublicEndpoint:  "1.2.3.4:4376",
+		CertFingerprint: "aabbccdd",
+	}
+	data2, err := network.EncodeEndpointBundle(bundleNoVerify)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded2, err := network.DecodeEndpointBundle(data2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decoded2.RequireVerify {
+		t.Fatal("RequireVerify should be false when not set")
+	}
+}
+
 // Ensure json round-trip of message type constants.
 func TestMessageTypeSerialization(t *testing.T) {
 	type msgTest struct {

@@ -88,18 +88,25 @@ The `channelID` and `role` are mixed into the hash-to-curve input as domain sepa
 
 ## Endpoint exchange
 
-After CPace, each peer encrypts its candidate UDP addresses and ephemeral TLS certificate fingerprint with `K` using AES-256-GCM, then relays the ciphertext through the signaling server.
+After CPace, each peer encrypts its candidate UDP addresses, ephemeral TLS certificate fingerprint, and verify flag with `K` using AES-256-GCM, then relays the ciphertext through the signaling server.
 
 Plaintext endpoint bundle (JSON before encryption):
 ```json
 {
   "local_endpoints": ["192.168.1.5:51234", "10.0.0.2:51234"],
   "public_endpoint": "203.0.113.7:51234",
-  "cert_fingerprint": "a3f9...64 hex chars..."
+  "cert_fingerprint": "a3f9...64 hex chars...",
+  "require_verify": false
 }
 ```
 
-The receiver decrypts the sender's bundle and vice versa. A decryption failure aborts the connection.
+`require_verify` is `true` when this peer was started with `--verify`. After each side decrypts the peer's bundle, it computes:
+
+```
+verify = local_verify || peer.require_verify
+```
+
+If either side requested verification, both sides perform it. The merged value is used for the rest of the session.
 
 ## NAT hole punching
 
@@ -128,9 +135,20 @@ QUIC configuration:
 
 ## Payload transfer
 
-The sender opens two sequential QUIC streams.
+The sender opens QUIC streams in order. When SAS verification is active, stream 0 is the SAS coordination stream. Metadata and payload follow.
 
-### Stream 0 — metadata
+### Stream 0 — SAS coordination (only when verify is active)
+
+Each peer independently prompts the user to confirm the SAS values out-of-band. After the user answers, both sides exchange a single byte on this stream:
+
+- `0x01` — confirmed
+- `0x00` — rejected
+
+The sender opens the stream, writes its byte, then reads the peer's byte. The receiver accepts the stream, reads the peer's byte, then writes its own. The transfer proceeds only if **both** bytes are `0x01`. If either side rejects, both peers receive an error and the QUIC connection is closed before any payload is sent.
+
+This design means neither side can abort the other before they have had a chance to respond.
+
+### Stream 1 (or 0 without verify) — metadata
 
 A 4-byte big-endian length prefix followed by a JSON object:
 
@@ -143,28 +161,28 @@ A 4-byte big-endian length prefix followed by a JSON object:
 }
 ```
 
-`kind` is either `"file"` or `"text"`.  
+`kind` is either `"file"`, `"text"`, or `"stream"`.  
 `name` is set only for `kind = "file"`.  
 `sha256` is the hex-encoded SHA-256 of the payload bytes.
 
-### Stream 1 — payload
+### Stream 2 (or 1 without verify) — payload
 
 Raw bytes of the file or text, sent in order. No framing.
 
-The receiver reads stream 1 through a `TeeReader` that simultaneously writes to the output and feeds a running SHA-256 hash. After the stream closes, the computed hash is compared to `sha256` from the metadata. A mismatch aborts with an error and the partial output is discarded.
+The receiver reads the payload stream through a `TeeReader` that simultaneously writes to the output and feeds a running SHA-256 hash. After the stream closes, the computed hash is compared to `sha256` from the metadata. A mismatch aborts with an error and the partial output is discarded.
 
-### Stream 2 — completion ack
+### Completion ack stream
 
-After the payload is saved and verified, the receiver opens a third QUIC stream and immediately closes it. The sender waits to accept this stream before closing the QUIC connection. This prevents the connection from tearing down before the receiver has finished reading streams 0 and 1.
+After the payload is saved and verified, the receiver opens one final QUIC stream and immediately closes it. The sender waits to accept this stream before closing the QUIC connection. This prevents the connection from tearing down before the receiver has finished reading the payload.
 
 ## SAS verification (optional)
 
-When both peers pass `--verify`, after the QUIC handshake each peer calls `tls.ConnectionState.ExportKeyingMaterial("hermod-sas-v1", nil, 32)` to derive 32 bytes of key material bound to the session. These bytes are used to generate:
+When `verify` is active (see Endpoint exchange above), after the QUIC handshake each peer calls `tls.ConnectionState.ExportKeyingMaterial("hermod-sas-v1", nil, 32)` to derive 32 bytes of key material bound to the session. These bytes are used to generate:
 
-- A **Short Authentication String** — a sequence of English words from a fixed wordlist
-- An **identicon** — a small ASCII art image derived from the first 16 bytes
+- A **Short Authentication String (SAS)** — a sequence of English words from a fixed wordlist
+- An **identicon** — a symmetric ASCII art image derived from the first 16 bytes, rendered inside a double-line box frame with one space of padding inside each vertical border (`║ … ║`)
 
-Both peers display these values. The user compares them out-of-band (voice, Signal, etc.) and confirms or rejects. A rejection closes the QUIC connection before any payload is sent.
+Both peers display these values simultaneously. The user compares them out-of-band (voice, Signal, etc.) and confirms or rejects. User input is always read from the controlling terminal (`/dev/tty` on Unix, `CONIN$` on Windows) so the prompt works correctly when stdin is piped. The result is then exchanged over the SAS coordination stream (see Payload transfer above). A rejection by either side closes the QUIC connection before any payload is sent.
 
 ## Security considerations
 

@@ -59,7 +59,7 @@ hermod tx [INPUT] [flags]
 | `-s`, `--server` | `wss://localhost:4376` | Signaling server URL |
 | `-w`, `--words` | `3` | Number of words in the transfer code |
 | `-l`, `--listen` | `:0` | Local UDP bind address |
-| `-v`, `--verify` | off | Require out-of-band SAS verification |
+| `-v`, `--verify` | off | Require out-of-band SAS verification (symmetric — enforced on both sides) |
 | `--verbose` | `none` | Log verbosity: `none`, `error`, `warning`, `info`, `debug` |
 
 **Examples:**
@@ -88,7 +88,7 @@ hermod rx [CODE] [flags]
 | `-s`, `--server` | `wss://localhost:4376` | Signaling server URL |
 | `-d`, `--destination` | current directory | Output path |
 | `-l`, `--listen` | `:0` | Local UDP bind address |
-| `-v`, `--verify` | off | Require out-of-band SAS verification |
+| `-v`, `--verify` | off | Require out-of-band SAS verification (symmetric — enforced on both sides) |
 | `--verbose` | `none` | Log verbosity: `none`, `error`, `warning`, `info`, `debug` |
 
 **Examples:**
@@ -133,7 +133,11 @@ Connects to the server, fetches its certificate fingerprint, and saves it to the
 
 ## SAS verification
 
-When both sides pass `--verify`, the tool displays a short word phrase and an identicon after the QUIC handshake. Compare these out-of-band (voice call, Signal message) with the other person. If they match, type `y` to allow the transfer. This detects active man-in-the-middle attacks.
+Pass `--verify` (`-v`) on **either** `tx` or `rx` — or both — to enable out-of-band SAS verification. The flag is symmetric: whichever side requests it causes both sides to perform verification automatically. Neither side can use `-v` without the other being enforced.
+
+After the QUIC handshake, both sides display a short word phrase and an identicon. Compare these out-of-band (voice call, Signal message) with the other person. If they match, type `y` to allow the transfer. This detects active man-in-the-middle attacks.
+
+The prompt always reads from the controlling terminal (`/dev/tty` on Unix, `CONIN$` on Windows). This means `--verify` works correctly even when stdin is piped — for example, `echo secret | hermod tx -v -` will still show the prompt and wait for your `y`/`n` answer.
 
 ## Configuration
 

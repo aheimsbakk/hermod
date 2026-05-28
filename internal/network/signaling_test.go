@@ -242,7 +242,7 @@ func TestDialSignalingAllocateJoinErrorBranch(t *testing.T) {
 	}
 }
 
-func TestSignalingAllocateThenRecvBlob(t *testing.T) {
+func TestSignalingWithContextCancellation(t *testing.T) {
 	addr := startSignalingServer(t)
 	serverURL := "wss://" + addr
 
@@ -252,11 +252,31 @@ func TestSignalingAllocateThenRecvBlob(t *testing.T) {
 	}
 	defer client.Close()
 
-	_, err = client.Allocate(7777)
-	if err != nil {
+	if _, err := client.Allocate(8888); err != nil {
 		t.Fatalf("allocate: %v", err)
 	}
 
-	// RecvBlob with no peer should eventually fail/timeout — just verify it doesn't panic.
-	// We test RecvBlob indirectly in blob exchange test.
+	ctx, cancel := context.WithCancel(context.Background())
+	c := client.WithContext(ctx)
+
+	// Cancel shortly after starting the blocking RecvBlob.
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		cancel()
+	}()
+
+	start := time.Now()
+	_, err = c.RecvBlob()
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("expected error after context cancellation, got nil")
+	}
+	if elapsed > 2*time.Second {
+		t.Fatalf("RecvBlob took too long after cancel: %v", elapsed)
+	}
+	// Error must be context.Canceled (not a raw net error).
+	if err != context.Canceled {
+		t.Fatalf("expected context.Canceled, got: %v", err)
+	}
 }

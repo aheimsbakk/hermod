@@ -381,7 +381,7 @@ func Identicon(keyMaterial []byte) string {
 
 	var sb strings.Builder
 	sb.WriteRune(boxTopLeft)
-	for i := 0; i < 16; i++ {
+	for i := 0; i < 18; i++ {
 		sb.WriteRune(boxHoriz)
 	}
 	sb.WriteRune(boxTopRight)
@@ -389,18 +389,20 @@ func Identicon(keyMaterial []byte) string {
 
 	for row := 0; row < 8; row++ {
 		sb.WriteRune(boxVert)
+		sb.WriteByte(' ')
 		for col := 0; col < 8; col++ {
 			sb.WriteRune(grid[row][col])
 		}
 		for col := 7; col >= 0; col-- {
 			sb.WriteRune(grid[row][col])
 		}
+		sb.WriteByte(' ')
 		sb.WriteRune(boxVert)
 		sb.WriteByte('\n')
 	}
 
 	sb.WriteRune(boxBottomLeft)
-	for i := 0; i < 16; i++ {
+	for i := 0; i < 18; i++ {
 		sb.WriteRune(boxHoriz)
 	}
 	sb.WriteRune(boxBottomRight)

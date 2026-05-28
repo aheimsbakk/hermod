@@ -2,11 +2,13 @@
 package network
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"time"
 
 	"github.com/gorilla/websocket"
 
@@ -16,6 +18,7 @@ import (
 // SignalingClient manages a WebSocket connection to the signaling server.
 type SignalingClient struct {
 	conn *websocket.Conn
+	ctx  context.Context
 }
 
 // dialSignaling opens a WebSocket connection to serverURL, pinning the cert
@@ -68,12 +71,34 @@ func dialSignaling(serverURL string, pinnedFingerprint string) (*SignalingClient
 	if err != nil {
 		return nil, fmt.Errorf("ws dial %s: %w", wsURL, err)
 	}
-	return &SignalingClient{conn: conn}, nil
+	return &SignalingClient{conn: conn, ctx: context.Background()}, nil
 }
 
 // DialSignaling opens a WebSocket to serverURL with optional cert pinning.
 func DialSignaling(serverURL, pinnedFingerprint string) (*SignalingClient, error) {
 	return dialSignaling(serverURL, pinnedFingerprint)
+}
+
+// WithContext returns a copy of the client whose blocking reads are cancelled
+// when ctx is done. It starts a background goroutine that, on cancellation,
+// sets a past read deadline on the connection to unblock any pending Recv call.
+func (c *SignalingClient) WithContext(ctx context.Context) *SignalingClient {
+	child := &SignalingClient{conn: c.conn, ctx: ctx}
+	go func() {
+		<-ctx.Done()
+		// Unblock any blocking ReadJSON by expiring the read deadline.
+		_ = c.conn.SetReadDeadline(time.Unix(0, 0))
+	}()
+	return child
+}
+
+// ctxErr returns ctx.Err() if the context is done, otherwise returns err.
+// Use this to surface cancellation instead of a raw net timeout error.
+func (c *SignalingClient) ctxErr(err error) error {
+	if err != nil && c.ctx.Err() != nil {
+		return c.ctx.Err()
+	}
+	return err
 }
 
 // Close closes the WebSocket connection.
@@ -90,7 +115,7 @@ func (c *SignalingClient) Send(msg server.Message) error {
 func (c *SignalingClient) Recv() (server.Message, error) {
 	var msg server.Message
 	err := c.conn.ReadJSON(&msg)
-	return msg, err
+	return msg, c.ctxErr(err)
 }
 
 // Allocate sends an allocate request for channelID.

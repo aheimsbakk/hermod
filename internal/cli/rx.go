@@ -74,11 +74,12 @@ func runRx(code, destination, serverURL string, verify bool, listenUDP string) e
 
 	// Connect to signaling server
 	pinnedFP := cfg.TrustedServers[serverURL]
-	sig, err := network.DialSignaling(serverURL, pinnedFP)
+	sigRaw, err := network.DialSignaling(serverURL, pinnedFP)
 	if err != nil {
 		return fmt.Errorf("signaling connect: %w", err)
 	}
-	defer sig.Close()
+	defer sigRaw.Close()
+	sig := sigRaw.WithContext(ctx)
 
 	// Join channel
 	publicIP, err := sig.Join(channelID)
@@ -143,6 +144,9 @@ func runRx(code, destination, serverURL string, verify bool, listenUDP string) e
 		return fmt.Errorf("decode sender bundle: %w", err)
 	}
 
+	// Enforce verification symmetrically: if either side requires it, both must do it.
+	verify = verify || senderBundle.RequireVerify
+
 	// Send our bundle
 	localEPs, err := network.LocalEndpoints(localAddr.Port)
 	if err != nil {
@@ -153,6 +157,7 @@ func runRx(code, destination, serverURL string, verify bool, listenUDP string) e
 		LocalEndpoints:  localEPs,
 		PublicEndpoint:  publicEP,
 		CertFingerprint: myFP,
+		RequireVerify:   verify,
 	}
 	myBundleBytes, err := network.EncodeEndpointBundle(myBundle)
 	if err != nil {
@@ -201,7 +206,7 @@ func runRx(code, destination, serverURL string, verify bool, listenUDP string) e
 	// SAS verification
 	if verify {
 		quicState := quicConn.ConnectionState()
-		if err := performSASVerification(quicState.TLS); err != nil {
+		if err := performSASCoordinated(ctx, quicConn, quicState.TLS, false); err != nil {
 			return err
 		}
 	}
@@ -260,8 +265,13 @@ func receivePayload(ctx context.Context, meta *transfer.Metadata, r io.Reader, d
 		// Interactive terminal
 		switch meta.Kind {
 		case transfer.KindText, transfer.KindStream:
-			// Print to stdout; trailing newline to stderr so it doesn't pollute piped output.
-			_, err := io.Copy(os.Stdout, r)
+			// Print to stdout; show progress bar on stderr when size is known.
+			var src io.Reader = r
+			if meta.Size > 0 {
+				bar := progressbar.DefaultBytes(meta.Size, "receiving")
+				src = io.TeeReader(r, bar)
+			}
+			_, err := io.Copy(os.Stdout, src)
 			if err != nil {
 				return err
 			}
