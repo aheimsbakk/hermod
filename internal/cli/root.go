@@ -2,10 +2,15 @@
 package cli
 
 import (
+	"fmt"
+	"os"
+
 	"github.com/spf13/cobra"
 )
 
 func newRootCmd() *cobra.Command {
+	var verboseStr string
+
 	root := &cobra.Command{
 		Use:   "hermod",
 		Short: "Hermod — secure peer-to-peer file and text transfer",
@@ -13,7 +18,21 @@ func newRootCmd() *cobra.Command {
 All data is end-to-end encrypted and never passes through the signaling server.`,
 		SilenceUsage:  true,
 		SilenceErrors: false,
+		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			level, ok := parseVerboseLevel(verboseStr)
+			if !ok {
+				return fmt.Errorf("invalid --verbose value %q: must be one of none, error, warning, info, debug", verboseStr)
+			}
+			applyVerbosity(level)
+			return nil
+		},
 	}
+
+	root.PersistentFlags().StringVar(
+		&verboseStr, "verbose", "none",
+		`Log verbosity: none, error, warning, info, debug (default: none)`,
+	)
+
 	root.AddCommand(newServeCmd())
 	root.AddCommand(newTrustCmd())
 	root.AddCommand(newTxCmd())
@@ -32,4 +51,10 @@ func ExecuteArgs(args []string) error {
 	cmd := newRootCmd()
 	cmd.SetArgs(args[1:])
 	return cmd.Execute()
+}
+
+// printStatus writes a user-facing status line to stderr.
+// Always shown regardless of --verbose level.
+func printStatus(format string, a ...any) {
+	fmt.Fprintf(os.Stderr, format+"\n", a...)
 }

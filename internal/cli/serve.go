@@ -55,7 +55,7 @@ func runServe(listenAddr string, ttl time.Duration, rateLimit, rateBurst float64
 		if err := config.Save(cfg); err != nil {
 			return fmt.Errorf("save config: %w", err)
 		}
-		fmt.Fprintln(os.Stderr, "Generated new server certificate and saved to config.")
+		logInfo("Generated new server certificate and saved to config.")
 	}
 
 	cert, err := config.LoadServerTLSCert(cfg)
@@ -66,23 +66,26 @@ func runServe(listenAddr string, ttl time.Duration, rateLimit, rateBurst float64
 	tlsCfg := config.BuildTLSConfig(cfg)
 	tlsCfg.Certificates = []tls.Certificate{cert}
 
-	// Open store
 	store := server.NewMemoryStore()
 	defer store.Close()
 
 	rl := server.NewRateLimiter(rateLimit, rateBurst)
 
 	if err := config.EnsureLogDir(); err != nil {
-		slog.Warn("could not create log dir", "err", err)
+		logWarn("could not create log dir", "err", err)
 	}
 	logFile, err := os.OpenFile(config.LogPath(), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
-		slog.Warn("could not open log file", "err", err)
+		logWarn("could not open log file", "err", err)
 		logFile = os.Stderr
 	} else {
 		defer logFile.Close()
 	}
-	logger := slog.New(slog.NewJSONHandler(logFile, nil))
+
+	// The serve command always logs to file at the active verbosity level.
+	logger := slog.New(slog.NewJSONHandler(logFile, &slog.HandlerOptions{
+		Level: toSlogLevel(currentLevel),
+	}))
 
 	srv := server.NewServer(store, rl, ttl, logger)
 
@@ -91,7 +94,7 @@ func runServe(listenAddr string, ttl time.Duration, rateLimit, rateBurst float64
 
 	server.RunGC(ctx, store, 60*time.Second)
 
-	fmt.Fprintf(os.Stderr, "hermod serve listening on %s\n", listenAddr)
+	printStatus("hermod serve listening on %s", listenAddr)
 	return srv.ListenAndServe(ctx, listenAddr, tlsCfg)
 }
 

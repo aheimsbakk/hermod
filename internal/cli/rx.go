@@ -174,7 +174,7 @@ func runRx(code, destination, serverURL string, verify bool, listenUDP string) e
 		return fmt.Errorf("parse candidates: %w", err)
 	}
 
-	fmt.Fprintln(os.Stderr, "Establishing P2P connection...")
+	printStatus("Establishing P2P connection...")
 	punchResult, err := network.HolePunch(ctx, mux, candidates)
 	if err != nil {
 		return fmt.Errorf("hole punch: %w", err)
@@ -266,6 +266,7 @@ func receivePayload(ctx context.Context, meta *transfer.Metadata, r io.Reader, d
 				return err
 			}
 			fmt.Println()
+			logDebug("text received, printed to stdout")
 			return nil
 
 		case transfer.KindFile:
@@ -316,7 +317,7 @@ func saveToFile(r io.Reader, meta *transfer.Metadata, destination string) error 
 		return fmt.Errorf("finalize file: %w", err)
 	}
 
-	fmt.Fprintf(os.Stderr, "\nSaved to %s\n", destPath)
+	printStatus("\nSaved to %s", destPath)
 	return nil
 }
 

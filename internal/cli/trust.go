@@ -3,7 +3,6 @@ package cli
 
 import (
 	"fmt"
-	"os"
 
 	"github.com/spf13/cobra"
 
@@ -30,7 +29,7 @@ func runTrust(serverArg string) error {
 		serverURL = "wss://" + serverURL
 	}
 
-	fmt.Fprintf(os.Stderr, "Connecting to %s to fetch certificate...\n", serverURL)
+	printStatus("Connecting to %s to fetch certificate...", serverURL)
 
 	fp, err := network.FetchServerFingerprint(serverURL)
 	if err != nil {

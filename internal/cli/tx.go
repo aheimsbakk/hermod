@@ -202,7 +202,7 @@ func runTx(input, serverURL string, numWords int, verify bool, listenUDP string)
 	}
 
 	// UDP hole punching
-	fmt.Fprintln(os.Stderr, "Establishing P2P connection...")
+	printStatus("Establishing P2P connection...")
 	punchResult, err := network.HolePunch(ctx, mux, candidates)
 	if err != nil {
 		return fmt.Errorf("hole punch: %w", err)
@@ -283,7 +283,7 @@ func runTx(input, serverURL string, numWords int, verify bool, listenUDP string)
 		ackStream.Close()
 	}
 
-	fmt.Fprintln(os.Stderr, "Transfer complete.")
+	printStatus("Transfer complete.")
 	return nil
 }
 
