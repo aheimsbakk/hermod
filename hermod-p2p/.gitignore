@@ -1,6 +1,5 @@
 # Build output
-hermod
-hermod-p2p/hermod
+/hermod
 
 # Test coverage artifacts
 *.out
