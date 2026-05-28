@@ -153,6 +153,10 @@ Raw bytes of the file or text, sent in order. No framing.
 
 The receiver reads stream 1 through a `TeeReader` that simultaneously writes to the output and feeds a running SHA-256 hash. After the stream closes, the computed hash is compared to `sha256` from the metadata. A mismatch aborts with an error and the partial output is discarded.
 
+### Stream 2 — completion ack
+
+After the payload is saved and verified, the receiver opens a third QUIC stream and immediately closes it. The sender waits to accept this stream before closing the QUIC connection. This prevents the connection from tearing down before the receiver has finished reading streams 0 and 1.
+
 ## SAS verification (optional)
 
 When both peers pass `--verify`, after the QUIC handshake each peer calls `tls.ConnectionState.ExportKeyingMaterial("hermod-sas-v1", nil, 32)` to derive 32 bytes of key material bound to the session. These bytes are used to generate:

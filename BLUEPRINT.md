@@ -10,7 +10,12 @@ internal/crypto/            — CPace PAKE (P-256), AES-256-GCM, SAS, identicon,
 internal/server/            — MemoryStore SignalingStore, WebSocket relay, rate limiter, TTL GC
 internal/network/           — UDP mux (SO_REUSEADDR/REUSEPORT), hole punching, QUIC dial/listen, signaling client
 pkg/transfer/               — payload metadata, stream classification, SHA-256 integrity
-docs/                       — README, protocol.md, api.md
+README.md                   — user-facing documentation
+docs/protocol.md            — wire protocol specification
+docs/api.md                 — internal package API reference
+docs/worklogs/              — session worklogs
+scripts/                    — bump-version.sh, validate-worklog.sh
+VERSION                     — current version (0.1.0)
 ```
 
 ## Key Data Models
@@ -67,3 +72,4 @@ Implementation: `MemoryStore` (default, in-process). SQLite removed.
 6. QUIC connection (TLS 1.3, ephemeral RSA-2048 certs, fingerprint-pinned)
 7. Stream 0: 4-byte-prefixed JSON metadata; Stream 1: raw payload bytes
 8. Receiver verifies SHA-256; optional SAS out-of-band confirmation
+9. Receiver sends ack stream; sender waits before closing QUIC connection
