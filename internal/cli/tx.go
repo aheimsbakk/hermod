@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/mattn/go-isatty"
+	"github.com/quic-go/quic-go"
 	"github.com/schollz/progressbar/v3"
 	"github.com/spf13/cobra"
 
@@ -88,11 +89,12 @@ func runTx(input, serverURL string, numWords int, verify bool, listenUDP string)
 
 	// Connect to signaling server
 	pinnedFP := cfg.TrustedServers[serverURL]
-	sig, err := network.DialSignaling(serverURL, pinnedFP)
+	sigRaw, err := network.DialSignaling(serverURL, pinnedFP)
 	if err != nil {
 		return fmt.Errorf("signaling connect: %w", err)
 	}
-	defer sig.Close()
+	defer sigRaw.Close()
+	sig := sigRaw.WithContext(ctx)
 
 	// Allocate channel
 	publicIP, err := sig.Allocate(channelID)
@@ -166,6 +168,7 @@ func runTx(input, serverURL string, numWords int, verify bool, listenUDP string)
 		LocalEndpoints:  localEPs,
 		PublicEndpoint:  publicEP,
 		CertFingerprint: myFP,
+		RequireVerify:   verify,
 	}
 	bundleBytes, err := network.EncodeEndpointBundle(bundle)
 	if err != nil {
@@ -192,6 +195,9 @@ func runTx(input, serverURL string, numWords int, verify bool, listenUDP string)
 	if err != nil {
 		return fmt.Errorf("decode peer bundle: %w", err)
 	}
+
+	// Enforce verification symmetrically: if either side requires it, both must do it.
+	verify = verify || peerBundle.RequireVerify
 
 	// Build candidate list
 	allCandidates := []string{peerBundle.PublicEndpoint}
@@ -224,7 +230,7 @@ func runTx(input, serverURL string, numWords int, verify bool, listenUDP string)
 	// SAS verification (optional)
 	if verify {
 		quicState := quicConn.ConnectionState()
-		if err := performSASVerification(quicState.TLS); err != nil {
+		if err := performSASCoordinated(ctx, quicConn, quicState.TLS, true); err != nil {
 			return err
 		}
 	}
@@ -363,26 +369,121 @@ func generateEphemeralCert() (*x509.Certificate, interface{}, []byte, error) {
 	return cert, key, certDER, nil
 }
 
-// performSASVerification extracts key material from the QUIC TLS connection and
-// displays the SAS + identicon for user confirmation.
-func performSASVerification(tlsState tls.ConnectionState) error {
+// sasStreamConn is the subset of *quic.Conn used for SAS stream coordination.
+// Using io.ReadWriteCloser for streams makes the interface testable without quic-go.
+type sasStreamConn interface {
+	OpenStreamSync(ctx context.Context) (io.ReadWriteCloser, error)
+	AcceptStream(ctx context.Context) (io.ReadWriteCloser, error)
+}
+
+// quicSASConn adapts *quic.Conn to sasStreamConn.
+type quicSASConn struct{ conn *quic.Conn }
+
+func (q *quicSASConn) OpenStreamSync(ctx context.Context) (io.ReadWriteCloser, error) {
+	return q.conn.OpenStreamSync(ctx)
+}
+func (q *quicSASConn) AcceptStream(ctx context.Context) (io.ReadWriteCloser, error) {
+	return q.conn.AcceptStream(ctx)
+}
+
+// performSASCoordinated shows the SAS prompt, then exchanges a 1-byte
+// confirmation with the peer over a dedicated QUIC stream. Both sides must
+// confirm; if either rejects, the transfer is aborted.
+//
+// isSender=true: sender opens the SAS stream (QUIC client role).
+// isSender=false: receiver accepts the SAS stream (QUIC server role).
+//
+// User input is read from /dev/tty so that piped stdin does not interfere.
+func performSASCoordinated(ctx context.Context, conn *quic.Conn, tlsState tls.ConnectionState, isSender bool) error {
+	tty, err := openTTY()
+	if err != nil {
+		return fmt.Errorf("open tty for SAS prompt: %w", err)
+	}
+	defer tty.Close()
+	return performSASCoordinatedWith(ctx, &quicSASConn{conn}, tlsState, isSender, tty)
+}
+
+// performSASCoordinatedWith is the injectable core used by tests.
+func performSASCoordinatedWith(ctx context.Context, conn sasStreamConn, tlsState tls.ConnectionState, isSender bool, reader io.Reader) error {
+	// Show prompt and collect local answer first.
+	localOK, err := promptSASVerificationFrom(tlsState, reader)
+	if err != nil {
+		return err
+	}
+
+	var localByte byte
+	if localOK {
+		localByte = 0x01
+	}
+
+	var stream io.ReadWriteCloser
+	if isSender {
+		stream, err = conn.OpenStreamSync(ctx)
+		if err != nil {
+			return fmt.Errorf("open sas stream: %w", err)
+		}
+	} else {
+		stream, err = conn.AcceptStream(ctx)
+		if err != nil {
+			return fmt.Errorf("accept sas stream: %w", err)
+		}
+	}
+	defer stream.Close()
+
+	// Both sides write their result first, then read the peer's result.
+	// This avoids deadlock on a bidirectional stream.
+	if _, err := stream.Write([]byte{localByte}); err != nil {
+		return fmt.Errorf("send sas result: %w", err)
+	}
+
+	var peerBuf [1]byte
+	if _, err := io.ReadFull(stream, peerBuf[:]); err != nil {
+		return fmt.Errorf("recv peer sas result: %w", err)
+	}
+
+	if !localOK && peerBuf[0] != 0x01 {
+		return fmt.Errorf("SAS verification rejected by both sides — connection aborted")
+	}
+	if !localOK {
+		return fmt.Errorf("SAS verification rejected by %s — connection aborted", map[bool]string{true: "sender", false: "receiver"}[isSender])
+	}
+	if peerBuf[0] != 0x01 {
+		return fmt.Errorf("SAS verification rejected by %s — connection aborted", map[bool]string{true: "receiver", false: "sender"}[isSender])
+	}
+	return nil
+}
+
+// promptSASVerification shows the SAS + identicon and returns true if the user confirms.
+// It reads user input from /dev/tty to avoid interference from piped stdin.
+func promptSASVerification(tlsState tls.ConnectionState) (bool, error) {
+	tty, err := openTTY()
+	if err != nil {
+		return false, fmt.Errorf("open tty for SAS prompt: %w", err)
+	}
+	defer tty.Close()
+	return promptSASVerificationFrom(tlsState, tty)
+}
+
+// promptSASVerificationFrom shows the SAS + identicon and reads the answer from r.
+// Separating the reader makes this testable without a real terminal.
+func promptSASVerificationFrom(tlsState tls.ConnectionState, r io.Reader) (bool, error) {
 	material, err := tlsState.ExportKeyingMaterial("hermod-sas-v1", nil, 32)
 	if err != nil {
-		return fmt.Errorf("export keying material: %w", err)
+		return false, fmt.Errorf("export keying material: %w", err)
 	}
 
 	words := crypto.SASFromBytes(material)
 	fmt.Fprintf(os.Stderr, "\n=== Out-of-Band Verification ===\n")
-	fmt.Fprintf(os.Stderr, "SAS: %s\n\n", crypto.SASString(words))
+	fmt.Fprintf(os.Stderr, "SAS: %s\n", crypto.SASString(words))
 	fmt.Fprintln(os.Stderr, crypto.Identicon(material[:16]))
 	fmt.Fprint(os.Stderr, "Compare these values with the other end. Do they match? [y/N]: ")
 
+	scanner := bufio.NewScanner(r)
 	var answer string
-	fmt.Scanln(&answer)
-	if answer != "y" && answer != "Y" {
-		return fmt.Errorf("SAS verification failed — connection aborted")
+	if scanner.Scan() {
+		answer = strings.TrimSpace(scanner.Text())
 	}
-	return nil
+	return answer == "y" || answer == "Y", nil
 }
 
 // quicConnectionState is satisfied by *quic.Conn.
