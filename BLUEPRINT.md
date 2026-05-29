@@ -5,7 +5,7 @@
 ```
 cmd/hermod/main.go          — binary entry, cobra root
 internal/cli/               — serve, trust, tx, rx commands
-internal/cli/verbosity.go   — --verbose flag parsing, slog/stdlog wiring
+internal/cli/verbosity.go   — --verbose flag parsing, slog/stdlog wiring, log helpers
 internal/config/            — YAML config load/save, TLS helpers, cert generation
 internal/crypto/            — CPace PAKE (P-256), AES-256-GCM, SAS, identicon, transfer codes
 internal/server/            — MemoryStore SignalingStore, WebSocket relay, rate limiter, TTL GC
@@ -18,6 +18,26 @@ docs/worklogs/              — session worklogs
 scripts/                    — bump-version.sh, validate-worklog.sh
 VERSION                     — current version (0.2.0)
 ```
+
+## Logging
+
+Controlled by `--verbose none|error|warning|info|debug` (default: `none`).
+Implemented with `log/slog` via helpers in `verbosity.go`: `logDebug`, `logInfo`, `logWarn`, `logError`.
+`serve` also writes JSON logs to `~/.local/state/hermod/app.log` at the active level.
+
+| Level   | What it covers |
+|---------|---------------|
+| error   | Unrecoverable failures — integrity check failed, server exited with error |
+| warning | Non-fatal problems — rate-limited request, missing peer, ack not received |
+| info    | State changes — server ready, channel allocated/joined, PAKE complete, hole punch success, QUIC connected, transfer complete |
+| debug   | Every internal step — config load, cert gen, UDP bind, each relay message, stream open/close, GC start |
+
+Rules:
+- `debug` traces every step in all three modes (serve, tx, rx).
+- `info` covers the same events a web server access log would surface: connections, requests, results.
+- Log messages use plain language: active voice, specific names, no filler.
+- Sensitive material (keys, passwords, raw payloads) is never logged at any level.
+
 
 ## Key Data Models
 

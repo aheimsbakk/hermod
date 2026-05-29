@@ -89,6 +89,11 @@ func logWarn(msg string, args ...any) {
 	slog.Warn(msg, args...)
 }
 
+// logError logs at ERROR level. Visible at --verbose error and above.
+func logError(msg string, args ...any) {
+	slog.Error(msg, args...)
+}
+
 // logDebug logs at DEBUG level. Visible at --verbose debug only.
 func logDebug(msg string, args ...any) {
 	slog.Debug(msg, args...)
