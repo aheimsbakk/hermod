@@ -455,6 +455,11 @@ func generateEphemeralCert() (*x509.Certificate, interface{}, []byte, error) {
 	return cert, key, certDER, nil
 }
 
+// openTTYFunc is the provider used to open the controlling terminal for SAS
+// prompts.  It defaults to openTTY and may be replaced in tests to inject a
+// pipe without a real terminal.
+var openTTYFunc = openTTY
+
 // sasStreamConn is the subset of *quic.Conn used for SAS stream coordination.
 // Using io.ReadWriteCloser for streams makes the interface testable without quic-go.
 type sasStreamConn interface {
@@ -481,7 +486,7 @@ func (q *quicSASConn) AcceptStream(ctx context.Context) (io.ReadWriteCloser, err
 //
 // User input is read from /dev/tty so that piped stdin does not interfere.
 func performSASCoordinated(ctx context.Context, conn *quic.Conn, tlsState tls.ConnectionState, isSender bool) error {
-	tty, err := openTTY()
+	tty, err := openTTYFunc()
 	if err != nil {
 		return fmt.Errorf("open tty for SAS prompt: %w", err)
 	}
@@ -542,7 +547,7 @@ func performSASCoordinatedWith(ctx context.Context, conn sasStreamConn, tlsState
 // promptSASVerification shows the SAS + identicon and returns true if the user confirms.
 // It reads user input from /dev/tty to avoid interference from piped stdin.
 func promptSASVerification(tlsState tls.ConnectionState) (bool, error) {
-	tty, err := openTTY()
+	tty, err := openTTYFunc()
 	if err != nil {
 		return false, fmt.Errorf("open tty for SAS prompt: %w", err)
 	}

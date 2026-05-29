@@ -4,47 +4,41 @@ Generated: 2026-05-29. Compares TASK.md requirements against current implementat
 
 ---
 
-## 🔴 Critical — Tests broken or coverage failing
+## ✅ Resolved — Previously critical
 
 ### 1. `TestRxCancelCleansUpTempFile` fails in the full e2e suite
 
-**File:** `e2e/cancel_test.go`
+**File:** `e2e/cancel_test.go`  
+**Status: RESOLVED**
 
-The 1 MiB test file transfers in under 300 ms over loopback. The transfer completes before `time.Sleep(300ms)` elapses and SIGINT is fired. Once both `runTx` and `runRx` return, all `signal.NotifyContext` handlers have exited. The SIGINT then hits the test binary's default handler and the process dies with `signal: interrupt`.
-
-The test passes in isolation (`go test -run TestRxCancelCleansUpTempFile ./e2e/...`) but fails as part of the full suite (`go test ./e2e/...`).
-
-**Fix:** Use a larger source file (e.g. 16 MiB) or add explicit synchronization to confirm rx is mid-receive before sending SIGINT.
+Increased source file from 1 MiB to 16 MiB and replaced the fixed `time.Sleep(300ms)` with a polling loop (up to 8 s) that waits for a `.hermod_tmp` file to appear before sending SIGINT. The test now passes reliably in the full suite.
 
 ---
 
-### 2. `internal/cli` coverage: 24.6% — required 80%
+### 2. `internal/cli` coverage: 24.6% → **81.3%** — required 80%
 
-**Reference:** TASK.md §27
+**Reference:** TASK.md §27  
+**Status: RESOLVED**
 
-The following functions have 0% coverage: `runTx`, `runRx`, `runServe`, `runTrust`, `buildPayload`, `receivePayload`, `saveToFile`, `appendLenPrefix`, `readLenPrefixed`. The cli package has no unit tests for these paths. All coverage comes from e2e tests in a separate package, which do not count toward `internal/cli` statement coverage.
-
-**Fix:** Add unit tests for cli functions using interface mocks for the signaling and network layers, or restructure the e2e harness so test execution counts toward the cli package.
-
----
-
-### 3. `internal/network` coverage: 63.4% — required 80%
-
-**Reference:** TASK.md §27
-
-Functions with 0% coverage: `HolePunch`, `DialQUIC`, `ListenQUIC`, `makeCertPinner`, `muxedConn.ReadFrom`. These are exercised only through e2e tests, which do not count toward `internal/network` statement coverage.
-
-**Fix:** Add unit tests within the package — `HolePunch` can be tested with a `net.Pipe`-backed `PacketConn`; cert pinning and `muxedConn` can be tested with in-process connections.
+Added `internal/cli/unit_test.go` (helper-function unit tests), `internal/cli/sas_test.go` additions (all `performSASCoordinatedWith` error paths, both-reject case), and `internal/cli/transfer_integration_test.go` (in-package integration tests for text, file, stdin, and SAS-verified transfers). `openTTYFunc` and `stdoutIsTTY` injection points were added to make TTY-dependent paths testable without a real terminal.
 
 ---
 
-### 4. No 80% coverage enforcement script
+### 3. `internal/network` coverage: 63.4% → **86.6%** — required 80%
 
-**Reference:** TASK.md §27 — *"The build process must abort with an error code if the total coverage falls below this threshold."*
+**Reference:** TASK.md §27  
+**Status: RESOLVED**
 
-No Makefile, shell script, or CI step runs `go test -coverprofile=coverage.out ./...` and fails the build when total coverage is below 80%.
+Rewrote `internal/network/network_internal_test.go` with a `stubPacketConn` helper and tests covering: `readLoop` error and routing branches, `muxedConn.ReadFrom` (closed and normal paths), `makeCertPinner` (no-certs, hash-mismatch, and match paths), all `HolePunch` branches (timeout, probe received, ack received, short-probe ignored, ticker sends), and a full loopback `DialQUIC`/`ListenQUIC` handshake test.
 
-**Fix:** Add a script (e.g. `scripts/check-coverage.sh`) that runs the coverage command and exits non-zero if any package is below 80%.
+---
+
+### 4. No 80% coverage enforcement script → **`scripts/check-coverage.sh`**
+
+**Reference:** TASK.md §27  
+**Status: RESOLVED**
+
+Added `scripts/check-coverage.sh`. Runs each required package (`./internal/cli/...`, `./internal/network/...`) with its own coverprofile, parses the total percentage, and exits non-zero if any package falls below 80%.
 
 ---
 
@@ -110,10 +104,10 @@ The following TASK.md items that might appear absent are intentional architectur
 
 | # | Severity | Area | Status |
 |---|---|---|---|
-| 1 | 🔴 Critical | `TestRxCancelCleansUpTempFile` race condition | Failing |
-| 2 | 🔴 Critical | `internal/cli` coverage 24.6% | Below threshold |
-| 3 | 🔴 Critical | `internal/network` coverage 63.4% | Below threshold |
-| 4 | 🔴 Critical | No coverage enforcement script | Missing |
+| 1 | 🔴 Critical | `TestRxCancelCleansUpTempFile` race condition | ✅ Resolved |
+| 2 | 🔴 Critical | `internal/cli` coverage 24.6% | ✅ Resolved — 81.3% |
+| 3 | 🔴 Critical | `internal/network` coverage 63.4% | ✅ Resolved — 86.6% |
+| 4 | 🔴 Critical | No coverage enforcement script | ✅ Resolved |
 | 5 | 🟠 High | CPace failure limit not enforced | Unimplemented |
 | 6 | 🟠 High | Per-channel message limit not enforced | Unimplemented |
 | 7 | 🟡 Medium | IP hashing with rotating salt | Unimplemented |

@@ -293,7 +293,7 @@ func runRx(code, destination, serverURL string, verify bool, listenUDP string, s
 	defer payloadStream.Close()
 
 	logInfo("Receiving payload", "kind", meta.Kind, "size_bytes", meta.Size)
-	if err := receivePayload(ctx, meta, payloadStream, destination); err != nil {
+	if err := receivePayload(ctx, meta, payloadStream, destination, isatty.IsTerminal(os.Stdout.Fd())); err != nil {
 		if peerErr := cancelledByPeer(err); peerErr != nil {
 			fmt.Fprintf(os.Stderr, "\nTransfer cancelled by sender.\n")
 			return peerErr
@@ -320,8 +320,10 @@ func runRx(code, destination, serverURL string, verify bool, listenUDP string, s
 }
 
 // receivePayload routes the incoming stream according to meta.Kind and destination.
-func receivePayload(ctx context.Context, meta *transfer.Metadata, r io.Reader, destination string) error {
-	isStdoutTTY := isatty.IsTerminal(os.Stdout.Fd())
+// stdoutIsTTY must be true when os.Stdout is a real terminal; callers should pass
+// isatty.IsTerminal(os.Stdout.Fd()) so the function remains testable without a TTY.
+func receivePayload(ctx context.Context, meta *transfer.Metadata, r io.Reader, destination string, stdoutIsTTY bool) error {
+	isStdoutTTY := stdoutIsTTY
 
 	switch {
 	case destination != "":

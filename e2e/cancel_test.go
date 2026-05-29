@@ -19,10 +19,12 @@ import (
 func TestRxCancelCleansUpTempFile(t *testing.T) {
 	serverURL := startCLIServer(t)
 
-	// Create a large source file (1 MiB) so the transfer takes long enough to interrupt.
+	// Use 16 MiB so the transfer cannot complete before we confirm rx is mid-receive.
+	// A 1 MiB file finishes in <300 ms over loopback, causing SIGINT to race with
+	// signal.NotifyContext teardown and kill the test binary.
 	srcDir := t.TempDir()
 	srcPath := filepath.Join(srcDir, "bigfile.bin")
-	content := make([]byte, 1<<20) // 1 MiB
+	content := make([]byte, 16<<20) // 16 MiB
 	for i := range content {
 		content[i] = byte(i)
 	}
@@ -84,8 +86,33 @@ func TestRxCancelCleansUpTempFile(t *testing.T) {
 		rxErrCh <- cli.ExecuteArgs(args)
 	}()
 
-	// Give rx time to start receiving, then send SIGINT to the process.
-	time.Sleep(300 * time.Millisecond)
+	// Poll until rx has created the temp file, then send SIGINT.
+	// This replaces the fixed 300 ms sleep and eliminates the race:
+	// if the transfer finishes before the sleep elapses, SIGINT would
+	// hit the test binary's default handler and kill the process.
+	tmpFound := make(chan struct{}, 1)
+	go func() {
+		ticker := time.NewTicker(10 * time.Millisecond)
+		defer ticker.Stop()
+		deadline := time.After(8 * time.Second)
+		for {
+			select {
+			case <-deadline:
+				tmpFound <- struct{}{}
+				return
+			case <-ticker.C:
+				entries, _ := os.ReadDir(destDir)
+				for _, e := range entries {
+					if strings.HasSuffix(e.Name(), ".hermod_tmp") {
+						tmpFound <- struct{}{}
+						return
+					}
+				}
+			}
+		}
+	}()
+	<-tmpFound // wait for temp file to appear (or 8 s deadline)
+
 	proc, err := os.FindProcess(os.Getpid())
 	if err != nil {
 		t.Fatalf("find process: %v", err)
