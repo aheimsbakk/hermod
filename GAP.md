@@ -66,11 +66,10 @@ The relay loop in `internal/server/server.go` now checks `blobCount > s.maxBlobs
 
 ### 7. IP hashing with daily rotating salt — not implemented
 
-**Reference:** TASK.md §9 — *"Client IPs are hashed with a daily rotating salt in memory to prevent tracking."*
+**Reference:** TASK.md §9 — *"Client IPs are hashed with a daily rotating salt in memory to prevent tracking."*  
+**Status: RESOLVED**
 
-`RateLimiter` in `internal/server/ratelimit.go` keys the bucket map on the raw IP string (e.g. `"1.2.3.4"`). There is no salt and no daily rotation. IP addresses are stored in plaintext, linking requests to real client IPs across the full uptime of the server process.
-
-**Fix:** Introduce a daily-rotating in-memory salt. Hash the IP prefix with `HMAC-SHA256(salt, prefix)` before using it as a map key.
+`RateLimiter` in `internal/server/ratelimit.go` now keys the bucket map on `hex(HMAC-SHA256(salt, ipPrefix))` instead of the raw IP string. A 32-byte cryptographic salt is generated at startup using `crypto/rand`. On every `Allow()` call the current UTC date is compared against `saltDate`; when the calendar day advances, a new salt is generated and all buckets are cleared. Raw IP addresses are never stored. Covered by `TestRateLimiterKeyIsHashed`, `TestRateLimiterSaltRotation`, and `TestRateLimiterSaltRotationClearsBuckets` in `internal/server/ratelimit_internal_test.go`.
 
 ---
 
@@ -108,5 +107,5 @@ The following TASK.md items that might appear absent are intentional architectur
 | 4 | 🔴 Critical | No coverage enforcement script | ✅ Resolved |
 | 5 | 🟠 High | CPace failure limit not enforced | ✅ Resolved |
 | 6 | 🟠 High | Per-channel message limit not enforced | ✅ Resolved |
-| 7 | 🟡 Medium | IP hashing with rotating salt | Unimplemented |
+| 7 | 🟡 Medium | IP hashing with rotating salt | ✅ Resolved |
 | 8 | 🟢 Low | testscript full-transfer scenario | Minimal |

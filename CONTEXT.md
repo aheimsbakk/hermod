@@ -22,7 +22,7 @@ Go 1.25.0
 - CPace PAKE over WebSocket yields K_classical
 - Ephemeral X.509 fingerprint commitment prevents MitM during QUIC handshake
 - TLS 1.3 only; prefer X25519MLKEM768 (post-quantum hybrid)
-- Rate limiting: token bucket per /32 IPv4, /64 IPv6; max 3 CPace failures per channel
+- Rate limiting: token bucket per /32 IPv4, /64 IPv6; bucket keys are HMAC-SHA256(daily-rotating salt, prefix) — raw IPs never stored; max 3 CPace failures and 10 blobs per channel
 
 ## Config Locations
 - Linux/macOS: `~/.config/hermod/config.yaml`

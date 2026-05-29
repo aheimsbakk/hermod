@@ -213,9 +213,12 @@ Signaling server and in-memory store.
 ### Server
 
 ```go
-func NewServer(store SignalingStore, rl *RateLimiter, channelTTL time.Duration, log *slog.Logger) *Server
+const DefaultMaxBlobsPerChannel = 10
+const DefaultMaxCPaceFailures   = 3
+
+func NewServer(store SignalingStore, rl *RateLimiter, ttl time.Duration, maxBlobsPerChannel, maxCPaceFailures int, logger *slog.Logger) *Server
 ```
-Creates a new signaling server. `store` holds channel state. `rl` enforces per-IP rate limits. `channelTTL` is how long an allocated channel lives before the server expires it.
+Creates a new signaling server. `store` holds channel state. `rl` enforces per-IP rate limits. `ttl` is how long an allocated channel lives before the server expires it. `maxBlobsPerChannel` caps the total number of relayed blobs per channel; use `DefaultMaxBlobsPerChannel`. `maxCPaceFailures` caps CPace protocol violations before the channel is dropped and all peers are disconnected; use `DefaultMaxCPaceFailures`.
 
 ```go
 func (s *Server) ListenAndServe(ctx context.Context, addr string, tlsCfg *tls.Config) error
@@ -251,8 +254,9 @@ Starts a background goroutine that calls `store.PurgeExpired()` every `interval`
 ```go
 func NewRateLimiter(rate, burst float64) *RateLimiter
 func (rl *RateLimiter) Allow(addr string) bool
+func (rl *RateLimiter) Cleanup(maxAge time.Duration)
 ```
-Token-bucket rate limiter keyed by `/32` IPv4 prefix or `/64` IPv6 prefix. `addr` is a `"host:port"` or bare IP string.
+Token-bucket rate limiter keyed by IP prefix (`/32` IPv4, `/64` IPv6). The bucket key is `hex(HMAC-SHA256(salt, prefix))` — raw IP addresses are never stored. A 32-byte cryptographic salt is generated at startup and replaced every UTC calendar day; all buckets are cleared on rotation to prevent cross-day tracking. `addr` is a `"host:port"` or bare IP string. `Cleanup` removes entries not seen within `maxAge`.
 
 ---
 

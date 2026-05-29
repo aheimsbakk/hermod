@@ -9,7 +9,7 @@ internal/cli/cancel.go      — QUIC cancellation error code, peer-cancel detect
 internal/cli/verbosity.go   — --verbose flag parsing, slog/stdlog wiring, log helpers
 internal/config/            — YAML config load/save, TLS helpers, cert generation
 internal/crypto/            — CPace PAKE (P-256), AES-256-GCM, SAS, identicon, transfer codes
-internal/server/            — MemoryStore SignalingStore, WebSocket relay, rate limiter, TTL GC
+internal/server/            — MemoryStore SignalingStore, WebSocket relay, HMAC-SHA256 IP-hashing rate limiter, per-channel blob/CPace-failure limits, TTL GC
 internal/network/           — UDP mux (SO_REUSEADDR/REUSEPORT), hole punching, QUIC dial/listen, signaling client
 pkg/transfer/               — payload metadata, stream classification, SHA-256 integrity
 README.md                   — user-facing documentation
