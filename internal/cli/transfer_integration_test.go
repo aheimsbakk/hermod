@@ -22,8 +22,9 @@ import (
 )
 
 // startLocalServer spins up a signaling server on a random port and returns
-// its wss:// URL.  The server is shut down via t.Cleanup.
-func startLocalServer(t *testing.T) string {
+// its wss:// URL and the SHA-256 certificate fingerprint.
+// The server is shut down via t.Cleanup.
+func startLocalServer(t *testing.T) (serverURL, fingerprint string) {
 	t.Helper()
 	cfg := config.Default()
 	if err := config.GenerateServerCert(cfg); err != nil {
@@ -58,18 +59,40 @@ func startLocalServer(t *testing.T) string {
 		c, err2 := net.Dial("tcp", addr)
 		if err2 == nil {
 			c.Close()
-			return "wss://" + addr
+			fp := config.CertFingerprint(tlsCert.Certificate[0])
+			return "wss://" + addr, fp
 		}
 	}
 	t.Fatal("local signaling server did not start")
-	return ""
+	return "", ""
+}
+
+// trustServerInTempHome redirects config to a fresh temp directory and pins
+// serverURL with fingerprint so that runTx/runRx will accept the server.
+// It also clears HERMOD_SERVER so the env var does not override the file.
+func trustServerInTempHome(t *testing.T, serverURL, fingerprint string) {
+	t.Helper()
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	t.Setenv("APPDATA", dir)
+	t.Setenv("HERMOD_SERVER", "")
+
+	cfg := config.Default()
+	cfg.ServerURL = serverURL
+	config.PinServer(cfg, serverURL, fingerprint)
+	if err := config.Save(cfg); err != nil {
+		t.Fatalf("save trusted server config: %v", err)
+	}
 }
 
 // cliTransferInternal runs tx and rx concurrently via ExecuteArgs and returns
 // the bytes received by rx.  txArgs are appended after the standard tx flags.
 // If stdinData is non-nil it is piped into stdin for the tx invocation.
-func cliTransferInternal(t *testing.T, serverURL string, txArgs []string, stdinData []byte) []byte {
+// fingerprint is the server's certificate fingerprint; it is pinned in a temp
+// config so that the trusted-server check passes.
+func cliTransferInternal(t *testing.T, serverURL, fingerprint string, txArgs []string, stdinData []byte) []byte {
 	t.Helper()
+	trustServerInTempHome(t, serverURL, fingerprint)
 
 	destDir := t.TempDir()
 
@@ -160,9 +183,9 @@ func cliTransferInternal(t *testing.T, serverURL string, txArgs []string, stdinD
 
 // TestTransfer_Text_Internal covers the KindText path through runTx and runRx.
 func TestTransfer_Text_Internal(t *testing.T) {
-	serverURL := startLocalServer(t)
+	serverURL, fp := startLocalServer(t)
 	want := "Hello from Hermod internal CLI coverage test"
-	got := cliTransferInternal(t, serverURL, []string{want}, nil)
+	got := cliTransferInternal(t, serverURL, fp, []string{want}, nil)
 	if string(got) != want {
 		t.Fatalf("text mismatch:\n got: %q\nwant: %q", string(got), want)
 	}
@@ -170,7 +193,7 @@ func TestTransfer_Text_Internal(t *testing.T) {
 
 // TestTransfer_File_Internal covers the KindFile path through runTx and runRx.
 func TestTransfer_File_Internal(t *testing.T) {
-	serverURL := startLocalServer(t)
+	serverURL, fp := startLocalServer(t)
 
 	srcDir := t.TempDir()
 	srcPath := filepath.Join(srcDir, "data.bin")
@@ -180,7 +203,7 @@ func TestTransfer_File_Internal(t *testing.T) {
 		t.Fatalf("write src: %v", err)
 	}
 
-	got := cliTransferInternal(t, serverURL, []string{srcPath}, nil)
+	got := cliTransferInternal(t, serverURL, fp, []string{srcPath}, nil)
 	if !bytes.Equal(got, content) {
 		t.Fatalf("file content mismatch: got %d bytes, want %d", len(got), len(content))
 	}
@@ -188,9 +211,9 @@ func TestTransfer_File_Internal(t *testing.T) {
 
 // TestTransfer_Stdin_Internal covers the KindStream (stdin) path.
 func TestTransfer_Stdin_Internal(t *testing.T) {
-	serverURL := startLocalServer(t)
+	serverURL, fp := startLocalServer(t)
 	stdinData := []byte("stdin payload via internal cli coverage test")
-	got := cliTransferInternal(t, serverURL, []string{}, stdinData)
+	got := cliTransferInternal(t, serverURL, fp, []string{}, stdinData)
 	if !bytes.Equal(got, stdinData) {
 		t.Fatalf("stdin mismatch:\n got: %q\nwant: %q", string(got), string(stdinData))
 	}
@@ -217,7 +240,8 @@ func TestTransfer_SASVerify_Internal(t *testing.T) {
 		return r, nil
 	}
 
-	serverURL := startLocalServer(t)
+	serverURL, fp := startLocalServer(t)
+	trustServerInTempHome(t, serverURL, fp)
 	destDir := t.TempDir()
 	want := "SAS verified transfer payload"
 

@@ -99,10 +99,16 @@ func runTx(input, serverURL string, numWords int, verify bool, listenUDP string,
 
 	fmt.Printf("Transfer code: %s\n", code)
 
+	// Enforce server trust — abort before any network call if the server
+	// certificate has not been pinned via 'hermod trust'.
+	logDebug("checking pinned fingerprint for server", "server", serverURL)
+	pinnedFP, err := requireTrustedServer(cfg, serverURL)
+	if err != nil {
+		return err
+	}
+
 	// Connect to signaling server
 	logInfo("Connecting to signaling server", "server", serverURL)
-	logDebug("looking up pinned fingerprint for server", "server", serverURL)
-	pinnedFP := cfg.TrustedServers[serverURL]
 	sigRaw, err := network.DialSignaling(serverURL, pinnedFP)
 	if err != nil {
 		return fmt.Errorf("signaling connect: %w", err)

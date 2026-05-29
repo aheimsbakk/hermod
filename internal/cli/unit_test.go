@@ -16,6 +16,7 @@ import (
 
 	quic "github.com/quic-go/quic-go"
 
+	"github.com/hermod/hermod/internal/config"
 	"github.com/hermod/hermod/internal/server"
 	"github.com/hermod/hermod/pkg/transfer"
 )
@@ -729,6 +730,90 @@ func TestReceivePayload_TTYUnknownKind(t *testing.T) {
 	err := receivePayload(context.Background(), meta, strings.NewReader(""), "", true)
 	if err != nil {
 		t.Fatalf("unexpected error for unknown kind in TTY mode: %v", err)
+	}
+}
+
+// --- requireTrustedServer ---
+
+// TestRequireTrustedServer_Trusted returns the fingerprint when the server is pinned.
+func TestRequireTrustedServer_Trusted(t *testing.T) {
+	cfg := config.Default()
+	want := strings.Repeat("a", 64)
+	cfg.TrustedServers["wss://example.com:4376"] = want
+
+	got, err := requireTrustedServer(cfg, "wss://example.com:4376")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != want {
+		t.Fatalf("expected fingerprint %q, got %q", want, got)
+	}
+}
+
+// TestRequireTrustedServer_Untrusted returns an error when the server is not pinned.
+func TestRequireTrustedServer_Untrusted(t *testing.T) {
+	cfg := config.Default() // trusted_servers is empty
+
+	_, err := requireTrustedServer(cfg, "wss://unknown.example.com:4376")
+	if err == nil {
+		t.Fatal("expected error for unpinned server, got nil")
+	}
+	if !strings.Contains(err.Error(), "not trusted") {
+		t.Errorf("expected 'not trusted' in error, got: %v", err)
+	}
+}
+
+// TestRequireTrustedServer_EmptyFingerprint treats an empty fingerprint as untrusted.
+func TestRequireTrustedServer_EmptyFingerprint(t *testing.T) {
+	cfg := config.Default()
+	cfg.TrustedServers["wss://example.com:4376"] = "" // empty = not properly pinned
+
+	_, err := requireTrustedServer(cfg, "wss://example.com:4376")
+	if err == nil {
+		t.Fatal("expected error for empty fingerprint, got nil")
+	}
+	if !strings.Contains(err.Error(), "not trusted") {
+		t.Errorf("expected 'not trusted' in error, got: %v", err)
+	}
+}
+
+// --- server trust enforcement ---
+
+// TestRunTx_UntrustedServerAborts verifies that tx returns a "not trusted"
+// error when the target server has no pinned certificate in trusted_servers.
+// This test fails before the fix because the current code connects without
+// any certificate verification instead of aborting.
+func TestRunTx_UntrustedServerAborts(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	t.Setenv("APPDATA", dir)
+	t.Setenv("HERMOD_SERVER", "")
+
+	// Fresh config — no trusted_servers entry for the target server.
+	err := runTx("hello text", "wss://untrusted.example.com:4376", 3, false, ":0", false)
+	if err == nil {
+		t.Fatal("expected error for untrusted server, got nil")
+	}
+	if !strings.Contains(err.Error(), "not trusted") {
+		t.Errorf("expected 'not trusted' in error, got: %v", err)
+	}
+}
+
+// TestRunRx_UntrustedServerAborts verifies that rx returns a "not trusted"
+// error when the target server has no pinned certificate in trusted_servers.
+func TestRunRx_UntrustedServerAborts(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	t.Setenv("APPDATA", dir)
+	t.Setenv("HERMOD_SERVER", "")
+
+	// Fresh config — no trusted_servers entry for the target server.
+	err := runRx("3-apple-banana-cherry", "", "wss://untrusted.example.com:4376", false, ":0", false)
+	if err == nil {
+		t.Fatal("expected error for untrusted server, got nil")
+	}
+	if !strings.Contains(err.Error(), "not trusted") {
+		t.Errorf("expected 'not trusted' in error, got: %v", err)
 	}
 }
 

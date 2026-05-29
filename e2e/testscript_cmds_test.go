@@ -94,11 +94,30 @@ func cmdStartServer(ts *testscript.TestScript, neg bool, _ []string) {
 	}
 
 	serverURL := "wss://" + addr
+	fingerprint := config.CertFingerprint(tlsCert.Certificate[0])
 
-	// DialSignaling uses InsecureSkipVerify when no fingerprint is pinned,
-	// so subprocesses can connect without a trusted-servers config entry.
+	// Write a trusted-server config so that cli.ExecuteArgs calls (both
+	// in-process via tx-background and subprocess via exec) accept this server.
+	// We redirect HOME to the testscript's home dir so the config lands there.
+	homeDir := ts.Getenv("HOME")
+	if homeDir == "" {
+		homeDir = ts.MkAbs("home")
+	}
+	trustedCfg := config.Default()
+	trustedCfg.ServerURL = serverURL
+	config.PinServer(trustedCfg, serverURL, fingerprint)
+	// Temporarily update the OS HOME so in-process config.Load() finds the file.
+	origHome := os.Getenv("HOME")
+	if err2 := os.Setenv("HOME", homeDir); err2 != nil {
+		ts.Fatalf("start-server: set HOME: %v", err2)
+	}
+	ts.Defer(func() { os.Setenv("HOME", origHome) }) //nolint:errcheck
+	if err2 := config.Save(trustedCfg); err2 != nil {
+		ts.Fatalf("start-server: save trusted config: %v", err2)
+	}
+
 	ts.Setenv("HERMOD_SERVER", serverURL)
-	ts.Logf("start-server: listening at %s", serverURL)
+	ts.Logf("start-server: listening at %s (fingerprint: %s)", serverURL, fingerprint)
 }
 
 // cmdTxBackground runs hermod tx in a background goroutine with stdout

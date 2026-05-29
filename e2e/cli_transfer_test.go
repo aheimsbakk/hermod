@@ -22,8 +22,9 @@ import (
 	"github.com/hermod/hermod/internal/server"
 )
 
-// startCLIServer starts a signaling server and returns its wss:// URL.
-func startCLIServer(t *testing.T) string {
+// startCLIServer starts a signaling server and returns its wss:// URL and the
+// SHA-256 certificate fingerprint.  The server is shut down via t.Cleanup.
+func startCLIServer(t *testing.T) (serverURL, fingerprint string) {
 	t.Helper()
 	cfg := config.Default()
 	if err := config.GenerateServerCert(cfg); err != nil {
@@ -53,19 +54,41 @@ func startCLIServer(t *testing.T) string {
 		c, err2 := net.Dial("tcp", addr)
 		if err2 == nil {
 			c.Close()
-			return "wss://" + addr
+			fp := config.CertFingerprint(tlsCert.Certificate[0])
+			return "wss://" + addr, fp
 		}
 	}
 	t.Fatal("signaling server did not start")
-	return ""
+	return "", ""
+}
+
+// trustServerForCLITest redirects config to a fresh temp directory, pins
+// serverURL with fingerprint, and sets HOME so that cli.ExecuteArgs picks up
+// the trusted-server entry during this test.
+func trustServerForCLITest(t *testing.T, serverURL, fingerprint string) {
+	t.Helper()
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	t.Setenv("APPDATA", dir)
+	t.Setenv("HERMOD_SERVER", "")
+
+	cfg := config.Default()
+	cfg.ServerURL = serverURL
+	config.PinServer(cfg, serverURL, fingerprint)
+	if err := config.Save(cfg); err != nil {
+		t.Fatalf("save trusted-server config: %v", err)
+	}
 }
 
 // cliTransfer runs tx and rx concurrently via cli.ExecuteArgs.
 // txArgs are the arguments after "tx" (e.g. a file path or text string).
 // stdinData, if non-nil, is piped into stdin for tx (stdin mode).
+// fingerprint is the server's certificate fingerprint; it is pinned in a temp
+// config so that the trusted-server check passes.
 // Returns the bytes saved to destDir by rx.
-func cliTransfer(t *testing.T, serverURL string, txArgs []string, stdinData []byte) []byte {
+func cliTransfer(t *testing.T, serverURL, fingerprint string, txArgs []string, stdinData []byte) []byte {
 	t.Helper()
+	trustServerForCLITest(t, serverURL, fingerprint)
 
 	destDir := t.TempDir()
 
@@ -166,10 +189,10 @@ func cliTransfer(t *testing.T, serverURL string, txArgs []string, stdinData []by
 
 // TestCLITransferText sends a short text string end-to-end via the CLI.
 func TestCLITransferText(t *testing.T) {
-	serverURL := startCLIServer(t)
+	serverURL, fp := startCLIServer(t)
 	want := "Hello from Hermod CLI text transfer"
 
-	got := cliTransfer(t, serverURL, []string{want}, nil)
+	got := cliTransfer(t, serverURL, fp, []string{want}, nil)
 
 	if string(got) != want {
 		t.Fatalf("text mismatch:\n got: %q\nwant: %q", string(got), want)
@@ -178,7 +201,7 @@ func TestCLITransferText(t *testing.T) {
 
 // TestCLITransferFile sends a binary file end-to-end via the CLI.
 func TestCLITransferFile(t *testing.T) {
-	serverURL := startCLIServer(t)
+	serverURL, fp := startCLIServer(t)
 
 	srcDir := t.TempDir()
 	srcPath := filepath.Join(srcDir, "payload.bin")
@@ -188,7 +211,7 @@ func TestCLITransferFile(t *testing.T) {
 		t.Fatalf("write src: %v", err)
 	}
 
-	got := cliTransfer(t, serverURL, []string{srcPath}, nil)
+	got := cliTransfer(t, serverURL, fp, []string{srcPath}, nil)
 
 	if !bytes.Equal(got, content) {
 		t.Fatalf("file content mismatch: got %d bytes, want %d", len(got), len(content))
@@ -197,10 +220,10 @@ func TestCLITransferFile(t *testing.T) {
 
 // TestCLITransferStdin pipes data through stdin end-to-end via the CLI.
 func TestCLITransferStdin(t *testing.T) {
-	serverURL := startCLIServer(t)
+	serverURL, fp := startCLIServer(t)
 	stdinData := []byte("stdin payload: Hermod CLI end-to-end test")
 
-	got := cliTransfer(t, serverURL, []string{}, stdinData)
+	got := cliTransfer(t, serverURL, fp, []string{}, stdinData)
 
 	if !bytes.Equal(got, stdinData) {
 		t.Fatalf("stdin mismatch:\n got: %q\nwant: %q", string(got), string(stdinData))
