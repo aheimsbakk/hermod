@@ -284,12 +284,12 @@ Parses the PEM certificate and key stored in `cfg`.
 ```go
 func BuildTLSConfig(cfg *Config) *tls.Config
 ```
-Returns a base `*tls.Config` with TLS 1.3 minimum version and the ALPN protocol `hermod-p2p`.
+Returns a `*tls.Config` with TLS 1.3 minimum version and curve/cipher preferences from `cfg`. ALPN (`hermod-p2p`) is set separately by `DialQUIC` and `ListenQUIC` in `internal/network`.
 
 ```go
-func ServerFingerprint(cfg *Config) (string, error)
+func CertFingerprint(certDER []byte) string
 ```
-Returns the SHA-256 fingerprint of the server certificate stored in `cfg`.
+Returns the SHA-256 fingerprint of a DER-encoded certificate as a 64-character lowercase hex string.
 
 ```go
 func PinServer(cfg *Config, serverURL, fingerprint string)

@@ -14,14 +14,14 @@ The transfer code encodes the channel ID and the PAKE passphrase.
 
 Format:
 ```
-<word-count>-<word1>-<word2>-...-<wordN>
+<channel-id>-<word1>-<word2>-...-<wordN>
 ```
 
-Example: `3-apple-banana-cherry`
+Example: `47832-apple-banana-cherry`
 
-- The first token (`3`) is the number of words, which also encodes the channel ID.
+- The first token is the numeric channel ID — a random `uint16` (0–65535).
 - The words are drawn from a fixed wordlist. They form the shared passphrase for the CPace handshake.
-- Channel ID is derived from the word count and a random offset. It fits in a `uint16`.
+- The default word count is 3, overridable with `--words` on `tx`.
 
 The sender generates the code and displays it. The receiver types it in.
 

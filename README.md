@@ -20,7 +20,6 @@ go build -o hermod ./cmd/hermod/
 **Start a signaling server** (one machine, reachable by both peers):
 ```bash
 ./hermod serve
-# Prints the server's certificate fingerprint on first run
 ```
 
 **Pin the server certificate** (run once on each client):
@@ -57,6 +56,7 @@ hermod tx [INPUT] [flags]
 | Flag | Default | Description |
 |---|---|---|
 | `-s`, `--server` | `wss://localhost:4376` | Signaling server URL (saved as default when specified) |
+| `-w`, `--words` | `3` | Number of words in the transfer code |
 | `-l`, `--listen` | `:0` | Local UDP bind address |
 | `-v`, `--verify` | off | Require out-of-band SAS verification (symmetric — enforced on both sides) |
 | `--verbose` | `none` | Log verbosity: `none`, `error`, `warning`, `info`, `debug` |
@@ -111,6 +111,8 @@ hermod serve [flags]
 | `-T`, `--ttl` | `600` | Channel TTL in seconds |
 | `--rate-limit` | `5` | Requests per second per IP prefix |
 | `--rate-burst` | `15` | Burst capacity per IP prefix |
+| `--max-blobs-per-channel` | `10` | Hard cap on relayed blobs per channel |
+| `--max-cpace-failures` | `3` | Max CPace failures before a channel is dropped |
 | `--verbose` | `none` | Log verbosity: `none`, `error`, `warning`, `info`, `debug` |
 
 The server generates a self-signed TLS certificate on first run and saves it to the config directory (`~/.config/hermod/` on Linux).
@@ -127,7 +129,9 @@ Connects to the server, fetches its certificate fingerprint, saves it to the loc
 
 ```bash
 ./hermod trust wss://relay.example.com:4376
-# Prints: Fingerprint: a3f9... — confirm this matches the server output, then press y
+# Prints: Pinned wss://relay.example.com:4376
+#           fingerprint: a3f9...
+#           set as default server
 ```
 
 ## SAS verification
@@ -142,6 +146,7 @@ The prompt always reads from the controlling terminal (`/dev/tty` on Unix, `CONI
 
 Hermod stores its config in:
 - Linux/macOS: `~/.config/hermod/config.yaml`
+- Windows: `%APPDATA%\Hermod\config.yaml`
 - The server certificate PEM is stored in the same file
 
 No environment variables are required for normal use. Supported env vars:
