@@ -2,17 +2,27 @@
 package server
 
 import (
+	"crypto/hmac"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"net"
 	"sync"
 	"time"
 )
 
 // RateLimiter implements a per-IP-prefix token bucket rate limiter.
+// Bucket keys are HMAC-SHA256(dailySalt, ipPrefix) to prevent tracking of
+// raw IP addresses. The salt is replaced every UTC calendar day; stale
+// buckets are cleared on rotation.
 type RateLimiter struct {
-	mu      sync.Mutex
-	buckets map[string]*bucket
-	rate    float64 // tokens per second
-	burst   float64 // maximum burst
+	mu       sync.Mutex
+	buckets  map[string]*bucket
+	rate     float64 // tokens per second
+	burst    float64 // maximum burst
+	salt     []byte
+	saltDate time.Time        // UTC midnight of the day the salt was generated
+	nowFunc  func() time.Time // injectable for tests; defaults to time.Now
 }
 
 type bucket struct {
@@ -21,22 +31,37 @@ type bucket struct {
 }
 
 // NewRateLimiter creates a RateLimiter with the given rate (tokens/sec) and burst.
+// A fresh cryptographic salt is generated immediately and rotated every UTC day.
 func NewRateLimiter(rate, burst float64) *RateLimiter {
+	salt := make([]byte, 32)
+	if _, err := rand.Read(salt); err != nil {
+		// crypto/rand failure is catastrophic; the process cannot function safely.
+		panic("ratelimit: failed to generate initial salt: " + err.Error())
+	}
+	now := time.Now().UTC()
+	today := now.Truncate(24 * time.Hour)
 	return &RateLimiter{
-		buckets: make(map[string]*bucket),
-		rate:    rate,
-		burst:   burst,
+		buckets:  make(map[string]*bucket),
+		rate:     rate,
+		burst:    burst,
+		salt:     salt,
+		saltDate: today,
+		nowFunc:  time.Now,
 	}
 }
 
 // Allow returns true if the request from addr is permitted.
 // addr is the remote address in "host:port" or "host" form.
 func (r *RateLimiter) Allow(addr string) bool {
-	key := ipPrefix(addr)
+	prefix := ipPrefix(addr)
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	now := time.Now()
+	now := r.nowFunc()
+	r.rotateSaltIfNeeded(now)
+
+	key := r.hashPrefix(prefix)
+
 	b, ok := r.buckets[key]
 	if !ok {
 		b = &bucket{tokens: r.burst, lastSeen: now}
@@ -55,6 +80,30 @@ func (r *RateLimiter) Allow(addr string) bool {
 	}
 	b.tokens--
 	return true
+}
+
+// rotateSaltIfNeeded replaces the salt and clears all buckets when the UTC
+// calendar day advances. Must be called with r.mu held.
+func (r *RateLimiter) rotateSaltIfNeeded(now time.Time) {
+	today := now.UTC().Truncate(24 * time.Hour)
+	if today.After(r.saltDate) {
+		newSalt := make([]byte, 32)
+		if _, err := rand.Read(newSalt); err != nil {
+			// Keep existing salt on read failure rather than panic.
+			return
+		}
+		r.salt = newSalt
+		r.saltDate = today
+		r.buckets = make(map[string]*bucket)
+	}
+}
+
+// hashPrefix returns hex(HMAC-SHA256(salt, prefix)) for use as a bucket key.
+// Must be called with r.mu held.
+func (r *RateLimiter) hashPrefix(prefix string) string {
+	mac := hmac.New(sha256.New, r.salt)
+	mac.Write([]byte(prefix))
+	return hex.EncodeToString(mac.Sum(nil))
 }
 
 // ipPrefix extracts the network prefix from an address.

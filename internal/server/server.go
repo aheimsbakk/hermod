@@ -16,8 +16,12 @@ import (
 )
 
 const (
-	maxFailures    = 3
 	maxMessageSize = 65536 // 64 KiB per signaling message
+
+	// DefaultMaxBlobsPerChannel is the default hard cap on relayed blobs per channel.
+	DefaultMaxBlobsPerChannel = 10
+	// DefaultMaxCPaceFailures is the default limit on CPace handshake failures per channel.
+	DefaultMaxCPaceFailures = 3
 )
 
 // MsgType identifies signaling message types.
@@ -43,12 +47,14 @@ type Message struct {
 
 // Server is the hermod signaling server.
 type Server struct {
-	store      SignalingStore
-	rl         *RateLimiter
-	ttl        time.Duration
-	upgrader   websocket.Upgrader
-	httpServer *http.Server
-	logger     *slog.Logger
+	store              SignalingStore
+	rl                 *RateLimiter
+	ttl                time.Duration
+	maxBlobsPerChannel int
+	maxCPaceFailures   int
+	upgrader           websocket.Upgrader
+	httpServer         *http.Server
+	logger             *slog.Logger
 
 	mu      sync.Mutex
 	waiters map[uint16][]*wsConn // pending peer connections
@@ -60,16 +66,22 @@ type wsConn struct {
 }
 
 // NewServer constructs a new signaling Server.
-func NewServer(store SignalingStore, rl *RateLimiter, ttl time.Duration, logger *slog.Logger) *Server {
+// maxBlobsPerChannel caps the number of relayed blobs per channel; use
+// DefaultMaxBlobsPerChannel for the spec default.
+// maxCPaceFailures caps CPace protocol violations before the channel is
+// invalidated; use DefaultMaxCPaceFailures for the spec default.
+func NewServer(store SignalingStore, rl *RateLimiter, ttl time.Duration, maxBlobsPerChannel, maxCPaceFailures int, logger *slog.Logger) *Server {
 	if logger == nil {
 		logger = slog.Default()
 	}
 	return &Server{
-		store:   store,
-		rl:      rl,
-		ttl:     ttl,
-		logger:  logger,
-		waiters: make(map[uint16][]*wsConn),
+		store:              store,
+		rl:                 rl,
+		ttl:                ttl,
+		maxBlobsPerChannel: maxBlobsPerChannel,
+		maxCPaceFailures:   maxCPaceFailures,
+		logger:             logger,
+		waiters:            make(map[uint16][]*wsConn),
 		upgrader: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool { return true },
 		},
@@ -94,6 +106,8 @@ func (s *Server) ListenAndServe(ctx context.Context, addr string, tlsCfg *tls.Co
 	}
 	tlsLn := tls.NewListener(ln, tlsCfg)
 
+	s.logger.Info("Signaling server ready", "addr", addr)
+
 	errCh := make(chan error, 1)
 	go func() {
 		errCh <- s.httpServer.Serve(tlsLn)
@@ -101,10 +115,20 @@ func (s *Server) ListenAndServe(ctx context.Context, addr string, tlsCfg *tls.Co
 
 	select {
 	case <-ctx.Done():
+		s.logger.Info("Shutdown signal received — stopping server")
 		shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		return s.httpServer.Shutdown(shutCtx)
+		err := s.httpServer.Shutdown(shutCtx)
+		if err != nil {
+			s.logger.Error("Server shutdown returned an error", "err", err)
+		} else {
+			s.logger.Info("Server shutdown complete")
+		}
+		return err
 	case err := <-errCh:
+		if err != nil {
+			s.logger.Error("Server exited with an error", "err", err)
+		}
 		return err
 	}
 }
@@ -133,29 +157,35 @@ func (s *Server) handleCert(w http.ResponseWriter, r *http.Request) {
 // handleWS handles WebSocket connections from clients.
 func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	remoteAddr := r.RemoteAddr
+	s.logger.Debug("WebSocket upgrade request received", "remote_addr", remoteAddr)
+
 	if !s.rl.Allow(remoteAddr) {
+		s.logger.Warn("Request rate-limited", "remote_addr", remoteAddr)
 		http.Error(w, "rate limited", http.StatusTooManyRequests)
 		return
 	}
 
 	conn, err := s.upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		s.logger.Error("ws upgrade", "err", err)
+		s.logger.Error("WebSocket upgrade failed", "remote_addr", remoteAddr, "err", err)
 		return
 	}
 	defer conn.Close()
 	conn.SetReadLimit(maxMessageSize)
 
+	s.logger.Debug("WebSocket connection established", "remote_addr", remoteAddr)
 	s.serveClient(conn, remoteAddr)
+	s.logger.Debug("WebSocket connection closed", "remote_addr", remoteAddr)
 }
 
 func (s *Server) serveClient(conn *websocket.Conn, remoteAddr string) {
 	// Read first message to determine role
 	var initMsg Message
 	if err := conn.ReadJSON(&initMsg); err != nil {
-		s.logger.Debug("client init read", "err", err)
+		s.logger.Debug("Failed to read first message from client", "remote_addr", remoteAddr, "err", err)
 		return
 	}
+	s.logger.Debug("First message received from client", "remote_addr", remoteAddr, "type", initMsg.Type, "channel_id", initMsg.ChannelID)
 
 	switch initMsg.Type {
 	case MsgAllocate:
@@ -163,13 +193,16 @@ func (s *Server) serveClient(conn *websocket.Conn, remoteAddr string) {
 	case MsgJoin:
 		s.handleJoin(conn, remoteAddr, initMsg.ChannelID, initMsg.Payload)
 	default:
+		s.logger.Warn("Unknown first message type from client", "remote_addr", remoteAddr, "type", initMsg.Type)
 		writeError(conn, "unknown init message type")
 	}
 }
 
 // handleAllocate processes a sender's channel allocation request.
 func (s *Server) handleAllocate(conn *websocket.Conn, remoteAddr string, channelID uint16) {
+	s.logger.Debug("Allocating channel", "channel_id", channelID, "remote_addr", remoteAddr)
 	if err := s.store.AllocateChannel(channelID, s.ttl); err != nil {
+		s.logger.Warn("Channel allocation failed", "channel_id", channelID, "remote_addr", remoteAddr, "err", err)
 		writeError(conn, "channel allocation failed")
 		return
 	}
@@ -177,6 +210,7 @@ func (s *Server) handleAllocate(conn *websocket.Conn, remoteAddr string, channel
 	host, _, _ := net.SplitHostPort(remoteAddr)
 	payload, _ := json.Marshal(map[string]string{"public_ip": host})
 	conn.WriteJSON(Message{Type: MsgOK, ChannelID: channelID, Payload: payload})
+	s.logger.Info("Channel allocated", "channel_id", channelID, "sender_ip", host, "ttl", s.ttl)
 
 	wsc := &wsConn{conn: conn, sender: true}
 	s.mu.Lock()
@@ -189,9 +223,11 @@ func (s *Server) handleAllocate(conn *websocket.Conn, remoteAddr string, channel
 
 // handleJoin processes a receiver's join request.
 func (s *Server) handleJoin(conn *websocket.Conn, remoteAddr string, channelID uint16, _ []byte) {
+	s.logger.Debug("Receiver joining channel", "channel_id", channelID, "remote_addr", remoteAddr)
 	host, _, _ := net.SplitHostPort(remoteAddr)
 	payload, _ := json.Marshal(map[string]string{"public_ip": host})
 	conn.WriteJSON(Message{Type: MsgOK, ChannelID: channelID, Payload: payload})
+	s.logger.Info("Receiver joined channel", "channel_id", channelID, "receiver_ip", host)
 
 	wsc := &wsConn{conn: conn, sender: false}
 	s.mu.Lock()
@@ -200,6 +236,7 @@ func (s *Server) handleJoin(conn *websocket.Conn, remoteAddr string, channelID u
 	for _, w := range s.waiters[channelID] {
 		if w.sender {
 			w.conn.WriteJSON(Message{Type: MsgReady, ChannelID: channelID})
+			s.logger.Debug("Sent ready signal to sender", "channel_id", channelID)
 			break
 		}
 	}
@@ -210,6 +247,11 @@ func (s *Server) handleJoin(conn *websocket.Conn, remoteAddr string, channelID u
 
 // relay reads handshake blobs from one peer and forwards them to the other.
 func (s *Server) relay(conn *websocket.Conn, channelID uint16, isSender bool) {
+	role := "receiver"
+	if isSender {
+		role = "sender"
+	}
+	s.logger.Debug("Relay loop started", "channel_id", channelID, "role", role)
 	defer func() {
 		s.mu.Lock()
 		conns := s.waiters[channelID]
@@ -221,26 +263,45 @@ func (s *Server) relay(conn *websocket.Conn, channelID uint16, isSender bool) {
 		}
 		if len(updated) == 0 {
 			delete(s.waiters, channelID)
+			s.logger.Debug("All peers disconnected — channel removed", "channel_id", channelID)
 		} else {
 			s.waiters[channelID] = updated
 		}
 		s.mu.Unlock()
+		s.logger.Debug("Relay loop ended", "channel_id", channelID, "role", role)
 	}()
 
+	blobCount := 0
 	for {
 		var msg Message
 		if err := conn.ReadJSON(&msg); err != nil {
+			s.logger.Debug("Peer disconnected from relay", "channel_id", channelID, "role", role, "err", err)
 			return
 		}
 
 		switch msg.Type {
 		case MsgBlob:
+			blobCount++
+			if blobCount > s.maxBlobsPerChannel {
+				s.logger.Warn("Blob limit exceeded — closing connection",
+					"channel_id", channelID, "role", role,
+					"count", blobCount, "limit", s.maxBlobsPerChannel)
+				writeError(conn, "blob limit exceeded")
+				return
+			}
+			s.logger.Debug("Blob received from peer — forwarding", "channel_id", channelID, "role", role, "blob_num", blobCount, "size_bytes", len(msg.Payload))
 			if err := s.store.StoreBlob(channelID, isSender, msg.Payload); err != nil {
+				s.logger.Error("Failed to store blob", "channel_id", channelID, "role", role, "err", err)
+				if s.recordFailureAndDrop(channelID) {
+					writeError(conn, "store blob failed: channel terminated")
+					return
+				}
 				writeError(conn, "store blob failed")
 				return
 			}
 			// Forward blob to peer
 			s.mu.Lock()
+			forwarded := false
 			for _, w := range s.waiters[channelID] {
 				if w.sender != isSender {
 					w.conn.WriteJSON(Message{
@@ -248,16 +309,61 @@ func (s *Server) relay(conn *websocket.Conn, channelID uint16, isSender bool) {
 						ChannelID: channelID,
 						Payload:   msg.Payload,
 					})
+					forwarded = true
 					break
 				}
 			}
 			s.mu.Unlock()
+			if !forwarded {
+				s.logger.Warn("No peer available to receive blob", "channel_id", channelID, "role", role)
+			} else {
+				s.logger.Debug("Blob forwarded to peer", "channel_id", channelID, "blob_num", blobCount)
+			}
 
 		default:
+			s.logger.Warn("Unexpected message type in relay", "channel_id", channelID, "role", role, "type", msg.Type)
+			if s.recordFailureAndDrop(channelID) {
+				writeError(conn, "unexpected message type: channel terminated")
+				return
+			}
 			writeError(conn, "unexpected message type")
 			return
 		}
 	}
+}
+
+// dropChannel closes all peer connections for channelID, sends them a final
+// error, and purges the channel from the store. It is safe to call even if the
+// channel has already been removed.
+func (s *Server) dropChannel(channelID uint16) {
+	s.mu.Lock()
+	conns := s.waiters[channelID]
+	delete(s.waiters, channelID)
+	s.mu.Unlock()
+
+	for _, w := range conns {
+		_ = w.conn.WriteJSON(Message{Type: MsgError, Error: "channel terminated: limit exceeded"})
+		w.conn.Close()
+	}
+	_ = s.store.DeleteChannel(channelID)
+}
+
+// recordFailureAndDrop records a protocol failure for the channel. If the
+// failure count reaches s.maxCPaceFailures it drops the channel and returns
+// true so the caller can exit the relay loop.
+func (s *Server) recordFailureAndDrop(channelID uint16) bool {
+	n, err := s.store.RecordFailure(channelID)
+	if err != nil {
+		// Channel may have already been deleted; treat as terminal.
+		return true
+	}
+	if n >= s.maxCPaceFailures {
+		s.logger.Warn("CPace failure limit reached — dropping channel",
+			"channel_id", channelID, "failures", n, "limit", s.maxCPaceFailures)
+		s.dropChannel(channelID)
+		return true
+	}
+	return false
 }
 
 func writeError(conn *websocket.Conn, msg string) {

@@ -94,20 +94,6 @@ func Save(cfg *Config) error {
 	return os.WriteFile(Path(), data, 0o600)
 }
 
-// LogPath returns the rolling log file path.
-func LogPath() string {
-	if runtime.GOOS == "windows" {
-		return filepath.Join(os.Getenv("APPDATA"), "Hermod", "app.log")
-	}
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".local", "state", "hermod", "app.log")
-}
-
-// EnsureLogDir creates the log directory if it does not exist.
-func EnsureLogDir() error {
-	return os.MkdirAll(filepath.Dir(LogPath()), 0o700)
-}
-
 // TLSCurveIDs maps curve name strings to tls.CurveID values.
 func TLSCurveIDs(names []string) []tls.CurveID {
 	table := map[string]tls.CurveID{

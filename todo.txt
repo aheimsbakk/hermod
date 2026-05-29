@@ -11,3 +11,10 @@ x 2026-05-28 2026-05-28 Write integration tests for verify negotiation (all 4 fl
 x 2026-05-28 (A) 2026-05-28 Fix SAS prompt reading from /dev/tty when stdin is piped @hermod +fix
 x 2026-05-28 (A) 2026-05-28 Make rx/tx cancellable on SIGINT — propagate ctx to WebSocket reads @hermod +fix
 x 2026-05-28 (A) 2026-05-28 Write failing unit tests for SAS piped-stdin bug @hermod +test
+x 2026-05-29 2026-05-29 Add debug/info log calls in network signaling client @hermod +feat
+x 2026-05-29 2026-05-29 Add debug/info/warn/error log calls in server WebSocket relay @hermod +feat
+x 2026-05-29 2026-05-29 Add debug/info/warn/error log calls throughout rx command @hermod +feat
+x 2026-05-29 2026-05-29 Add debug/info/warn/error log calls throughout serve command @hermod +feat
+x 2026-05-29 2026-05-29 Add debug/info/warn/error log calls throughout tx command @hermod +feat
+x 2026-05-29 2026-05-29 Add logError helper to verbosity.go @hermod +feat
+x 2026-05-29 2026-05-29 Ctrl+C cancels transfer gracefully on both sides — temp cleanup + peer notification @hermod +feat

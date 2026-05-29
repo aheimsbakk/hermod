@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"fmt"
 	"io"
 	"net"
 	"strings"
@@ -366,5 +367,154 @@ func TestSASCoordinated_ReceiverRejects(t *testing.T) {
 	}
 	if len(errs) == 0 {
 		t.Error("expected at least one error when receiver rejects")
+	}
+}
+
+// --- helper types for error-path tests ---
+
+// failConn is a sasStreamConn that returns an error from both stream methods.
+type failConn struct{ err error }
+
+func (f *failConn) OpenStreamSync(_ context.Context) (io.ReadWriteCloser, error) {
+	return nil, f.err
+}
+func (f *failConn) AcceptStream(_ context.Context) (io.ReadWriteCloser, error) {
+	return nil, f.err
+}
+
+// failWriteStream always fails on Write; Read returns EOF.
+type failWriteStream struct{ err error }
+
+func (f *failWriteStream) Write(_ []byte) (int, error) { return 0, f.err }
+func (f *failWriteStream) Read(_ []byte) (int, error)  { return 0, io.EOF }
+func (f *failWriteStream) Close() error                { return nil }
+
+// failReadStream succeeds on Write but always fails on Read.
+type failReadStream struct{ err error }
+
+func (f *failReadStream) Write(p []byte) (int, error) { return len(p), nil }
+func (f *failReadStream) Read(_ []byte) (int, error)  { return 0, f.err }
+func (f *failReadStream) Close() error                { return nil }
+
+// connWithStream is a sasStreamConn that returns the given stream.
+type connWithStream struct{ stream io.ReadWriteCloser }
+
+func (c *connWithStream) OpenStreamSync(_ context.Context) (io.ReadWriteCloser, error) {
+	return c.stream, nil
+}
+func (c *connWithStream) AcceptStream(_ context.Context) (io.ReadWriteCloser, error) {
+	return c.stream, nil
+}
+
+// --- Error-path tests ---
+
+// TestSASCoordinated_BothReject verifies the "rejected by both sides" message
+// when both parties answer "n".
+func TestSASCoordinated_BothReject(t *testing.T) {
+	clientConn, serverConn, err := tlsPipe()
+	if err != nil {
+		t.Fatalf("tls pipe: %v", err)
+	}
+
+	senderStream, receiverStream := newMockStreamPair()
+	senderConn := newMockSASConn(senderStream)
+	receiverConn := newMockSASConn(receiverStream)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	errCh := make(chan error, 2)
+	go func() {
+		errCh <- performSASCoordinatedWith(ctx, senderConn, clientConn.ConnectionState(), true, strings.NewReader("n\n"))
+	}()
+	go func() {
+		errCh <- performSASCoordinatedWith(ctx, receiverConn, serverConn.ConnectionState(), false, strings.NewReader("n\n"))
+	}()
+
+	var errs []error
+	for i := 0; i < 2; i++ {
+		if e := <-errCh; e != nil {
+			errs = append(errs, e)
+		}
+	}
+	if len(errs) == 0 {
+		t.Error("expected at least one error when both sides reject")
+	}
+	found := false
+	for _, e := range errs {
+		if strings.Contains(e.Error(), "both sides") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected a 'both sides' error among: %v", errs)
+	}
+}
+
+// TestSASCoordinated_OpenStreamError covers the "open sas stream" error return.
+func TestSASCoordinated_OpenStreamError(t *testing.T) {
+	clientConn, _, err := tlsPipe()
+	if err != nil {
+		t.Fatalf("tls pipe: %v", err)
+	}
+
+	conn := &failConn{err: fmt.Errorf("open stream failed")}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	err = performSASCoordinatedWith(ctx, conn, clientConn.ConnectionState(), true, strings.NewReader("y\n"))
+	if err == nil || !strings.Contains(err.Error(), "open sas stream") {
+		t.Fatalf("expected 'open sas stream' error, got: %v", err)
+	}
+}
+
+// TestSASCoordinated_AcceptStreamError covers the "accept sas stream" error return.
+func TestSASCoordinated_AcceptStreamError(t *testing.T) {
+	_, serverConn, err := tlsPipe()
+	if err != nil {
+		t.Fatalf("tls pipe: %v", err)
+	}
+
+	conn := &failConn{err: fmt.Errorf("accept stream failed")}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	err = performSASCoordinatedWith(ctx, conn, serverConn.ConnectionState(), false, strings.NewReader("y\n"))
+	if err == nil || !strings.Contains(err.Error(), "accept sas stream") {
+		t.Fatalf("expected 'accept sas stream' error, got: %v", err)
+	}
+}
+
+// TestSASCoordinated_StreamWriteError covers the "send sas result" error return.
+func TestSASCoordinated_StreamWriteError(t *testing.T) {
+	clientConn, _, err := tlsPipe()
+	if err != nil {
+		t.Fatalf("tls pipe: %v", err)
+	}
+
+	conn := &connWithStream{stream: &failWriteStream{err: fmt.Errorf("write failed")}}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	err = performSASCoordinatedWith(ctx, conn, clientConn.ConnectionState(), true, strings.NewReader("y\n"))
+	if err == nil || !strings.Contains(err.Error(), "send sas result") {
+		t.Fatalf("expected 'send sas result' error, got: %v", err)
+	}
+}
+
+// TestSASCoordinated_StreamReadError covers the "recv peer sas result" error return.
+func TestSASCoordinated_StreamReadError(t *testing.T) {
+	clientConn, _, err := tlsPipe()
+	if err != nil {
+		t.Fatalf("tls pipe: %v", err)
+	}
+
+	conn := &connWithStream{stream: &failReadStream{err: fmt.Errorf("read failed")}}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	err = performSASCoordinatedWith(ctx, conn, clientConn.ConnectionState(), true, strings.NewReader("y\n"))
+	if err == nil || !strings.Contains(err.Error(), "recv peer sas result") {
+		t.Fatalf("expected 'recv peer sas result' error, got: %v", err)
 	}
 }

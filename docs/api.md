@@ -4,6 +4,28 @@ Internal package API for contributors and embedders. All packages are under `git
 
 ---
 
+## `internal/cli`
+
+CLI command implementations and shared transfer helpers.
+
+### Cancellation
+
+```go
+const cancelCodeUser quic.ApplicationErrorCode = 1
+const cancelMsgSender   = "cancelled:sender"
+const cancelMsgReceiver = "cancelled:receiver"
+```
+Error code and messages used when a user cancels a transfer (Ctrl+C / SIGTERM).
+
+Both `tx` and `rx` watch `ctx.Done()` and call `quicConn.CloseWithError(cancelCodeUser, cancelMsg*)` as soon as the context is cancelled. This unblocks the peer's blocked stream read or write immediately.
+
+```go
+func cancelledByPeer(err error) error
+```
+Returns a user-facing error ("transfer cancelled by sender" or "transfer cancelled by receiver") when `err` wraps a `*quic.ApplicationError` with code `1`. Returns `nil` for any other error or `nil` input.
+
+---
+
 ## `internal/crypto`
 
 Password-authenticated key exchange, symmetric encryption, and display utilities.
@@ -164,6 +186,11 @@ func DialSignaling(serverURL, pinnedFingerprint string) (*SignalingClient, error
 Opens a WebSocket connection to the signaling server. If `pinnedFingerprint` is non-empty, the server's certificate must match.
 
 ```go
+func (c *SignalingClient) WithContext(ctx context.Context) *SignalingClient
+```
+Returns a copy of the client whose blocking `RecvBlob` and `WaitReady` calls are cancelled when `ctx` is done. Used by `tx` and `rx` to propagate SIGINT cancellation.
+
+```go
 func (c *SignalingClient) Close() error
 func (c *SignalingClient) Allocate(channelID uint16) (publicIP string, err error)
 func (c *SignalingClient) Join(channelID uint16) (publicIP string, err error)
@@ -186,9 +213,12 @@ Signaling server and in-memory store.
 ### Server
 
 ```go
-func NewServer(store SignalingStore, rl *RateLimiter, channelTTL time.Duration, log *slog.Logger) *Server
+const DefaultMaxBlobsPerChannel = 10
+const DefaultMaxCPaceFailures   = 3
+
+func NewServer(store SignalingStore, rl *RateLimiter, ttl time.Duration, maxBlobsPerChannel, maxCPaceFailures int, logger *slog.Logger) *Server
 ```
-Creates a new signaling server. `store` holds channel state. `rl` enforces per-IP rate limits. `channelTTL` is how long an allocated channel lives before the server expires it.
+Creates a new signaling server. `store` holds channel state. `rl` enforces per-IP rate limits. `ttl` is how long an allocated channel lives before the server expires it. `maxBlobsPerChannel` caps the total number of relayed blobs per channel; use `DefaultMaxBlobsPerChannel`. `maxCPaceFailures` caps CPace protocol violations before the channel is dropped and all peers are disconnected; use `DefaultMaxCPaceFailures`.
 
 ```go
 func (s *Server) ListenAndServe(ctx context.Context, addr string, tlsCfg *tls.Config) error
@@ -224,8 +254,9 @@ Starts a background goroutine that calls `store.PurgeExpired()` every `interval`
 ```go
 func NewRateLimiter(rate, burst float64) *RateLimiter
 func (rl *RateLimiter) Allow(addr string) bool
+func (rl *RateLimiter) Cleanup(maxAge time.Duration)
 ```
-Token-bucket rate limiter keyed by `/32` IPv4 prefix or `/64` IPv6 prefix. `addr` is a `"host:port"` or bare IP string.
+Token-bucket rate limiter keyed by IP prefix (`/32` IPv4, `/64` IPv6). The bucket key is `hex(HMAC-SHA256(salt, prefix))` — raw IP addresses are never stored. A 32-byte cryptographic salt is generated at startup and replaced every UTC calendar day; all buckets are cleared on rotation to prevent cross-day tracking. `addr` is a `"host:port"` or bare IP string. `Cleanup` removes entries not seen within `maxAge`.
 
 ---
 
@@ -253,12 +284,12 @@ Parses the PEM certificate and key stored in `cfg`.
 ```go
 func BuildTLSConfig(cfg *Config) *tls.Config
 ```
-Returns a base `*tls.Config` with TLS 1.3 minimum version and the ALPN protocol `hermod/1`.
+Returns a `*tls.Config` with TLS 1.3 minimum version and curve/cipher preferences from `cfg`. ALPN (`hermod-p2p`) is set separately by `DialQUIC` and `ListenQUIC` in `internal/network`.
 
 ```go
-func ServerFingerprint(cfg *Config) (string, error)
+func CertFingerprint(certDER []byte) string
 ```
-Returns the SHA-256 fingerprint of the server certificate stored in `cfg`.
+Returns the SHA-256 fingerprint of a DER-encoded certificate as a 64-character lowercase hex string.
 
 ```go
 func PinServer(cfg *Config, serverURL, fingerprint string)
@@ -284,8 +315,9 @@ Payload classification, metadata, and integrity verification.
 type Kind string
 
 const (
-    KindFile Kind = "file"
-    KindText Kind = "text"
+    KindFile   Kind = "file"
+    KindText   Kind = "text"
+    KindStream Kind = "stream"
 )
 
 type Metadata struct {
@@ -299,7 +331,7 @@ type Metadata struct {
 ```go
 func ClassifyInput(arg string, isStdinPiped bool) (Kind, string, error)
 ```
-Returns whether `arg` is a file path or a text snippet. Returns `KindText` when `isStdinPiped` is true and `arg` is empty.
+Returns the payload kind and name for a given input argument. Returns `KindStream` when `arg` is `"-"` or when `arg` is empty and `isStdinPiped` is true. Returns `KindFile` when `arg` is a path to an existing file. Returns `KindText` otherwise.
 
 ```go
 func HashFile(path string) (hash string, size int64, err error)
@@ -325,4 +357,4 @@ Returns a safe output path under `dir` for a file named `name`. Strips directory
 ```go
 func TempPath(dest string) string
 ```
-Returns a `.tmp`-suffixed path alongside `dest`, used while writing before the integrity check passes.
+Returns a `.hermod_tmp`-suffixed path alongside `dest`, used while writing before the integrity check passes. The temp file is removed on any write error, including context cancellation.

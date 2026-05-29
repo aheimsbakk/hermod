@@ -5,10 +5,13 @@
 ```
 cmd/hermod/main.go          — binary entry, cobra root
 internal/cli/               — serve, trust, tx, rx commands
-internal/cli/verbosity.go   — --verbose flag parsing, slog/stdlog wiring
+internal/cli/cancel.go      — QUIC cancellation error code, peer-cancel detection helper
+internal/cli/tty_unix.go    — /dev/tty open helper (Unix)
+internal/cli/tty_windows.go — CONIN$ open helper (Windows)
+internal/cli/verbosity.go   — --verbose flag parsing, slog/stdlog wiring, log helpers
 internal/config/            — YAML config load/save, TLS helpers, cert generation
 internal/crypto/            — CPace PAKE (P-256), AES-256-GCM, SAS, identicon, transfer codes
-internal/server/            — MemoryStore SignalingStore, WebSocket relay, rate limiter, TTL GC
+internal/server/            — MemoryStore SignalingStore, WebSocket relay, HMAC-SHA256 IP-hashing rate limiter, per-channel blob/CPace-failure limits, TTL GC
 internal/network/           — UDP mux (SO_REUSEADDR/REUSEPORT), hole punching, QUIC dial/listen, signaling client
 pkg/transfer/               — payload metadata, stream classification, SHA-256 integrity
 README.md                   — user-facing documentation
@@ -16,8 +19,28 @@ docs/protocol.md            — wire protocol specification
 docs/api.md                 — internal package API reference
 docs/worklogs/              — session worklogs
 scripts/                    — bump-version.sh, validate-worklog.sh
-VERSION                     — current version (0.2.0)
+VERSION                     — current version (0.7.0)
 ```
+
+## Logging
+
+Controlled by `--verbose none|error|warning|info|debug` (default: `none`).
+Implemented with `log/slog` via helpers in `verbosity.go`: `logDebug`, `logInfo`, `logWarn`, `logError`.
+All output goes to stderr. No log files are written.
+
+| Level   | What it covers |
+|---------|---------------|
+| error   | Unrecoverable failures — integrity check failed, server exited with error |
+| warning | Non-fatal problems — rate-limited request, missing peer, ack not received |
+| info    | State changes — server ready, channel allocated/joined, PAKE complete, hole punch success, QUIC connected, transfer complete |
+| debug   | Every internal step — config load, cert gen, UDP bind, each relay message, stream open/close, GC start |
+
+Rules:
+- `debug` traces every step in all three modes (serve, tx, rx).
+- `info` covers the same events a web server access log would surface: connections, requests, results.
+- Log messages use plain language: active voice, specific names, no filler.
+- Sensitive material (keys, passwords, raw payloads) is never logged at any level.
+
 
 ## Key Data Models
 
@@ -38,7 +61,7 @@ trusted_servers:             # map[url]sha256fingerprint
 - AllocateChannel(id uint16, ttl time.Duration) error
 - StoreBlob(id uint16, sender bool, blob []byte) error
 - FetchBlob(id uint16, sender bool) ([]byte, error)
-- RecordFailure(id uint16) (attempts int, err error)
+- RecordFailure(id uint16) (int, error)
 - DeleteChannel(id uint16) error
 - PurgeExpired() error
 - Close() error
@@ -71,6 +94,6 @@ Implementation: `MemoryStore` (default, in-process). SQLite removed.
 4. Endpoint bundles exchanged (AES-256-GCM encrypted with CPace key)
 5. UDP hole punch to peer candidates
 6. QUIC connection (TLS 1.3, ephemeral RSA-2048 certs, fingerprint-pinned)
-7. Stream 0: 4-byte-prefixed JSON metadata; Stream 1: raw payload bytes
+7. Stream 0 (SAS coordination, only when verify active): 1-byte confirm/reject exchange; Stream 1 (or 0 without verify): 4-byte-prefixed JSON metadata; Stream 2 (or 1 without verify): raw payload bytes
 8. Receiver verifies SHA-256; optional SAS out-of-band confirmation (symmetric: if either side uses `-v`, both are enforced)
 9. Receiver sends ack stream; sender waits before closing QUIC connection

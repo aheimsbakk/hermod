@@ -14,14 +14,14 @@ The transfer code encodes the channel ID and the PAKE passphrase.
 
 Format:
 ```
-<word-count>-<word1>-<word2>-...-<wordN>
+<channel-id>-<word1>-<word2>-...-<wordN>
 ```
 
-Example: `3-apple-banana-cherry`
+Example: `47832-apple-banana-cherry`
 
-- The first token (`3`) is the number of words, which also encodes the channel ID.
+- The first token is the numeric channel ID — a random `uint16` (0–65535).
 - The words are drawn from a fixed wordlist. They form the shared passphrase for the CPace handshake.
-- Channel ID is derived from the word count and a random offset. It fits in a `uint16`.
+- The default word count is 3, overridable with `--words` on `tx`.
 
 The sender generates the code and displays it. The receiver types it in.
 
@@ -130,7 +130,7 @@ Each peer generates an ephemeral RSA-2048 self-signed X.509 certificate for this
 
 QUIC configuration:
 - TLS 1.3 (enforced by quic-go)
-- ALPN: `hermod/1`
+- ALPN: `hermod-p2p`
 - Idle timeout: 30 seconds
 
 ## Payload transfer
@@ -184,10 +184,32 @@ When `verify` is active (see Endpoint exchange above), after the QUIC handshake 
 
 Both peers display these values simultaneously. The user compares them out-of-band (voice, Signal, etc.) and confirms or rejects. User input is always read from the controlling terminal (`/dev/tty` on Unix, `CONIN$` on Windows) so the prompt works correctly when stdin is piped. The result is then exchanged over the SAS coordination stream (see Payload transfer above). A rejection by either side closes the QUIC connection before any payload is sent.
 
+## Transfer cancellation
+
+Either side can cancel a transfer at any time by pressing Ctrl+C (SIGINT) or sending SIGTERM.
+
+When the context is cancelled, the cancelling peer closes the QUIC connection with:
+
+- Application error code: `1`
+- Error message: `"cancelled:sender"` (tx) or `"cancelled:receiver"` (rx)
+
+This immediately unblocks the peer's blocked stream read or write. The peer detects the `*quic.ApplicationError` with code `1` and prints a message naming who cancelled. For example:
+
+```
+Transfer cancelled by sender.
+```
+
+On the receiving side, any partial `.hermod_tmp` file is deleted before exit. No incomplete file is left on disk.
+
+Both sides exit with a non-zero status code after cancellation.
+
 ## Security considerations
 
 - The signaling server sees only encrypted blobs after the initial `allocate`/`join`. It cannot recover the CPace key or the endpoint data.
 - The signaling server TLS certificate is pinned on the client after running `hermod trust`. Connections to an unknown server are accepted on first use and the fingerprint is saved.
 - Channel IDs are 16-bit integers. Collisions are possible in high-traffic deployments. The signaling server rejects a second `allocate` for an in-use channel.
+- The server enforces a maximum of **3 failed CPace handshake attempts** per channel. On the third violation all peer connections are closed, the channel is invalidated, and its state is purged.
+- The server enforces a maximum of **10 relayed blobs** per channel to prevent relay saturation. Exceeding the limit closes the offending connection.
+- Client IP addresses are never stored in plaintext. The rate-limiter bucket key is `HMAC-SHA256(dailySalt, ipPrefix)`. The salt is replaced every UTC calendar day and all buckets are cleared on rotation.
 - The CPace implementation uses the try-and-increment method to hash passwords to P-256 curve points. This is a deterministic constant-time-per-attempt approach.
 - Ephemeral QUIC certificates use RSA-2048. They are valid for 24 hours and are never stored.

@@ -36,4 +36,4 @@
 
 ## V. Documentation & Formatting
 25. **Strict Templating:** Strictly adhere to required formats (e.g., YAML front-matter in worklogs). Do not invent new fields, change key casing, or exceed length limits.
-26. **Synchronized Docs:** Code and docs must match. Immediately update inline comments, `README.md`, developer guides, and `.env.example` when changing logic or adding variables.
+26. **Synchronized Docs:** Code and docs must match. Immediately update inline comments, `README.md`, api and protocol documentation, developer guides, and `.env.example` when changing logic or adding variables.
