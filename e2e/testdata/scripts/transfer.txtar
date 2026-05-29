@@ -1,0 +1,28 @@
+# Full transfer via CLI: tx sends a file, rx receives it, SHA-256 verified.
+#
+# Steps:
+#   1. start-server  — starts an in-process signaling server, pins its cert,
+#                      and sets $HERMOD_SERVER.
+#   2. tx-background — runs hermod tx in a goroutine; blocks until the transfer
+#                      code appears on stdout, then sets $HERMOD_CODE.
+#   3. exec hermod rx — downloads the payload and saves it to dst/.
+#   4. tx-wait       — waits for tx to exit cleanly.
+#   5. cmp           — asserts byte-for-byte integrity of the received file.
+
+# Provide a writable home directory so subprocesses can persist config.
+mkdir home
+env HOME=$WORK/home
+
+start-server
+
+tx-background $WORK/src/payload.txt
+
+mkdir dst
+exec hermod rx --server $HERMOD_SERVER --destination $WORK/dst $HERMOD_CODE
+
+tx-wait
+
+cmp src/payload.txt dst/payload.txt
+
+-- src/payload.txt --
+Hello from Hermod testscript full-transfer test.
