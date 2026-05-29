@@ -86,10 +86,16 @@ func runRx(code, destination, serverURL string, verify bool, listenUDP string, s
 	myFP := network.CertFingerprint(epCertDER)
 	logDebug("ephemeral certificate generated", "fingerprint", myFP)
 
+	// Enforce server trust — abort before any network call if the server
+	// certificate has not been pinned via 'hermod trust'.
+	logDebug("checking pinned fingerprint for server", "server", serverURL)
+	pinnedFP, err := requireTrustedServer(cfg, serverURL)
+	if err != nil {
+		return err
+	}
+
 	// Connect to signaling server
 	logInfo("Connecting to signaling server", "server", serverURL)
-	logDebug("looking up pinned fingerprint for server", "server", serverURL)
-	pinnedFP := cfg.TrustedServers[serverURL]
 	sigRaw, err := network.DialSignaling(serverURL, pinnedFP)
 	if err != nil {
 		return fmt.Errorf("signaling connect: %w", err)

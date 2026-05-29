@@ -17,7 +17,8 @@ import (
 // TestRxCancelCleansUpTempFile verifies that when the receiver cancels mid-transfer,
 // no .hermod_tmp file is left in the destination directory.
 func TestRxCancelCleansUpTempFile(t *testing.T) {
-	serverURL := startCLIServer(t)
+	serverURL, fp := startCLIServer(t)
+	trustServerForCLITest(t, serverURL, fp)
 
 	// Use 16 MiB so the transfer cannot complete before we confirm rx is mid-receive.
 	// A 1 MiB file finishes in <300 ms over loopback, causing SIGINT to race with
