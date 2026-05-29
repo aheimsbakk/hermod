@@ -130,7 +130,7 @@ Each peer generates an ephemeral RSA-2048 self-signed X.509 certificate for this
 
 QUIC configuration:
 - TLS 1.3 (enforced by quic-go)
-- ALPN: `hermod/1`
+- ALPN: `hermod-p2p`
 - Idle timeout: 30 seconds
 
 ## Payload transfer
@@ -183,6 +183,25 @@ When `verify` is active (see Endpoint exchange above), after the QUIC handshake 
 - An **identicon** — a symmetric ASCII art image derived from the first 16 bytes, rendered inside a double-line box frame with one space of padding inside each vertical border (`║ … ║`)
 
 Both peers display these values simultaneously. The user compares them out-of-band (voice, Signal, etc.) and confirms or rejects. User input is always read from the controlling terminal (`/dev/tty` on Unix, `CONIN$` on Windows) so the prompt works correctly when stdin is piped. The result is then exchanged over the SAS coordination stream (see Payload transfer above). A rejection by either side closes the QUIC connection before any payload is sent.
+
+## Transfer cancellation
+
+Either side can cancel a transfer at any time by pressing Ctrl+C (SIGINT) or sending SIGTERM.
+
+When the context is cancelled, the cancelling peer closes the QUIC connection with:
+
+- Application error code: `1`
+- Error message: `"cancelled:sender"` (tx) or `"cancelled:receiver"` (rx)
+
+This immediately unblocks the peer's blocked stream read or write. The peer detects the `*quic.ApplicationError` with code `1` and prints a message naming who cancelled. For example:
+
+```
+Transfer cancelled by sender.
+```
+
+On the receiving side, any partial `.hermod_tmp` file is deleted before exit. No incomplete file is left on disk.
+
+Both sides exit with a non-zero status code after cancellation.
 
 ## Security considerations
 

@@ -17,3 +17,4 @@ x 2026-05-29 2026-05-29 Add debug/info/warn/error log calls throughout rx comman
 x 2026-05-29 2026-05-29 Add debug/info/warn/error log calls throughout serve command @hermod +feat
 x 2026-05-29 2026-05-29 Add debug/info/warn/error log calls throughout tx command @hermod +feat
 x 2026-05-29 2026-05-29 Add logError helper to verbosity.go @hermod +feat
+x 2026-05-29 2026-05-29 Ctrl+C cancels transfer gracefully on both sides — temp cleanup + peer notification @hermod +feat

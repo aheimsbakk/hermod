@@ -179,18 +179,3 @@ func TestTrustSetsDefaultServer(t *testing.T) {
 		t.Fatalf("expected server URL to be set, got %q", cfg.ServerURL)
 	}
 }
-
-func TestLogPath(t *testing.T) {
-	p := config.LogPath()
-	if p == "" {
-		t.Fatal("log path is empty")
-	}
-}
-
-func TestEnsureLogDir(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("HOME", dir)
-	if err := config.EnsureLogDir(); err != nil {
-		t.Fatalf("ensure log dir: %v", err)
-	}
-}

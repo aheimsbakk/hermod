@@ -5,6 +5,7 @@
 ```
 cmd/hermod/main.go          — binary entry, cobra root
 internal/cli/               — serve, trust, tx, rx commands
+internal/cli/cancel.go      — QUIC cancellation error code, peer-cancel detection helper
 internal/cli/verbosity.go   — --verbose flag parsing, slog/stdlog wiring, log helpers
 internal/config/            — YAML config load/save, TLS helpers, cert generation
 internal/crypto/            — CPace PAKE (P-256), AES-256-GCM, SAS, identicon, transfer codes
@@ -23,7 +24,7 @@ VERSION                     — current version (0.2.0)
 
 Controlled by `--verbose none|error|warning|info|debug` (default: `none`).
 Implemented with `log/slog` via helpers in `verbosity.go`: `logDebug`, `logInfo`, `logWarn`, `logError`.
-`serve` also writes JSON logs to `~/.local/state/hermod/app.log` at the active level.
+All output goes to stderr. No log files are written.
 
 | Level   | What it covers |
 |---------|---------------|

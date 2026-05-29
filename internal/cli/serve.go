@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
-	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
@@ -83,24 +82,9 @@ func runServe(listenAddr string, ttl time.Duration, rateLimit, rateBurst float64
 	rl := server.NewRateLimiter(rateLimit, rateBurst)
 	logDebug("rate limiter configured", "rate", rateLimit, "burst", rateBurst)
 
-	if err := config.EnsureLogDir(); err != nil {
-		logWarn("could not create log directory — server events will not be persisted to disk", "err", err)
-	}
-	logFile, err := os.OpenFile(config.LogPath(), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
-	if err != nil {
-		logWarn("could not open log file — server events will go to stderr only", "path", config.LogPath(), "err", err)
-		logFile = os.Stderr
-	} else {
-		defer logFile.Close()
-		logDebug("server log file opened", "path", config.LogPath())
-	}
-
-	// The serve command always logs to file at the active verbosity level.
-	logger := slog.New(slog.NewJSONHandler(logFile, &slog.HandlerOptions{
-		Level: toSlogLevel(currentLevel),
-	}))
-
-	srv := server.NewServer(store, rl, ttl, logger)
+	// The server uses the global slog logger, which is already wired to stderr
+	// at the active verbosity level by applyVerbosity.
+	srv := server.NewServer(store, rl, ttl, nil)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()

@@ -27,4 +27,3 @@ Go 1.25.0
 ## Config Locations
 - Linux/macOS: `~/.config/hermod/config.yaml`
 - Windows: `%APPDATA%\Hermod\config.yaml`
-- Log: `~/.local/state/hermod/app.log`

@@ -273,6 +273,12 @@ func runTx(input, serverURL string, numWords int, verify bool, listenUDP string,
 	defer quicConn.CloseWithError(0, "done")
 	logInfo("QUIC connection established", "peer_addr", punchResult.PeerAddr.String())
 
+	// Watch for Ctrl+C: close the connection so the receiver is notified immediately.
+	go func() {
+		<-ctx.Done()
+		quicConn.CloseWithError(cancelCodeUser, cancelMsgSender)
+	}()
+
 	// SAS verification (optional)
 	if verify {
 		logInfo("Starting SAS out-of-band verification")
@@ -327,10 +333,26 @@ func runTx(input, serverURL string, numWords int, verify bool, listenUDP string,
 	if isTTY && size > 0 {
 		bar := progressbar.DefaultBytes(size, "sending")
 		if _, err := io.Copy(io.MultiWriter(payloadStream, bar), reader); err != nil {
+			if peerErr := cancelledByPeer(err); peerErr != nil {
+				fmt.Fprintf(os.Stderr, "\nTransfer cancelled by receiver.\n")
+				return peerErr
+			}
+			if ctx.Err() != nil {
+				fmt.Fprintf(os.Stderr, "\nTransfer cancelled by sender.\n")
+				return fmt.Errorf("transfer cancelled")
+			}
 			return fmt.Errorf("send payload: %w", err)
 		}
 	} else {
 		if _, err := io.Copy(payloadStream, reader); err != nil {
+			if peerErr := cancelledByPeer(err); peerErr != nil {
+				fmt.Fprintf(os.Stderr, "\nTransfer cancelled by receiver.\n")
+				return peerErr
+			}
+			if ctx.Err() != nil {
+				fmt.Fprintf(os.Stderr, "\nTransfer cancelled by sender.\n")
+				return fmt.Errorf("transfer cancelled")
+			}
 			return fmt.Errorf("send payload: %w", err)
 		}
 	}
@@ -345,6 +367,10 @@ func runTx(input, serverURL string, numWords int, verify bool, listenUDP string,
 		ackStream.Close()
 		logDebug("acknowledgement received from receiver")
 	} else {
+		if peerErr := cancelledByPeer(err); peerErr != nil {
+			fmt.Fprintf(os.Stderr, "\nTransfer cancelled by receiver.\n")
+			return peerErr
+		}
 		logWarn("did not receive acknowledgement from receiver — transfer may still have succeeded", "err", err)
 	}
 

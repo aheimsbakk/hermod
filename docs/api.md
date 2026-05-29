@@ -4,6 +4,28 @@ Internal package API for contributors and embedders. All packages are under `git
 
 ---
 
+## `internal/cli`
+
+CLI command implementations and shared transfer helpers.
+
+### Cancellation
+
+```go
+const cancelCodeUser quic.ApplicationErrorCode = 1
+const cancelMsgSender   = "cancelled:sender"
+const cancelMsgReceiver = "cancelled:receiver"
+```
+Error code and messages used when a user cancels a transfer (Ctrl+C / SIGTERM).
+
+Both `tx` and `rx` watch `ctx.Done()` and call `quicConn.CloseWithError(cancelCodeUser, cancelMsg*)` as soon as the context is cancelled. This unblocks the peer's blocked stream read or write immediately.
+
+```go
+func cancelledByPeer(err error) error
+```
+Returns a user-facing error ("transfer cancelled by sender" or "transfer cancelled by receiver") when `err` wraps a `*quic.ApplicationError` with code `1`. Returns `nil` for any other error or `nil` input.
+
+---
+
 ## `internal/crypto`
 
 Password-authenticated key exchange, symmetric encryption, and display utilities.
@@ -164,6 +186,11 @@ func DialSignaling(serverURL, pinnedFingerprint string) (*SignalingClient, error
 Opens a WebSocket connection to the signaling server. If `pinnedFingerprint` is non-empty, the server's certificate must match.
 
 ```go
+func (c *SignalingClient) WithContext(ctx context.Context) *SignalingClient
+```
+Returns a copy of the client whose blocking `RecvBlob` and `WaitReady` calls are cancelled when `ctx` is done. Used by `tx` and `rx` to propagate SIGINT cancellation.
+
+```go
 func (c *SignalingClient) Close() error
 func (c *SignalingClient) Allocate(channelID uint16) (publicIP string, err error)
 func (c *SignalingClient) Join(channelID uint16) (publicIP string, err error)
@@ -253,7 +280,7 @@ Parses the PEM certificate and key stored in `cfg`.
 ```go
 func BuildTLSConfig(cfg *Config) *tls.Config
 ```
-Returns a base `*tls.Config` with TLS 1.3 minimum version and the ALPN protocol `hermod/1`.
+Returns a base `*tls.Config` with TLS 1.3 minimum version and the ALPN protocol `hermod-p2p`.
 
 ```go
 func ServerFingerprint(cfg *Config) (string, error)
@@ -284,8 +311,9 @@ Payload classification, metadata, and integrity verification.
 type Kind string
 
 const (
-    KindFile Kind = "file"
-    KindText Kind = "text"
+    KindFile   Kind = "file"
+    KindText   Kind = "text"
+    KindStream Kind = "stream"
 )
 
 type Metadata struct {
@@ -299,7 +327,7 @@ type Metadata struct {
 ```go
 func ClassifyInput(arg string, isStdinPiped bool) (Kind, string, error)
 ```
-Returns whether `arg` is a file path or a text snippet. Returns `KindText` when `isStdinPiped` is true and `arg` is empty.
+Returns the payload kind and name for a given input argument. Returns `KindStream` when `arg` is `"-"` or when `arg` is empty and `isStdinPiped` is true. Returns `KindFile` when `arg` is a path to an existing file. Returns `KindText` otherwise.
 
 ```go
 func HashFile(path string) (hash string, size int64, err error)
@@ -325,4 +353,4 @@ Returns a safe output path under `dir` for a file named `name`. Strips directory
 ```go
 func TempPath(dest string) string
 ```
-Returns a `.tmp`-suffixed path alongside `dest`, used while writing before the integrity check passes.
+Returns a `.hermod_tmp`-suffixed path alongside `dest`, used while writing before the integrity check passes. The temp file is removed on any write error, including context cancellation.

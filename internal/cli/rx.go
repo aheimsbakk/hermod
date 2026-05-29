@@ -249,6 +249,12 @@ func runRx(code, destination, serverURL string, verify bool, listenUDP string, s
 	defer quicConn.CloseWithError(0, "done")
 	logInfo("QUIC connection accepted from sender")
 
+	// Watch for Ctrl+C: close the connection so the sender is notified immediately.
+	go func() {
+		<-ctx.Done()
+		quicConn.CloseWithError(cancelCodeUser, cancelMsgReceiver)
+	}()
+
 	// SAS verification
 	if verify {
 		logInfo("Starting SAS out-of-band verification")
@@ -287,8 +293,15 @@ func runRx(code, destination, serverURL string, verify bool, listenUDP string, s
 	defer payloadStream.Close()
 
 	logInfo("Receiving payload", "kind", meta.Kind, "size_bytes", meta.Size)
-	// Route output
 	if err := receivePayload(ctx, meta, payloadStream, destination); err != nil {
+		if peerErr := cancelledByPeer(err); peerErr != nil {
+			fmt.Fprintf(os.Stderr, "\nTransfer cancelled by sender.\n")
+			return peerErr
+		}
+		if ctx.Err() != nil {
+			fmt.Fprintf(os.Stderr, "\nTransfer cancelled by receiver.\n")
+			return fmt.Errorf("transfer cancelled")
+		}
 		return err
 	}
 
@@ -313,7 +326,7 @@ func receivePayload(ctx context.Context, meta *transfer.Metadata, r io.Reader, d
 	switch {
 	case destination != "":
 		// Always save to disk
-		return saveToFile(r, meta, destination)
+		return saveToFile(ctx, r, meta, destination)
 
 	case !isStdoutTTY:
 		// stdout is piped — stream bytes directly
@@ -340,13 +353,15 @@ func receivePayload(ctx context.Context, meta *transfer.Metadata, r io.Reader, d
 
 		case transfer.KindFile:
 			// Save to current directory using original filename
-			return saveToFile(r, meta, ".")
+			return saveToFile(ctx, r, meta, ".")
 		}
 	}
 	return nil
 }
 
-func saveToFile(r io.Reader, meta *transfer.Metadata, destination string) error {
+// saveToFile writes incoming payload to a temp file, verifies SHA-256, then renames.
+// If ctx is cancelled mid-transfer, the temp file is removed and an error is returned.
+func saveToFile(ctx context.Context, r io.Reader, meta *transfer.Metadata, destination string) error {
 	name := meta.Name
 	if name == "" {
 		name = "received"
@@ -367,6 +382,15 @@ func saveToFile(r io.Reader, meta *transfer.Metadata, destination string) error 
 		return fmt.Errorf("create temp file: %w", err)
 	}
 
+	// Ensure temp file is cleaned up on any error (including cancellation).
+	var copyErr error
+	defer func() {
+		if copyErr != nil {
+			f.Close()
+			os.Remove(tmpPath)
+		}
+	}()
+
 	isTTY := isatty.IsTerminal(os.Stderr.Fd())
 	var w io.Writer = f
 	if isTTY && meta.Size > 0 {
@@ -374,17 +398,24 @@ func saveToFile(r io.Reader, meta *transfer.Metadata, destination string) error 
 		w = io.MultiWriter(f, bar)
 	}
 
-	if err := transfer.VerifyStream(r, w, meta.SHA256); err != nil {
-		f.Close()
-		os.Remove(tmpPath)
-		logError("Integrity check failed — file removed", "path", tmpPath, "err", err)
-		return fmt.Errorf("integrity check failed: %w", err)
+	if copyErr = transfer.VerifyStream(r, w, meta.SHA256); copyErr != nil {
+		// Distinguish cancellation from integrity failure.
+		if ctx.Err() != nil || cancelledByPeer(copyErr) != nil {
+			logDebug("transfer interrupted — temp file removed", "path", tmpPath)
+			return copyErr
+		}
+		logError("Integrity check failed — file removed", "path", tmpPath, "err", copyErr)
+		return fmt.Errorf("integrity check failed: %w", copyErr)
 	}
-	f.Close()
+
+	if err := f.Close(); err != nil {
+		copyErr = err
+		return fmt.Errorf("close temp file: %w", err)
+	}
 	logDebug("integrity check passed", "sha256", meta.SHA256)
 
 	if err := os.Rename(tmpPath, destPath); err != nil {
-		os.Remove(tmpPath)
+		copyErr = err
 		return fmt.Errorf("finalize file: %w", err)
 	}
 
