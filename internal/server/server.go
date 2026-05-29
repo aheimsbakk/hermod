@@ -16,8 +16,12 @@ import (
 )
 
 const (
-	maxFailures    = 3
 	maxMessageSize = 65536 // 64 KiB per signaling message
+
+	// DefaultMaxBlobsPerChannel is the default hard cap on relayed blobs per channel.
+	DefaultMaxBlobsPerChannel = 10
+	// DefaultMaxCPaceFailures is the default limit on CPace handshake failures per channel.
+	DefaultMaxCPaceFailures = 3
 )
 
 // MsgType identifies signaling message types.
@@ -43,12 +47,14 @@ type Message struct {
 
 // Server is the hermod signaling server.
 type Server struct {
-	store      SignalingStore
-	rl         *RateLimiter
-	ttl        time.Duration
-	upgrader   websocket.Upgrader
-	httpServer *http.Server
-	logger     *slog.Logger
+	store              SignalingStore
+	rl                 *RateLimiter
+	ttl                time.Duration
+	maxBlobsPerChannel int
+	maxCPaceFailures   int
+	upgrader           websocket.Upgrader
+	httpServer         *http.Server
+	logger             *slog.Logger
 
 	mu      sync.Mutex
 	waiters map[uint16][]*wsConn // pending peer connections
@@ -60,16 +66,22 @@ type wsConn struct {
 }
 
 // NewServer constructs a new signaling Server.
-func NewServer(store SignalingStore, rl *RateLimiter, ttl time.Duration, logger *slog.Logger) *Server {
+// maxBlobsPerChannel caps the number of relayed blobs per channel; use
+// DefaultMaxBlobsPerChannel for the spec default.
+// maxCPaceFailures caps CPace protocol violations before the channel is
+// invalidated; use DefaultMaxCPaceFailures for the spec default.
+func NewServer(store SignalingStore, rl *RateLimiter, ttl time.Duration, maxBlobsPerChannel, maxCPaceFailures int, logger *slog.Logger) *Server {
 	if logger == nil {
 		logger = slog.Default()
 	}
 	return &Server{
-		store:   store,
-		rl:      rl,
-		ttl:     ttl,
-		logger:  logger,
-		waiters: make(map[uint16][]*wsConn),
+		store:              store,
+		rl:                 rl,
+		ttl:                ttl,
+		maxBlobsPerChannel: maxBlobsPerChannel,
+		maxCPaceFailures:   maxCPaceFailures,
+		logger:             logger,
+		waiters:            make(map[uint16][]*wsConn),
 		upgrader: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool { return true },
 		},
@@ -270,9 +282,20 @@ func (s *Server) relay(conn *websocket.Conn, channelID uint16, isSender bool) {
 		switch msg.Type {
 		case MsgBlob:
 			blobCount++
+			if blobCount > s.maxBlobsPerChannel {
+				s.logger.Warn("Blob limit exceeded — closing connection",
+					"channel_id", channelID, "role", role,
+					"count", blobCount, "limit", s.maxBlobsPerChannel)
+				writeError(conn, "blob limit exceeded")
+				return
+			}
 			s.logger.Debug("Blob received from peer — forwarding", "channel_id", channelID, "role", role, "blob_num", blobCount, "size_bytes", len(msg.Payload))
 			if err := s.store.StoreBlob(channelID, isSender, msg.Payload); err != nil {
 				s.logger.Error("Failed to store blob", "channel_id", channelID, "role", role, "err", err)
+				if s.recordFailureAndDrop(channelID) {
+					writeError(conn, "store blob failed: channel terminated")
+					return
+				}
 				writeError(conn, "store blob failed")
 				return
 			}
@@ -299,10 +322,48 @@ func (s *Server) relay(conn *websocket.Conn, channelID uint16, isSender bool) {
 
 		default:
 			s.logger.Warn("Unexpected message type in relay", "channel_id", channelID, "role", role, "type", msg.Type)
+			if s.recordFailureAndDrop(channelID) {
+				writeError(conn, "unexpected message type: channel terminated")
+				return
+			}
 			writeError(conn, "unexpected message type")
 			return
 		}
 	}
+}
+
+// dropChannel closes all peer connections for channelID, sends them a final
+// error, and purges the channel from the store. It is safe to call even if the
+// channel has already been removed.
+func (s *Server) dropChannel(channelID uint16) {
+	s.mu.Lock()
+	conns := s.waiters[channelID]
+	delete(s.waiters, channelID)
+	s.mu.Unlock()
+
+	for _, w := range conns {
+		_ = w.conn.WriteJSON(Message{Type: MsgError, Error: "channel terminated: limit exceeded"})
+		w.conn.Close()
+	}
+	_ = s.store.DeleteChannel(channelID)
+}
+
+// recordFailureAndDrop records a protocol failure for the channel. If the
+// failure count reaches s.maxCPaceFailures it drops the channel and returns
+// true so the caller can exit the relay loop.
+func (s *Server) recordFailureAndDrop(channelID uint16) bool {
+	n, err := s.store.RecordFailure(channelID)
+	if err != nil {
+		// Channel may have already been deleted; treat as terminal.
+		return true
+	}
+	if n >= s.maxCPaceFailures {
+		s.logger.Warn("CPace failure limit reached — dropping channel",
+			"channel_id", channelID, "failures", n, "limit", s.maxCPaceFailures)
+		s.dropChannel(channelID)
+		return true
+	}
+	return false
 }
 
 func writeError(conn *websocket.Conn, msg string) {

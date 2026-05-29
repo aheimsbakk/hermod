@@ -46,21 +46,19 @@ Added `scripts/check-coverage.sh`. Runs each required package (`./internal/cli/.
 
 ### 5. Max 3 CPace failures per channel — never enforced
 
-**Reference:** TASK.md §5 — *"The server strictly enforces a maximum of 3 failed CPace handshake attempts per channel ID. Upon the third failed cryptographic validation, the server immediately drops the WebSocket connections, invalidates the channel ID, and purges the associated state from the database."*
+**Reference:** TASK.md §5 — *"The server strictly enforces a maximum of 3 failed CPace handshake attempts per channel ID. Upon the third failed cryptographic validation, the server immediately drops the WebSocket connections, invalidates the channel ID, and purges the associated state from the database."*  
+**Status: RESOLVED**
 
-`SignalingStore.RecordFailure()` is defined and implemented in `MemoryStore` but is **never called** anywhere in `server.go`. The relay loop (`relay()`) processes blobs unconditionally with no failure tracking. An attacker can send unlimited malformed CPace messages.
-
-**Fix:** Call `store.RecordFailure(channelID)` when a blob cannot be decrypted or when the CPace exchange fails. After 3 failures, drop both WebSocket connections and call `store.DeleteChannel(channelID)`.
+Added `recordFailureAndDrop` helper and `dropChannel` helper in `internal/server/server.go`. The relay loop now calls `store.RecordFailure(channelID)` when `StoreBlob` fails or an unexpected message type arrives. Once the failure count reaches `maxCPaceFailures`, `dropChannel` closes all peer connections with a final `MsgError` frame and calls `store.DeleteChannel`. The limit is configurable via `hermod serve --max-cpace-failures` (default: 3). Covered by `TestServerCPaceFailureLimitEnforced`.
 
 ---
 
 ### 6. Hard message limit per channel — never enforced
 
-**Reference:** TASK.md §9 — *"Hard limits exist on signaling messages per channel to prevent relay saturation."*
+**Reference:** TASK.md §9 — *"Hard limits exist on signaling messages per channel to prevent relay saturation."*  
+**Status: RESOLVED**
 
-`blobCount` is incremented in the `relay()` loop but there is no maximum defined. A client can send unlimited blobs and the server will relay all of them indefinitely.
-
-**Fix:** Define a `maxBlobsPerChannel` constant (e.g. 10) and return an error and close the connection when the count is exceeded.
+The relay loop in `internal/server/server.go` now checks `blobCount > s.maxBlobsPerChannel` at the top of the `MsgBlob` case. When exceeded it sends `MsgError` and closes the connection. The limit is configurable via `hermod serve --max-blobs-per-channel` (default: 10). Covered by `TestServerBlobLimitEnforced`.
 
 ---
 
@@ -108,7 +106,7 @@ The following TASK.md items that might appear absent are intentional architectur
 | 2 | 🔴 Critical | `internal/cli` coverage 24.6% | ✅ Resolved — 81.3% |
 | 3 | 🔴 Critical | `internal/network` coverage 63.4% | ✅ Resolved — 86.6% |
 | 4 | 🔴 Critical | No coverage enforcement script | ✅ Resolved |
-| 5 | 🟠 High | CPace failure limit not enforced | Unimplemented |
-| 6 | 🟠 High | Per-channel message limit not enforced | Unimplemented |
+| 5 | 🟠 High | CPace failure limit not enforced | ✅ Resolved |
+| 6 | 🟠 High | Per-channel message limit not enforced | ✅ Resolved |
 | 7 | 🟡 Medium | IP hashing with rotating salt | Unimplemented |
 | 8 | 🟢 Low | testscript full-transfer scenario | Minimal |

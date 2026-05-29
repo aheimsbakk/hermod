@@ -18,17 +18,19 @@ import (
 
 func newServeCmd() *cobra.Command {
 	var (
-		listen    string
-		ttl       int
-		rateLimit float64
-		rateBurst float64
+		listen             string
+		ttl                int
+		rateLimit          float64
+		rateBurst          float64
+		maxBlobsPerChannel int
+		maxCPaceFailures   int
 	)
 
 	cmd := &cobra.Command{
 		Use:   "serve",
 		Short: "Start the signaling and NAT helper service",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runServe(listen, time.Duration(ttl)*time.Second, rateLimit, rateBurst)
+			return runServe(listen, time.Duration(ttl)*time.Second, rateLimit, rateBurst, maxBlobsPerChannel, maxCPaceFailures)
 		},
 	}
 
@@ -36,11 +38,13 @@ func newServeCmd() *cobra.Command {
 	cmd.Flags().IntVarP(&ttl, "ttl", "T", 600, "Channel TTL in seconds")
 	cmd.Flags().Float64Var(&rateLimit, "rate-limit", 5, "Token bucket rate (requests/sec per IP prefix)")
 	cmd.Flags().Float64Var(&rateBurst, "rate-burst", 15, "Token bucket burst capacity per IP prefix")
+	cmd.Flags().IntVar(&maxBlobsPerChannel, "max-blobs-per-channel", server.DefaultMaxBlobsPerChannel, "Hard cap on relayed blobs per signaling channel")
+	cmd.Flags().IntVar(&maxCPaceFailures, "max-cpace-failures", server.DefaultMaxCPaceFailures, "Max CPace handshake failures before a channel is invalidated")
 
 	return cmd
 }
 
-func runServe(listenAddr string, ttl time.Duration, rateLimit, rateBurst float64) error {
+func runServe(listenAddr string, ttl time.Duration, rateLimit, rateBurst float64, maxBlobsPerChannel, maxCPaceFailures int) error {
 	logDebug("loading config")
 	cfg, err := config.Load()
 	if err != nil {
@@ -84,7 +88,7 @@ func runServe(listenAddr string, ttl time.Duration, rateLimit, rateBurst float64
 
 	// The server uses the global slog logger, which is already wired to stderr
 	// at the active verbosity level by applyVerbosity.
-	srv := server.NewServer(store, rl, ttl, nil)
+	srv := server.NewServer(store, rl, ttl, maxBlobsPerChannel, maxCPaceFailures, nil)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -92,7 +96,9 @@ func runServe(listenAddr string, ttl time.Duration, rateLimit, rateBurst float64
 	server.RunGC(ctx, store, 60*time.Second)
 	logDebug("channel GC started", "interval", "60s")
 
-	logInfo("Server starting", "addr", listenAddr, "channel_ttl", ttl, "rate_limit", rateLimit, "rate_burst", rateBurst)
+	logInfo("Server starting", "addr", listenAddr, "channel_ttl", ttl,
+		"rate_limit", rateLimit, "rate_burst", rateBurst,
+		"max_blobs_per_channel", maxBlobsPerChannel, "max_cpace_failures", maxCPaceFailures)
 	printStatus("hermod serve listening on %s", listenAddr)
 	err = srv.ListenAndServe(ctx, listenAddr, tlsCfg)
 	if err != nil {
