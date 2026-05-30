@@ -35,7 +35,7 @@ Password-authenticated key exchange, symmetric encryption, and display utilities
 ```go
 func CPaceInit(password string, channelID uint16, role string) (*CPaceSession, []byte, error)
 ```
-Initialises a CPace session. Returns the session state and a public message (elliptic curve point, uncompressed) to send to the peer. `role` must be `"sender"` or `"receiver"` — it is mixed into the hash-to-curve input as domain separation.
+Initialises a CPace session. Returns the session state and a public message (elliptic curve point, uncompressed) to send to the peer. `role` must be `"sender"` or `"receiver"` — it is bound into the DST of the `P256_XMD:SHA-256_SSWU_RO_` hash-to-curve (RFC 9380) as domain separation.
 
 ```go
 func (s *CPaceSession) CPaceFinish(peerPubMsg []byte) ([]byte, error)

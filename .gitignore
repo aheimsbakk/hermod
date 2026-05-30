@@ -10,6 +10,7 @@ cover*.out
 
 # Temp/AI workflow files
 .handoff/
+/tmp/
 
 # OS
 .DS_Store

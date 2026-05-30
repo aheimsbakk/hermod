@@ -86,7 +86,7 @@ Implementation: CPace over P-256 using `crypto/elliptic` and `math/big` from the
 
 The `channelID` and `role` are used as domain separators:
 
-- The hash-to-curve generator domain includes `channelID` and the combined tag `sender:receiver`, so both peers compute the same generator point while keeping it separated from other protocol instances.
+- The hash-to-curve generator uses the `P256_XMD:SHA-256_SSWU_RO_` suite (RFC 9380). The DST encodes `channelID` and the password; the message is the fixed tag `sender:receiver`. Both peers compute the same generator point, and the domain is separated from other protocol instances.
 - The ISK (Intermediate Session Key) is derived as `SHA-256(iskX || pubSender || pubReceiver)`, where each peer places its own public message in the slot that matches its role. Both peers produce the same byte sequence and thus the same `K`. This binds the role into the shared secret and prevents cross-role composition attacks per RFC 9496 intent.
 
 ## Endpoint exchange
@@ -214,5 +214,5 @@ Both sides exit with a non-zero status code after cancellation.
 - The server enforces a maximum of **3 failed CPace handshake attempts** per channel. On the third violation all peer connections are closed, the channel is invalidated, and its state is purged.
 - The server enforces a maximum of **10 relayed blobs** per channel to prevent relay saturation. Exceeding the limit closes the offending connection.
 - Client IP addresses are never stored in plaintext. The rate-limiter bucket key is `HMAC-SHA256(dailySalt, ipPrefix)`. The salt is replaced every UTC calendar day and all buckets are cleared on rotation.
-- The CPace implementation uses the try-and-increment method to hash passwords to P-256 curve points. This is a deterministic constant-time-per-attempt approach.
+- The CPace implementation uses the `P256_XMD:SHA-256_SSWU_RO_` suite (RFC 9380) to hash passwords to P-256 curve points. SSWU always produces a valid point in a single, fixed-length computation with no data-dependent loop iterations, eliminating the loop-count timing side channel of the former try-and-increment method.
 - Ephemeral QUIC certificates use RSA-2048. They are valid for 24 hours and are never stored.

@@ -1,9 +1,12 @@
 // Package crypto implements cryptographic primitives for hermod.
 //
 // CPace is implemented per RFC 9496 using P-256 (NIST curve) with
-// hash-to-curve via try-and-increment. The role ("sender"/"receiver") is
-// bound into the ISK derivation via a role-ordered transcript, providing
-// domain separation per RFC 9496 intent.
+// hash-to-curve via the P256_XMD:SHA-256_SSWU_RO_ suite (RFC 9380).
+// SSWU produces a valid curve point in a single, fixed-length computation
+// with no data-dependent loop iterations, eliminating the timing side channel
+// present in try-and-increment. The role ("sender"/"receiver") is bound into
+// the ISK derivation via a role-ordered transcript, providing domain separation
+// per RFC 9496 intent.
 // AES-256-GCM is used for signaling payload encryption keyed by the CPace
 // shared secret.
 package crypto
@@ -113,72 +116,24 @@ func (s *CPaceSession) SharedK() []byte { return s.sharedK }
 func (s *CPaceSession) PubMessage() []byte { return s.pubMsg }
 
 // cpaceGenerator hashes the password + channelID to a P-256 point using
-// try-and-increment (deterministic hash-to-curve).
-// The domain string includes the combined role tag "sender:receiver" so the
-// generator is role-aware while remaining identical for both peers.
+// the P256_XMD:SHA-256_SSWU_RO_ suite (RFC 9380).
+// The domain separation tag embeds the combined role tag "sender:receiver"
+// so the generator is role-aware while remaining identical for both peers.
+// Unlike the former try-and-increment approach, SSWU always produces a valid
+// point in a single, fixed-length computation, eliminating the loop-count
+// timing side channel.
 func cpaceGenerator(password string, channelID uint16) (*big.Int, *big.Int, error) {
-	curve := elliptic.P256()
-	p := curve.Params().P
-	// Domain: "hermod-cpace-v1:" || password || ":" || channelID || ":sender:receiver:"
-	base := fmt.Sprintf("hermod-cpace-v1:%s:%d:sender:receiver:", password, channelID)
-	for ctr := 0; ctr < 256; ctr++ {
-		h := sha256.Sum256([]byte(fmt.Sprintf("%s%d", base, ctr)))
-		x := new(big.Int).SetBytes(h[:])
-		x.Mod(x, p)
-		// y^2 = x^3 - 3x + b (mod p)
-		y2 := p256YSquared(x, curve.Params())
-		y := modSqrt(y2, p)
-		if y == nil {
-			continue
-		}
-		// Verify
-		check := new(big.Int).Mul(y, y)
-		check.Mod(check, p)
-		if check.Cmp(y2) != 0 {
-			continue
-		}
-		// Use even y
-		if y.Bit(0) != 0 {
-			y.Sub(p, y)
-		}
-		// Validate point is on curve
-		if !curve.IsOnCurve(x, y) {
-			continue
-		}
-		return x, y, nil
+	dst := p256DST(password, channelID)
+	// Input message is the fixed role tag; the password is in the DST.
+	msg := []byte("sender:receiver")
+	pt, err := hashToCurveP256(msg, dst)
+	if err != nil {
+		return nil, nil, fmt.Errorf("cpace hash-to-curve: %w", err)
 	}
-	return nil, nil, errors.New("cpace: hash-to-curve failed")
-}
-
-// p256YSquared computes x^3 - 3x + b mod p for P-256.
-func p256YSquared(x *big.Int, params *elliptic.CurveParams) *big.Int {
-	p := params.P
-	x3 := new(big.Int).Mul(x, x)
-	x3.Mul(x3, x)
-	x3.Mod(x3, p)
-	threeX := new(big.Int).Mul(big.NewInt(3), x)
-	threeX.Mod(threeX, p)
-	y2 := new(big.Int).Sub(x3, threeX)
-	y2.Add(y2, params.B)
-	y2.Mod(y2, p)
-	return y2
-}
-
-// modSqrt computes the modular square root using Euler's criterion for P-256
-// where p ≡ 3 (mod 4), so sqrt = a^((p+1)/4) mod p.
-func modSqrt(a, p *big.Int) *big.Int {
-	if new(big.Int).ModSqrt(a, p) == nil {
-		return nil
-	}
-	exp := new(big.Int).Add(p, big.NewInt(1))
-	exp.Rsh(exp, 2)
-	r := new(big.Int).Exp(a, exp, p)
-	check := new(big.Int).Mul(r, r)
-	check.Mod(check, p)
-	if check.Cmp(a) != 0 {
-		return nil
-	}
-	return r
+	// pt is a 65-byte uncompressed point: 0x04 || X(32) || Y(32).
+	x := new(big.Int).SetBytes(pt[1:33])
+	y := new(big.Int).SetBytes(pt[33:65])
+	return x, y, nil
 }
 
 func padTo32(n *big.Int) []byte {
