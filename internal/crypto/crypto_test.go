@@ -52,6 +52,20 @@ func TestGenerateTransferCodeMinWords(t *testing.T) {
 	}
 }
 
+func TestWordlistIntegrity(t *testing.T) {
+	words := crypto.EFFShortWordlist()
+	if len(words) != 1296 {
+		t.Fatalf("expected 1296 words, got %d", len(words))
+	}
+	seen := make(map[string]struct{}, len(words))
+	for _, w := range words {
+		if _, dup := seen[w]; dup {
+			t.Fatalf("duplicate word in wordlist: %q", w)
+		}
+		seen[w] = struct{}{}
+	}
+}
+
 func TestParseTransferCodeInvalid(t *testing.T) {
 	cases := []string{
 		"nodashescode",

@@ -20,8 +20,8 @@ Format:
 Example: `47832-apple-banana-cherry`
 
 - The first token is the numeric channel ID — a random `uint16` (0–65535).
-- The words are drawn from a fixed wordlist. They form the shared passphrase for the CPace handshake.
-- The default word count is 3, overridable with `--words` on `tx`.
+- The words are drawn from the full EFF Short Wordlist 1 (1,296 unique entries). They form the shared passphrase for the CPace handshake. Each word is selected using rejection sampling on uniform random `uint16` values to eliminate modulo bias.
+- The default word count is 3 (≈31.9 bits of passphrase entropy), overridable with `--words` on `tx`.
 
 The sender generates the code and displays it. The receiver types it in.
 
