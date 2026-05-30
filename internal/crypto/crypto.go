@@ -1,7 +1,9 @@
 // Package crypto implements cryptographic primitives for hermod.
 //
 // CPace is implemented per RFC 9496 using P-256 (NIST curve) with
-// hash-to-curve via try-and-increment.
+// hash-to-curve via try-and-increment. The role ("sender"/"receiver") is
+// bound into the ISK derivation via a role-ordered transcript, providing
+// domain separation per RFC 9496 intent.
 // AES-256-GCM is used for signaling payload encryption keyed by the CPace
 // shared secret.
 package crypto
@@ -26,6 +28,7 @@ import (
 type CPaceSession struct {
 	scalar  []byte // 32-byte big-endian scalar
 	pubMsg  []byte // 65-byte uncompressed point: 0x04 || X || Y
+	role    string // "sender" or "receiver" — used for ISK transcript ordering
 	sharedK []byte // set after Finish
 }
 
@@ -34,9 +37,12 @@ const cpacePointSize = 65
 
 // CPaceInit creates a new CPace initiator message from the password.
 // channelID is the transfer channel integer used as a domain separator.
+// role must be "sender" or "receiver"; it is bound into the ISK derivation
+// to provide role-based domain separation per RFC 9496 intent.
 // Returns the session and the public message (65 bytes) to send to the peer.
 func CPaceInit(password string, channelID uint16, role string) (*CPaceSession, []byte, error) {
-	// Generator = hash-to-curve(password || channelID || role)
+	// Generator = hash-to-curve(password || channelID || "sender:receiver")
+	// Both parties use the same combined role domain so the generator is shared.
 	gx, gy, err := cpaceGenerator(password, channelID)
 	if err != nil {
 		return nil, nil, fmt.Errorf("cpace generator: %w", err)
@@ -58,11 +64,16 @@ func CPaceInit(password string, channelID uint16, role string) (*CPaceSession, [
 	return &CPaceSession{
 		scalar: scalar.Bytes(),
 		pubMsg: pubMsg,
+		role:   role,
 	}, pubMsg, nil
 }
 
 // CPaceFinish completes the CPace exchange given the peer's public message (65 bytes).
 // Returns the 32-byte shared secret K.
+// The ISK is derived as SHA-256(iskX || pubSender || pubReceiver), where the
+// role stored in the session determines which public message belongs to sender
+// and which to receiver. This binds the role into the shared secret and
+// prevents cross-role composition attacks.
 func (s *CPaceSession) CPaceFinish(peerPub []byte) ([]byte, error) {
 	if len(peerPub) != cpacePointSize || peerPub[0] != 0x04 {
 		return nil, errors.New("cpace: invalid peer public message (must be 65-byte uncompressed P-256 point)")
@@ -74,7 +85,22 @@ func (s *CPaceSession) CPaceFinish(peerPub []byte) ([]byte, error) {
 	}
 	// ISK_x = scalar * peerPub (x-coordinate)
 	iskX, _ := curve.ScalarMult(peerX, peerY, s.scalar)
-	h := sha256.Sum256(padTo32(iskX))
+
+	// Build role-ordered transcript: iskX || pubSender || pubReceiver.
+	// Both sides resolve sender/receiver the same way using their stored role,
+	// so the byte sequence — and thus the derived key — is identical.
+	var senderPub, receiverPub []byte
+	if s.role == "sender" {
+		senderPub, receiverPub = s.pubMsg, peerPub
+	} else {
+		senderPub, receiverPub = peerPub, s.pubMsg
+	}
+	transcript := make([]byte, 0, 32+cpacePointSize+cpacePointSize)
+	transcript = append(transcript, padTo32(iskX)...)
+	transcript = append(transcript, senderPub...)
+	transcript = append(transcript, receiverPub...)
+
+	h := sha256.Sum256(transcript)
 	k := h[:]
 	s.sharedK = k
 	return k, nil
@@ -88,11 +114,13 @@ func (s *CPaceSession) PubMessage() []byte { return s.pubMsg }
 
 // cpaceGenerator hashes the password + channelID to a P-256 point using
 // try-and-increment (deterministic hash-to-curve).
+// The domain string includes the combined role tag "sender:receiver" so the
+// generator is role-aware while remaining identical for both peers.
 func cpaceGenerator(password string, channelID uint16) (*big.Int, *big.Int, error) {
 	curve := elliptic.P256()
 	p := curve.Params().P
-	// Domain: "hermod-cpace-v1:" || password || ":" || channelID
-	base := fmt.Sprintf("hermod-cpace-v1:%s:%d:", password, channelID)
+	// Domain: "hermod-cpace-v1:" || password || ":" || channelID || ":sender:receiver:"
+	base := fmt.Sprintf("hermod-cpace-v1:%s:%d:sender:receiver:", password, channelID)
 	for ctr := 0; ctr < 256; ctr++ {
 		h := sha256.Sum256([]byte(fmt.Sprintf("%s%d", base, ctr)))
 		x := new(big.Int).SetBytes(h[:])

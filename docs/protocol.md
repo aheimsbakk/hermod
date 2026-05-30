@@ -84,7 +84,10 @@ Implementation: CPace over P-256 using `crypto/elliptic` and `math/big` from the
 3. Each peer calls `CPaceFinish(peerPubMsg)` with the other's point. Both peers derive the same 32-byte shared key `K` if and only if they used the same password.
 4. If the passwords differ, the derived keys differ and the subsequent AES-GCM decrypt fails, aborting the connection.
 
-The `channelID` and `role` are mixed into the hash-to-curve input as domain separation, preventing cross-role replay.
+The `channelID` and `role` are used as domain separators:
+
+- The hash-to-curve generator domain includes `channelID` and the combined tag `sender:receiver`, so both peers compute the same generator point while keeping it separated from other protocol instances.
+- The ISK (Intermediate Session Key) is derived as `SHA-256(iskX || pubSender || pubReceiver)`, where each peer places its own public message in the slot that matches its role. Both peers produce the same byte sequence and thus the same `K`. This binds the role into the shared secret and prevents cross-role composition attacks per RFC 9496 intent.
 
 ## Endpoint exchange
 

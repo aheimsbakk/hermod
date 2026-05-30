@@ -1,6 +1,7 @@
 package crypto_test
 
 import (
+	"bytes"
 	"testing"
 
 	"github.com/hermod/hermod/internal/crypto"
@@ -237,5 +238,45 @@ func TestCPaceFinishInvalidPubMsg(t *testing.T) {
 	_, err = session.CPaceFinish([]byte("tooshort"))
 	if err == nil {
 		t.Fatal("expected error for invalid pubmsg length")
+	}
+}
+
+// TestCPaceRoleSeparation verifies that the role is bound into the shared
+// secret derivation. Two sessions that both use the same role ("sender")
+// must NOT derive the same shared secret when each completes with the other's
+// public message — the role-ordered transcript must break the symmetry.
+// This test fails before the H-01 fix (role is silently dropped → both K's
+// are equal) and passes after (role-ordered transcript makes them differ).
+func TestCPaceRoleSeparation(t *testing.T) {
+	const password = "test-password-h01"
+	const channelID uint16 = 99
+
+	// Both sessions use the same role — misconfiguration / reflection scenario.
+	s1, pub1, err := crypto.CPaceInit(password, channelID, "sender")
+	if err != nil {
+		t.Fatalf("init s1: %v", err)
+	}
+	s2, pub2, err := crypto.CPaceInit(password, channelID, "sender")
+	if err != nil {
+		t.Fatalf("init s2: %v", err)
+	}
+
+	k1, err := s1.CPaceFinish(pub2)
+	if err != nil {
+		t.Fatalf("s1 finish: %v", err)
+	}
+	k2, err := s2.CPaceFinish(pub1)
+	if err != nil {
+		t.Fatalf("s2 finish: %v", err)
+	}
+
+	// Without role-ordered transcript both sides compute H(iskX) which is
+	// symmetric: s1*s2*G == s2*s1*G → k1 == k2. That is the bug.
+	// After the fix the transcript is H(iskX || pubSelf || pubPeer), and
+	// since both sessions identify themselves as "sender", the byte order
+	// differs (k1 hashes pub1||pub2 while k2 hashes pub2||pub1), so k1 ≠ k2.
+	if bytes.Equal(k1, k2) {
+		t.Fatal("H-01 role separation: two 'sender' sessions derived the same " +
+			"shared secret — role is not bound into the ISK derivation")
 	}
 }
