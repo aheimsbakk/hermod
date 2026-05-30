@@ -162,7 +162,7 @@ A 4-byte big-endian length prefix followed by a JSON object:
 ```
 
 `kind` is either `"file"`, `"text"`, or `"stream"`.  
-`name` is set only for `kind = "file"`.  
+`name` is set only for `kind = "file"`. The receiver strips all directory components from the received name with `filepath.Base` before writing to disk, preventing path traversal attacks.  
 `sha256` is the hex-encoded SHA-256 of the payload bytes.
 
 ### Stream 2 (or 1 without verify) — payload

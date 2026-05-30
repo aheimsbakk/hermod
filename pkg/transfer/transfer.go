@@ -79,7 +79,13 @@ func DecodeMetadata(data []byte) (*Metadata, error) {
 
 // SafeDestinationPath resolves the output file path, appending an integer
 // suffix to avoid overwriting existing files. E.g., document(1).pdf.
+// It strips all directory components from name to prevent path traversal.
 func SafeDestinationPath(dir, name string) string {
+	// Strip directory components supplied by an untrusted remote peer.
+	name = filepath.Base(name)
+	if name == "" || name == "." || name == ".." {
+		name = "received"
+	}
 	candidate := filepath.Join(dir, name)
 	if _, err := os.Stat(candidate); os.IsNotExist(err) {
 		return candidate

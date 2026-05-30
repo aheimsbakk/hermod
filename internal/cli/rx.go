@@ -10,6 +10,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 
@@ -370,8 +371,11 @@ func receivePayload(ctx context.Context, meta *transfer.Metadata, r io.Reader, d
 // saveToFile writes incoming payload to a temp file, verifies SHA-256, then renames.
 // If ctx is cancelled mid-transfer, the temp file is removed and an error is returned.
 func saveToFile(ctx context.Context, r io.Reader, meta *transfer.Metadata, destination string) error {
-	name := meta.Name
-	if name == "" {
+	// Strip directory components from the remotely supplied name to prevent
+	// path traversal (C-01). filepath.Base is the first line of defence;
+	// SafeDestinationPath applies the same guard as a second layer.
+	name := filepath.Base(meta.Name)
+	if name == "" || name == "." || name == ".." {
 		name = "received"
 	}
 
