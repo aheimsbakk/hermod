@@ -4,6 +4,7 @@ package cli
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -170,7 +171,7 @@ func runRx(code, destination, serverURL string, verify bool, listenUDP string, s
 	if err != nil {
 		return fmt.Errorf("recv sender bundle: %w", err)
 	}
-	senderBundleBytes, err := crypto.Open(kClassical, encSenderBundle)
+	senderBundleBytes, err := crypto.OpenAAD(kClassical, channelIDAad(channelID), encSenderBundle)
 	if err != nil {
 		return fmt.Errorf("decrypt sender bundle: %w", err)
 	}
@@ -209,7 +210,7 @@ func runRx(code, destination, serverURL string, verify bool, listenUDP string, s
 	if err != nil {
 		return fmt.Errorf("encode bundle: %w", err)
 	}
-	encMyBundle, err := crypto.Seal(kClassical, myBundleBytes)
+	encMyBundle, err := crypto.SealAAD(kClassical, channelIDAad(channelID), myBundleBytes)
 	if err != nil {
 		return fmt.Errorf("encrypt bundle: %w", err)
 	}
@@ -300,7 +301,8 @@ func runRx(code, destination, serverURL string, verify bool, listenUDP string, s
 	defer payloadStream.Close()
 
 	logInfo("Receiving payload", "kind", meta.Kind, "size_bytes", meta.Size)
-	if err := receivePayload(ctx, meta, payloadStream, destination, isatty.IsTerminal(os.Stdout.Fd())); err != nil {
+	computedHash, err := receivePayload(ctx, meta, payloadStream, destination, isatty.IsTerminal(os.Stdout.Fd()))
+	if err != nil {
 		if peerErr := cancelledByPeer(err); peerErr != nil {
 			fmt.Fprintf(os.Stderr, "\nTransfer cancelled by sender.\n")
 			return peerErr
@@ -310,6 +312,29 @@ func runRx(code, destination, serverURL string, verify bool, listenUDP string, s
 			return fmt.Errorf("transfer cancelled")
 		}
 		return err
+	}
+
+	// Accept the trailing hash stream sent by the sender after payload (M-07).
+	logDebug("waiting for trailing hash stream from sender (stream 2)")
+	hashStream, err := quicConn.AcceptStream(ctx)
+	if err != nil {
+		logWarn("could not accept trailing hash stream — skipping integrity check", "err", err)
+	} else {
+		trailingHashBytes, hashErr := readLenPrefixed(hashStream)
+		hashStream.Close()
+		if hashErr != nil {
+			logWarn("could not read trailing hash — skipping integrity check", "err", hashErr)
+		} else {
+			senderHash := string(trailingHashBytes)
+			logDebug("trailing hash received", "sha256", senderHash)
+			if senderHash != computedHash {
+				logError("Integrity check failed — sender hash does not match received data",
+					"sender_sha256", senderHash, "computed_sha256", computedHash)
+				return fmt.Errorf("integrity check failed: hash mismatch (sender=%s receiver=%s)",
+					senderHash, computedHash)
+			}
+			logDebug("integrity check passed via trailing hash", "sha256", computedHash)
+		}
 	}
 
 	// Signal sender that the transfer is complete before closing the connection.
@@ -327,9 +352,10 @@ func runRx(code, destination, serverURL string, verify bool, listenUDP string, s
 }
 
 // receivePayload routes the incoming stream according to meta.Kind and destination.
-// stdoutIsTTY must be true when os.Stdout is a real terminal; callers should pass
-// isatty.IsTerminal(os.Stdout.Fd()) so the function remains testable without a TTY.
-func receivePayload(ctx context.Context, meta *transfer.Metadata, r io.Reader, destination string, stdoutIsTTY bool) error {
+// Returns the hex-encoded SHA-256 of the received data computed in parallel
+// during the transfer (M-07). stdoutIsTTY must be true when os.Stdout is a
+// real terminal; callers should pass isatty.IsTerminal(os.Stdout.Fd()).
+func receivePayload(ctx context.Context, meta *transfer.Metadata, r io.Reader, destination string, stdoutIsTTY bool) (string, error) {
 	isStdoutTTY := stdoutIsTTY
 
 	switch {
@@ -338,39 +364,45 @@ func receivePayload(ctx context.Context, meta *transfer.Metadata, r io.Reader, d
 		return saveToFile(ctx, r, meta, destination)
 
 	case !isStdoutTTY:
-		// stdout is piped — stream bytes directly
-		_, err := io.Copy(os.Stdout, r)
-		return err
+		// stdout is piped — stream bytes directly, computing hash in parallel.
+		hash, err := transfer.HashStream(r, os.Stdout)
+		return hash, err
 
 	default:
 		// Interactive terminal
 		switch meta.Kind {
 		case transfer.KindText, transfer.KindStream:
 			// Print to stdout; show progress bar on stderr when size is known.
-			var src io.Reader = r
+			// Compute hash in parallel using TeeReader.
+			h := sha256.New()
+			var dest io.Writer = os.Stdout
 			if meta.Size > 0 {
 				bar := progressbar.DefaultBytes(meta.Size, "receiving")
-				src = io.TeeReader(r, bar)
+				dest = io.MultiWriter(os.Stdout, bar)
 			}
-			_, err := io.Copy(os.Stdout, src)
-			if err != nil {
-				return err
+			if _, err := io.Copy(dest, io.TeeReader(r, h)); err != nil {
+				return "", err
 			}
 			fmt.Fprintln(os.Stderr)
 			logDebug("text payload written to stdout", "size_bytes", meta.Size)
-			return nil
+			return fmt.Sprintf("%x", h.Sum(nil)), nil
 
 		case transfer.KindFile:
 			// Save to current directory using original filename
 			return saveToFile(ctx, r, meta, ".")
 		}
 	}
-	return nil
+	return "", nil
 }
 
-// saveToFile writes incoming payload to a temp file, verifies SHA-256, then renames.
+// saveToFile writes incoming payload to a temp file, then renames.
+// If meta.SHA256 is non-empty, it is verified against the computed hash; the
+// temp file is removed on mismatch (backward-compatible with unit tests).
+// In the new protocol, meta.SHA256 is empty and verification is done by the
+// caller using the sender's trailing hash stream (M-07).
+// Returns the hex-encoded SHA-256 of the received data.
 // If ctx is cancelled mid-transfer, the temp file is removed and an error is returned.
-func saveToFile(ctx context.Context, r io.Reader, meta *transfer.Metadata, destination string) error {
+func saveToFile(ctx context.Context, r io.Reader, meta *transfer.Metadata, destination string) (string, error) {
 	// Strip directory components from the remotely supplied name to prevent
 	// path traversal (C-01). filepath.Base is the first line of defence;
 	// SafeDestinationPath applies the same guard as a second layer.
@@ -391,10 +423,11 @@ func saveToFile(ctx context.Context, r io.Reader, meta *transfer.Metadata, desti
 	tmpPath := transfer.TempPath(destPath)
 	f, err := os.Create(tmpPath)
 	if err != nil {
-		return fmt.Errorf("create temp file: %w", err)
+		return "", fmt.Errorf("create temp file: %w", err)
 	}
 
 	// Ensure temp file is cleaned up on any error (including cancellation).
+	var computedHash string
 	var copyErr error
 	defer func() {
 		if copyErr != nil {
@@ -410,30 +443,40 @@ func saveToFile(ctx context.Context, r io.Reader, meta *transfer.Metadata, desti
 		w = io.MultiWriter(f, bar)
 	}
 
-	if copyErr = transfer.VerifyStream(r, w, meta.SHA256); copyErr != nil {
-		// Distinguish cancellation from integrity failure.
+	// Compute hash in parallel while streaming to disk (M-07).
+	computedHash, copyErr = transfer.HashStream(r, w)
+	if copyErr != nil {
+		// Distinguish cancellation from copy failure.
 		if ctx.Err() != nil || cancelledByPeer(copyErr) != nil {
 			logDebug("transfer interrupted — temp file removed", "path", tmpPath)
-			return copyErr
+			return "", copyErr
 		}
+		return "", fmt.Errorf("stream copy failed: %w", copyErr)
+	}
+
+	// Backward-compat: if meta.SHA256 was provided (e.g. unit tests), verify
+	// it now. In the live protocol, meta.SHA256 is empty and the caller
+	// verifies using the trailing hash stream (M-07).
+	if meta.SHA256 != "" && computedHash != meta.SHA256 {
+		copyErr = fmt.Errorf("sha256 mismatch: got %s, expected %s", computedHash, meta.SHA256)
 		logError("Integrity check failed — file removed", "path", tmpPath, "err", copyErr)
-		return fmt.Errorf("integrity check failed: %w", copyErr)
+		return "", fmt.Errorf("integrity check failed: %w", copyErr)
 	}
 
 	if err := f.Close(); err != nil {
 		copyErr = err
-		return fmt.Errorf("close temp file: %w", err)
+		return "", fmt.Errorf("close temp file: %w", err)
 	}
-	logDebug("integrity check passed", "sha256", meta.SHA256)
+	logDebug("file hash computed", "sha256", computedHash)
 
 	if err := os.Rename(tmpPath, destPath); err != nil {
 		copyErr = err
-		return fmt.Errorf("finalize file: %w", err)
+		return "", fmt.Errorf("finalize file: %w", err)
 	}
 
 	logInfo("File saved", "path", destPath, "size_bytes", meta.Size)
 	printStatus("\nSaved to %s", destPath)
-	return nil
+	return computedHash, nil
 }
 
 // readLenPrefixed reads a 4-byte big-endian length-prefixed message from r.

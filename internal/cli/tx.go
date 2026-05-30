@@ -9,6 +9,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -211,7 +212,7 @@ func runTx(input, serverURL string, numWords int, verify bool, listenUDP string,
 	if err != nil {
 		return fmt.Errorf("encode bundle: %w", err)
 	}
-	encBundle, err := crypto.Seal(kClassical, bundleBytes)
+	encBundle, err := crypto.SealAAD(kClassical, channelIDAad(channelID), bundleBytes)
 	if err != nil {
 		return fmt.Errorf("encrypt bundle: %w", err)
 	}
@@ -226,7 +227,7 @@ func runTx(input, serverURL string, numWords int, verify bool, listenUDP string,
 	if err != nil {
 		return fmt.Errorf("recv peer bundle: %w", err)
 	}
-	peerBundleBytes, err := crypto.Open(kClassical, encPeerBundle)
+	peerBundleBytes, err := crypto.OpenAAD(kClassical, channelIDAad(channelID), encPeerBundle)
 	if err != nil {
 		return fmt.Errorf("decrypt peer bundle: %w", err)
 	}
@@ -334,36 +335,43 @@ func runTx(input, serverURL string, numWords int, verify bool, listenUDP string,
 		return fmt.Errorf("open payload stream: %w", err)
 	}
 
+	// Stream payload while computing SHA-256 in parallel via TeeReader (M-07).
 	logInfo("Sending payload", "kind", meta.Kind, "size_bytes", meta.Size)
 	isTTY := isatty.IsTerminal(os.Stderr.Fd())
+	var payloadHash string
 	if isTTY && size > 0 {
 		bar := progressbar.DefaultBytes(size, "sending")
-		if _, err := io.Copy(io.MultiWriter(payloadStream, bar), reader); err != nil {
-			if peerErr := cancelledByPeer(err); peerErr != nil {
-				fmt.Fprintf(os.Stderr, "\nTransfer cancelled by receiver.\n")
-				return peerErr
-			}
-			if ctx.Err() != nil {
-				fmt.Fprintf(os.Stderr, "\nTransfer cancelled by sender.\n")
-				return fmt.Errorf("transfer cancelled")
-			}
-			return fmt.Errorf("send payload: %w", err)
-		}
+		dest := io.MultiWriter(payloadStream, bar)
+		payloadHash, err = transfer.HashStream(reader, dest)
 	} else {
-		if _, err := io.Copy(payloadStream, reader); err != nil {
-			if peerErr := cancelledByPeer(err); peerErr != nil {
-				fmt.Fprintf(os.Stderr, "\nTransfer cancelled by receiver.\n")
-				return peerErr
-			}
-			if ctx.Err() != nil {
-				fmt.Fprintf(os.Stderr, "\nTransfer cancelled by sender.\n")
-				return fmt.Errorf("transfer cancelled")
-			}
-			return fmt.Errorf("send payload: %w", err)
+		payloadHash, err = transfer.HashStream(reader, payloadStream)
+	}
+	if err != nil {
+		if peerErr := cancelledByPeer(err); peerErr != nil {
+			fmt.Fprintf(os.Stderr, "\nTransfer cancelled by receiver.\n")
+			return peerErr
 		}
+		if ctx.Err() != nil {
+			fmt.Fprintf(os.Stderr, "\nTransfer cancelled by sender.\n")
+			return fmt.Errorf("transfer cancelled")
+		}
+		return fmt.Errorf("send payload: %w", err)
 	}
 	payloadStream.Close()
-	logDebug("payload stream closed — all bytes sent")
+	logDebug("payload stream closed — all bytes sent", "sha256", payloadHash)
+
+	// Send trailing hash stream (stream 2). The receiver verifies the hash of
+	// the received data against this value after draining the payload (M-07).
+	logDebug("opening QUIC trailing hash stream (stream 2)")
+	hashStream, err := quicConn.OpenStreamSync(ctx)
+	if err != nil {
+		return fmt.Errorf("open trailing hash stream: %w", err)
+	}
+	if _, err := hashStream.Write(appendLenPrefix([]byte(payloadHash))); err != nil {
+		return fmt.Errorf("write trailing hash: %w", err)
+	}
+	hashStream.Close()
+	logDebug("trailing hash sent", "sha256", payloadHash)
 
 	// Wait for receiver to signal it has finished reading before closing the connection.
 	// This prevents the QUIC connection from closing before rx accepts the streams.
@@ -386,39 +394,46 @@ func runTx(input, serverURL string, numWords int, verify bool, listenUDP string,
 }
 
 // buildPayload returns metadata and an io.Reader for the payload.
+// SHA256 is always empty — the hash is computed during streaming and sent as
+// trailing metadata (M-07). This avoids buffering large stdin inputs.
 func buildPayload(input string, kind transfer.Kind, name string, isStdinPiped bool) (*transfer.Metadata, io.Reader, int64, error) {
 	switch kind {
 	case transfer.KindFile:
-		hash, size, err := transfer.HashFile(input)
+		fi, err := os.Stat(input)
 		if err != nil {
 			return nil, nil, 0, err
 		}
+		size := fi.Size()
 		f, err := os.Open(input)
 		if err != nil {
 			return nil, nil, 0, err
 		}
-		meta := &transfer.Metadata{Kind: transfer.KindFile, Name: name, Size: size, SHA256: hash}
+		// SHA256 intentionally empty — computed during streaming (M-07).
+		meta := &transfer.Metadata{Kind: transfer.KindFile, Name: name, Size: size}
 		return meta, f, size, nil
 
 	case transfer.KindText:
 		data := []byte(input)
-		hash := transfer.HashBytes(data)
-		meta := &transfer.Metadata{Kind: transfer.KindText, Size: int64(len(data)), SHA256: hash}
+		// SHA256 intentionally empty — computed during streaming (M-07).
+		meta := &transfer.Metadata{Kind: transfer.KindText, Size: int64(len(data))}
 		return meta, strings.NewReader(input), int64(len(data)), nil
 
 	case transfer.KindStream:
-		// stdin — we buffer to compute hash (required for metadata)
-		var buf []byte
-		scanner := bufio.NewReader(os.Stdin)
-		buf, err := io.ReadAll(scanner)
-		if err != nil {
-			return nil, nil, 0, fmt.Errorf("read stdin: %w", err)
-		}
-		hash := transfer.HashBytes(buf)
-		meta := &transfer.Metadata{Kind: transfer.KindStream, Size: int64(len(buf)), SHA256: hash}
-		return meta, strings.NewReader(string(buf)), int64(len(buf)), nil
+		// Do not buffer stdin. Stream directly from os.Stdin while computing
+		// hash in parallel via TeeReader in the send loop (M-07).
+		// Size -1 signals unknown length to the progress bar logic.
+		meta := &transfer.Metadata{Kind: transfer.KindStream, Size: -1}
+		return meta, os.Stdin, -1, nil
 	}
 	return nil, nil, 0, fmt.Errorf("unknown kind: %s", kind)
+}
+
+// channelIDAad returns the 2-byte big-endian encoding of id for use as
+// Additional Authenticated Data in AES-GCM endpoint bundle encryption (M-02).
+func channelIDAad(id uint16) []byte {
+	aad := make([]byte, 2)
+	binary.BigEndian.PutUint16(aad, id)
+	return aad
 }
 
 // appendLenPrefix prepends a 4-byte big-endian length to data.

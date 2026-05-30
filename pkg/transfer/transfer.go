@@ -106,6 +106,18 @@ func TempPath(dest string) string {
 	return dest + ".hermod_tmp"
 }
 
+// HashStream copies all bytes from r to w, computing SHA-256 in parallel.
+// Returns the hex-encoded digest. This avoids buffering large streams before
+// hashing (M-07).
+func HashStream(r io.Reader, w io.Writer) (string, error) {
+	h := sha256.New()
+	tr := io.TeeReader(r, h)
+	if _, err := io.Copy(w, tr); err != nil {
+		return "", fmt.Errorf("copy: %w", err)
+	}
+	return fmt.Sprintf("%x", h.Sum(nil)), nil
+}
+
 // VerifyStream copies from r to w using a TeeReader, computing SHA-256 on-the-fly.
 // Returns an error if the final hash does not match expected.
 func VerifyStream(r io.Reader, w io.Writer, expected string) error {

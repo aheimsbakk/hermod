@@ -34,7 +34,7 @@ func startTestServerWithLimits(t *testing.T, maxBlobs, maxCPaceFailures int) (st
 	store := server.NewMemoryStore()
 	rl := server.NewRateLimiter(100, 1000)
 	logger := slog.Default()
-	srv := server.NewServer(store, rl, 60*time.Second, maxBlobs, maxCPaceFailures, logger)
+	srv := server.NewServer(store, rl, 60*time.Second, maxBlobs, maxCPaceFailures, nil, logger)
 
 	// Find a free port
 	ln, err := net.Listen("tcp", "127.0.0.1:0")

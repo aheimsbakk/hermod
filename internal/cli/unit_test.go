@@ -207,7 +207,7 @@ func TestSaveToFile_Success(t *testing.T) {
 	}
 	destDir := t.TempDir()
 
-	if err := saveToFile(context.Background(), bytes.NewReader(data), meta, destDir); err != nil {
+	if _, err := saveToFile(context.Background(), bytes.NewReader(data), meta, destDir); err != nil {
 		t.Fatalf("saveToFile: %v", err)
 	}
 	got, err := os.ReadFile(filepath.Join(destDir, "out.txt"))
@@ -230,7 +230,7 @@ func TestSaveToFile_FilePath(t *testing.T) {
 	}
 	destPath := filepath.Join(t.TempDir(), "result.txt")
 
-	if err := saveToFile(context.Background(), bytes.NewReader(data), meta, destPath); err != nil {
+	if _, err := saveToFile(context.Background(), bytes.NewReader(data), meta, destPath); err != nil {
 		t.Fatalf("saveToFile with file path: %v", err)
 	}
 	got, err := os.ReadFile(destPath)
@@ -253,7 +253,7 @@ func TestSaveToFile_EmptyName(t *testing.T) {
 	}
 	destDir := t.TempDir()
 
-	if err := saveToFile(context.Background(), bytes.NewReader(data), meta, destDir); err != nil {
+	if _, err := saveToFile(context.Background(), bytes.NewReader(data), meta, destDir); err != nil {
 		t.Fatalf("saveToFile: %v", err)
 	}
 	if _, err := os.ReadFile(filepath.Join(destDir, "received")); err != nil {
@@ -272,7 +272,7 @@ func TestSaveToFile_HashMismatch(t *testing.T) {
 	}
 	destDir := t.TempDir()
 
-	err := saveToFile(context.Background(), bytes.NewReader(data), meta, destDir)
+	_, err := saveToFile(context.Background(), bytes.NewReader(data), meta, destDir)
 	if err == nil {
 		t.Fatal("expected error on hash mismatch")
 	}
@@ -299,7 +299,7 @@ func TestSaveToFile_ContextCancelled_CleansUp(t *testing.T) {
 	}
 	destDir := t.TempDir()
 
-	err := saveToFile(ctx, bytes.NewReader(data), meta, destDir)
+	_, err := saveToFile(ctx, bytes.NewReader(data), meta, destDir)
 	if err == nil {
 		t.Fatal("expected error for cancelled context with hash mismatch")
 	}
@@ -324,7 +324,7 @@ func TestReceivePayload_ToDestination(t *testing.T) {
 	}
 	destDir := t.TempDir()
 
-	if err := receivePayload(context.Background(), meta, bytes.NewReader(data), destDir, false); err != nil {
+	if _, err := receivePayload(context.Background(), meta, bytes.NewReader(data), destDir, false); err != nil {
 		t.Fatalf("receivePayload: %v", err)
 	}
 	got, err := os.ReadFile(filepath.Join(destDir, "recv.txt"))
@@ -352,7 +352,7 @@ func TestReceivePayload_PipedStdout(t *testing.T) {
 	oldStdout := os.Stdout
 	os.Stdout = w
 
-	recvErr := receivePayload(context.Background(), meta, bytes.NewReader(data), "", false)
+	_, recvErr := receivePayload(context.Background(), meta, bytes.NewReader(data), "", false)
 
 	w.Close()
 	os.Stdout = oldStdout
@@ -382,7 +382,7 @@ func TestReceivePayload_TTYText(t *testing.T) {
 	oldStdout := os.Stdout
 	os.Stdout = w
 
-	recvErr := receivePayload(context.Background(), meta, bytes.NewReader(data), "", true)
+	_, recvErr := receivePayload(context.Background(), meta, bytes.NewReader(data), "", true)
 
 	w.Close()
 	os.Stdout = oldStdout
@@ -411,7 +411,7 @@ func TestReceivePayload_TTYTextNoSize(t *testing.T) {
 	oldStdout := os.Stdout
 	os.Stdout = w
 
-	recvErr := receivePayload(context.Background(), meta, bytes.NewReader(data), "", true)
+	_, recvErr := receivePayload(context.Background(), meta, bytes.NewReader(data), "", true)
 
 	w.Close()
 	os.Stdout = oldStdout
@@ -443,7 +443,7 @@ func TestReceivePayload_TTYFile(t *testing.T) {
 	}
 	defer os.Chdir(origDir) //nolint:errcheck
 
-	if err := receivePayload(context.Background(), meta, bytes.NewReader(data), "", true); err != nil {
+	if _, err := receivePayload(context.Background(), meta, bytes.NewReader(data), "", true); err != nil {
 		t.Fatalf("receivePayload TTY file: %v", err)
 	}
 	got, err := os.ReadFile(filepath.Join(destDir, "tty_output.txt"))
@@ -727,7 +727,7 @@ func TestReceivePayload_TTYUnknownKind(t *testing.T) {
 		Kind: transfer.Kind("unknown-kind-xyz"),
 		Size: 0,
 	}
-	err := receivePayload(context.Background(), meta, strings.NewReader(""), "", true)
+	_, err := receivePayload(context.Background(), meta, strings.NewReader(""), "", true)
 	if err != nil {
 		t.Fatalf("unexpected error for unknown kind in TTY mode: %v", err)
 	}

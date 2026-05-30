@@ -28,7 +28,7 @@ func startSignalingServer(t *testing.T) string {
 
 	store := server.NewMemoryStore()
 	rl := server.NewRateLimiter(100, 1000)
-	srv := server.NewServer(store, rl, 60*time.Second, server.DefaultMaxBlobsPerChannel, server.DefaultMaxCPaceFailures, slog.Default())
+	srv := server.NewServer(store, rl, 60*time.Second, server.DefaultMaxBlobsPerChannel, server.DefaultMaxCPaceFailures, nil, slog.Default())
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

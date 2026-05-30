@@ -39,7 +39,7 @@ func startLocalServer(t *testing.T) (serverURL, fingerprint string) {
 
 	store := server.NewMemoryStore()
 	rl := server.NewRateLimiter(100, 1000)
-	srv := server.NewServer(store, rl, 60*time.Second, server.DefaultMaxBlobsPerChannel, server.DefaultMaxCPaceFailures, slog.Default())
+	srv := server.NewServer(store, rl, 60*time.Second, server.DefaultMaxBlobsPerChannel, server.DefaultMaxCPaceFailures, nil, slog.Default())
 
 	// Pick a free port, then release the listener so the server can bind it.
 	ln, err := net.Listen("tcp", "127.0.0.1:0")

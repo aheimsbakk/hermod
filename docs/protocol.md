@@ -47,7 +47,7 @@ All messages are JSON with this envelope:
 | Type | Direction | Description |
 |---|---|---|
 | `allocate` | client → server | Sender reserves a channel |
-| `join` | client → server | Receiver joins an existing channel |
+| `join` | client → server | Receiver joins an existing channel. Server returns `error` if the channel does not exist. |
 | `blob` | client → server | Relay an encrypted blob to the peer |
 | `ready` | server → client | Sent to sender when receiver joins |
 | `ok` | server → client | Acknowledges `allocate` or `join`; carries `public_ip` |
@@ -92,6 +92,8 @@ The `channelID` and `role` are used as domain separators:
 ## Endpoint exchange
 
 After CPace, each peer encrypts its candidate UDP addresses, ephemeral TLS certificate fingerprint, and verify flag with `K` using AES-256-GCM, then relays the ciphertext through the signaling server.
+
+The channel ID (2-byte big-endian) is bound as AES-GCM Additional Authenticated Data (AAD). This prevents a captured endpoint bundle from being replayed in a different session.
 
 Plaintext endpoint bundle (JSON before encryption):
 ```json
@@ -160,19 +162,27 @@ A 4-byte big-endian length prefix followed by a JSON object:
   "kind": "file",
   "name": "report.pdf",
   "size": 204800,
-  "sha256": "e3b0c44298fc1c149afb..."
+  "sha256": ""
 }
 ```
 
 `kind` is either `"file"`, `"text"`, or `"stream"`.  
 `name` is set only for `kind = "file"`. The receiver strips all directory components from the received name with `filepath.Base` before writing to disk, preventing path traversal attacks.  
-`sha256` is the hex-encoded SHA-256 of the payload bytes.
+`sha256` is always empty (`""`). The actual SHA-256 is computed in parallel during transfer and sent in the trailing hash stream (see below).
 
 ### Stream 2 (or 1 without verify) — payload
 
 Raw bytes of the file or text, sent in order. No framing.
 
-The receiver reads the payload stream through a `TeeReader` that simultaneously writes to the output and feeds a running SHA-256 hash. After the stream closes, the computed hash is compared to `sha256` from the metadata. A mismatch aborts with an error and the partial output is discarded.
+The sender wraps the payload source in a `TeeReader` that feeds a running SHA-256 hash while streaming bytes to the QUIC stream. The hash is computed in parallel with the transfer, so no buffering of large inputs is needed.
+
+The receiver also reads the payload stream through a `TeeReader`, computing SHA-256 in parallel while writing to the output destination. After the stream closes, the receiver waits for the trailing hash stream (see below) to verify integrity.
+
+### Stream 3 (or 2 without verify) — trailing hash
+
+Sent by the sender immediately after the payload stream is closed. Format: 4-byte big-endian length prefix followed by the hex-encoded SHA-256 of the payload bytes (64 ASCII characters).
+
+The receiver reads this stream after the payload is fully received and compares the trailing hash against its own computed hash. A mismatch aborts with an error. For file transfers, no file has yet been moved to the final destination at this point; only the rename is suppressed on mismatch.
 
 ### Completion ack stream
 
@@ -210,9 +220,12 @@ Both sides exit with a non-zero status code after cancellation.
 
 - The signaling server sees only encrypted blobs after the initial `allocate`/`join`. It cannot recover the CPace key or the endpoint data.
 - The signaling server TLS certificate is pinned on the client after running `hermod trust`. Connections to an unknown server are accepted on first use and the fingerprint is saved.
-- Channel IDs are 16-bit integers. Collisions are possible in high-traffic deployments. The signaling server rejects a second `allocate` for an in-use channel.
+- The server certificate is self-signed, non-CA (`IsCA=false`), valid for 1 year. The server logs warnings at startup as the certificate approaches expiry (≤90 days WARN, ≤30 days ERROR, ≤7 days CRITICAL).
+- Channel IDs are 16-bit integers. Collisions are possible in high-traffic deployments. The signaling server rejects a second `allocate` for an in-use channel. A `join` for a non-existent channel is rejected with an error response.
 - The server enforces a maximum of **3 failed CPace handshake attempts** per channel. On the third violation all peer connections are closed, the channel is invalidated, and its state is purged.
 - The server enforces a maximum of **10 relayed blobs** per channel to prevent relay saturation. Exceeding the limit closes the offending connection.
-- Client IP addresses are never stored in plaintext. The rate-limiter bucket key is `HMAC-SHA256(dailySalt, ipPrefix)`. The salt is replaced every UTC calendar day and all buckets are cleared on rotation.
+- Client IP addresses are never stored in plaintext. The rate-limiter bucket key is `HMAC-SHA256(dailySalt, ipPrefix)`. The salt is replaced every UTC calendar day and all buckets are cleared on rotation. Stale buckets are also evicted every 10 minutes to bound memory usage.
+- Endpoint bundles are encrypted with `AES-256-GCM(K, channelID_as_AAD, bundle)`. The channel ID bound as AAD prevents a captured bundle from being replayed in a different session.
 - The CPace implementation uses the `P256_XMD:SHA-256_SSWU_RO_` suite (RFC 9380) to hash passwords to P-256 curve points. SSWU always produces a valid point in a single, fixed-length computation with no data-dependent loop iterations, eliminating the loop-count timing side channel of the former try-and-increment method.
 - Ephemeral QUIC certificates use RSA-2048. They are valid for 24 hours and are never stored.
+- Payload integrity is verified end-to-end via a trailing hash stream. The sender computes SHA-256 in parallel during transfer and sends the digest after the payload stream closes. The receiver computes SHA-256 in parallel during receipt and verifies against the sender's trailing digest. No pre-buffering of large inputs is required.

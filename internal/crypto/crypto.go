@@ -190,6 +190,14 @@ var _ = (*CPaceSession)(nil)
 // Seal encrypts plaintext with key (must be 32 bytes) using AES-256-GCM.
 // Returns nonce || ciphertext || tag.
 func Seal(key, plaintext []byte) ([]byte, error) {
+	return SealAAD(key, nil, plaintext)
+}
+
+// SealAAD encrypts plaintext with key (must be 32 bytes) using AES-256-GCM,
+// binding aad as Additional Authenticated Data. The AAD is authenticated but
+// not included in the ciphertext. Pass nil for no AAD.
+// Returns nonce || ciphertext || tag.
+func SealAAD(key, aad, plaintext []byte) ([]byte, error) {
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		return nil, fmt.Errorf("aes cipher: %w", err)
@@ -202,12 +210,18 @@ func Seal(key, plaintext []byte) ([]byte, error) {
 	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
 		return nil, fmt.Errorf("nonce: %w", err)
 	}
-	ct := gcm.Seal(nonce, nonce, plaintext, nil)
+	ct := gcm.Seal(nonce, nonce, plaintext, aad)
 	return ct, nil
 }
 
 // Open decrypts a blob produced by Seal.
 func Open(key, blob []byte) ([]byte, error) {
+	return OpenAAD(key, nil, blob)
+}
+
+// OpenAAD decrypts a blob produced by SealAAD, verifying the provided AAD.
+// Pass nil aad when no AAD was used during encryption.
+func OpenAAD(key, aad, blob []byte) ([]byte, error) {
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		return nil, fmt.Errorf("aes cipher: %w", err)
@@ -220,7 +234,7 @@ func Open(key, blob []byte) ([]byte, error) {
 	if len(blob) < ns {
 		return nil, errors.New("open: blob too short")
 	}
-	return gcm.Open(nil, blob[:ns], blob[ns:], nil)
+	return gcm.Open(nil, blob[:ns], blob[ns:], aad)
 }
 
 // --- SAS (Short Authentication String) ---
