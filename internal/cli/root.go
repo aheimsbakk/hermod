@@ -8,10 +8,10 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// Version is the application version string. It is set at build time via
-// -ldflags "-X github.com/hermod/hermod/internal/cli.Version=x.y.z".
-// Falls back to "dev" when not injected.
-var Version = "dev"
+// Version is the application version string. Defaults to appVersion (from
+// version.go, kept in sync by scripts/bump-version.sh). Can be overridden at
+// build time via -ldflags "-X github.com/hermod/hermod/internal/cli.Version=x.y.z".
+var Version = appVersion
 
 func newRootCmd() *cobra.Command {
 	var verboseStr string

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # scripts/bump-version.sh — bump VERSION file by patch, minor, or major.
-# Updates all version references: VERSION, BLUEPRINT.md.
+# Updates all version references: VERSION, BLUEPRINT.md, internal/cli/version.go.
 # Usage: scripts/bump-version.sh [patch|minor|major]
 set -euo pipefail
 
@@ -8,6 +8,7 @@ LEVEL="${1:-patch}"
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 VERSION_FILE="$REPO_ROOT/VERSION"
 BLUEPRINT_FILE="$REPO_ROOT/BLUEPRINT.md"
+VERSION_GO="$REPO_ROOT/internal/cli/version.go"
 
 current="$(cat "$VERSION_FILE" | tr -d '[:space:]')"
 
@@ -37,5 +38,8 @@ echo "$new" >"$VERSION_FILE"
 
 # Update version reference in BLUEPRINT.md.
 sed -i "s/current version ($current)/current version ($new)/" "$BLUEPRINT_FILE"
+
+# Update the embedded constant in internal/cli/version.go.
+sed -i "s/const appVersion = \"$current\"/const appVersion = \"$new\"/" "$VERSION_GO"
 
 echo "Bumped $current -> $new"
