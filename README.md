@@ -122,7 +122,7 @@ You can also set the bind address via the `HERMOD_LISTEN` environment variable.
 ### trust — pin a server certificate
 
 ```
-hermod trust [SERVER_URL]
+hermod trust [SERVER_URL] [--fingerprint FINGERPRINT]
 ```
 
 Connects to the server, fetches its certificate fingerprint, saves it to the local config, and sets the server as the default for future `tx` and `rx` calls.
@@ -133,6 +133,16 @@ Connects to the server, fetches its certificate fingerprint, saves it to the loc
 #           fingerprint: a3f9...
 #           set as default server
 ```
+
+**Security note:** The initial connection uses no certificate verification (trust-on-first-use). Run `hermod trust` over a trusted network — for example, a VPN, physical LAN, or a network where the fingerprint can be confirmed out-of-band.
+
+If you already know the server's fingerprint (e.g., shared by the server operator), pass it with `--fingerprint` to verify before pinning:
+
+```bash
+./hermod trust wss://relay.example.com:4376 --fingerprint a3f9cc...
+```
+
+The command will fail with an error if the server presents a different certificate.
 
 ## SAS verification
 

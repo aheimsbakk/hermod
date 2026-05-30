@@ -72,6 +72,25 @@ func runServe(listenAddr string, ttl time.Duration, rateLimit, rateBurst float64
 	}
 	logDebug("TLS certificate loaded")
 
+	// Warn operators as the certificate approaches expiry. Repeated at startup
+	// so that periodic restarts surface the warning ample time in advance.
+	config.LogCertExpiry(cfg, func(level, msg string, daysLeft int) {
+		switch level {
+		case "CRITICAL":
+			logError(fmt.Sprintf("[CERT EXPIRY CRITICAL] "+msg, daysLeft))
+		case "ERROR":
+			logError(fmt.Sprintf("[CERT EXPIRY] "+msg, daysLeft))
+		default:
+			logWarn(fmt.Sprintf("[CERT EXPIRY] "+msg, daysLeft))
+		}
+	})
+
+	// Extract DER bytes for the /cert endpoint (M-06).
+	var certDER []byte
+	if len(cert.Certificate) > 0 {
+		certDER = cert.Certificate[0]
+	}
+
 	tlsCfg := config.BuildTLSConfig(cfg)
 	tlsCfg.Certificates = []tls.Certificate{cert}
 	logDebug("TLS config built",
@@ -88,7 +107,7 @@ func runServe(listenAddr string, ttl time.Duration, rateLimit, rateBurst float64
 
 	// The server uses the global slog logger, which is already wired to stderr
 	// at the active verbosity level by applyVerbosity.
-	srv := server.NewServer(store, rl, ttl, maxBlobsPerChannel, maxCPaceFailures, nil)
+	srv := server.NewServer(store, rl, ttl, maxBlobsPerChannel, maxCPaceFailures, certDER, nil)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()

@@ -79,7 +79,13 @@ func DecodeMetadata(data []byte) (*Metadata, error) {
 
 // SafeDestinationPath resolves the output file path, appending an integer
 // suffix to avoid overwriting existing files. E.g., document(1).pdf.
+// It strips all directory components from name to prevent path traversal.
 func SafeDestinationPath(dir, name string) string {
+	// Strip directory components supplied by an untrusted remote peer.
+	name = filepath.Base(name)
+	if name == "" || name == "." || name == ".." {
+		name = "received"
+	}
 	candidate := filepath.Join(dir, name)
 	if _, err := os.Stat(candidate); os.IsNotExist(err) {
 		return candidate
@@ -98,6 +104,18 @@ func SafeDestinationPath(dir, name string) string {
 // TempPath returns the temporary download path for a given destination.
 func TempPath(dest string) string {
 	return dest + ".hermod_tmp"
+}
+
+// HashStream copies all bytes from r to w, computing SHA-256 in parallel.
+// Returns the hex-encoded digest. This avoids buffering large streams before
+// hashing (M-07).
+func HashStream(r io.Reader, w io.Writer) (string, error) {
+	h := sha256.New()
+	tr := io.TeeReader(r, h)
+	if _, err := io.Copy(w, tr); err != nil {
+		return "", fmt.Errorf("copy: %w", err)
+	}
+	return fmt.Sprintf("%x", h.Sum(nil)), nil
 }
 
 // VerifyStream copies from r to w using a TeeReader, computing SHA-256 on-the-fly.

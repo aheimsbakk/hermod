@@ -12,6 +12,8 @@ import (
 type SignalingStore interface {
 	// AllocateChannel registers a new channel with the given TTL.
 	AllocateChannel(id uint16, ttl time.Duration) error
+	// ChannelExists reports whether a channel has been allocated and not yet expired.
+	ChannelExists(id uint16) bool
 	// StoreBlob stores an encrypted handshake blob for a channel.
 	// sender=true means the blob was sent by the tx side.
 	StoreBlob(id uint16, sender bool, blob []byte) error
@@ -53,6 +55,16 @@ func (m *MemoryStore) AllocateChannel(id uint16, ttl time.Duration) error {
 	}
 	m.channels[id] = &memChannel{expires: time.Now().Add(ttl)}
 	return nil
+}
+
+func (m *MemoryStore) ChannelExists(id uint16) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	ch, ok := m.channels[id]
+	if !ok {
+		return false
+	}
+	return time.Now().Before(ch.expires)
 }
 
 func (m *MemoryStore) StoreBlob(id uint16, sender bool, blob []byte) error {

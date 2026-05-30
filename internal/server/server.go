@@ -52,6 +52,7 @@ type Server struct {
 	ttl                time.Duration
 	maxBlobsPerChannel int
 	maxCPaceFailures   int
+	certDER            []byte // DER-encoded server certificate for the /cert endpoint
 	upgrader           websocket.Upgrader
 	httpServer         *http.Server
 	logger             *slog.Logger
@@ -66,11 +67,13 @@ type wsConn struct {
 }
 
 // NewServer constructs a new signaling Server.
+// certDER is the DER-encoded server TLS certificate served via the /cert endpoint;
+// pass nil to disable the /cert endpoint.
 // maxBlobsPerChannel caps the number of relayed blobs per channel; use
 // DefaultMaxBlobsPerChannel for the spec default.
 // maxCPaceFailures caps CPace protocol violations before the channel is
 // invalidated; use DefaultMaxCPaceFailures for the spec default.
-func NewServer(store SignalingStore, rl *RateLimiter, ttl time.Duration, maxBlobsPerChannel, maxCPaceFailures int, logger *slog.Logger) *Server {
+func NewServer(store SignalingStore, rl *RateLimiter, ttl time.Duration, maxBlobsPerChannel, maxCPaceFailures int, certDER []byte, logger *slog.Logger) *Server {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -80,10 +83,16 @@ func NewServer(store SignalingStore, rl *RateLimiter, ttl time.Duration, maxBlob
 		ttl:                ttl,
 		maxBlobsPerChannel: maxBlobsPerChannel,
 		maxCPaceFailures:   maxCPaceFailures,
+		certDER:            certDER,
 		logger:             logger,
 		waiters:            make(map[uint16][]*wsConn),
 		upgrader: websocket.Upgrader{
-			CheckOrigin: func(r *http.Request) bool { return true },
+			// Reject browser-sourced cross-origin WebSocket connections (L-06).
+			// Non-browser clients (CLI) do not set an Origin header, so this
+			// allows all legitimate hermod peers while blocking CSRF-style attacks.
+			CheckOrigin: func(r *http.Request) bool {
+				return r.Header.Get("Origin") == ""
+			},
 		},
 	}
 }
@@ -107,6 +116,25 @@ func (s *Server) ListenAndServe(ctx context.Context, addr string, tlsCfg *tls.Co
 	tlsLn := tls.NewListener(ln, tlsCfg)
 
 	s.logger.Info("Signaling server ready", "addr", addr)
+
+	// Start background goroutine to evict stale rate-limit buckets.
+	// Buckets inactive for more than 30 minutes are removed. Without this,
+	// the bucket map grows unboundedly for every distinct source IP (M-03).
+	cleanupCtx, cleanupCancel := context.WithCancel(ctx)
+	defer cleanupCancel()
+	go func() {
+		ticker := time.NewTicker(10 * time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-cleanupCtx.Done():
+				return
+			case <-ticker.C:
+				s.rl.Cleanup(30 * time.Minute)
+				s.logger.Debug("Rate limiter bucket cleanup ran")
+			}
+		}
+	}()
 
 	errCh := make(chan error, 1)
 	go func() {
@@ -141,17 +169,19 @@ func (s *Server) Addr() string {
 	return ""
 }
 
-// handleCert serves the server's DER-encoded certificate for pinning.
+// handleCert serves the server's DER-encoded certificate for client pinning.
+// Clients can hash the response with SHA-256 to obtain the fingerprint they
+// should store via `hermod trust`. The /cert endpoint replaces the prior
+// double-connection hack in FetchServerFingerprint (M-06).
 func (s *Server) handleCert(w http.ResponseWriter, r *http.Request) {
-	if r.TLS == nil || len(r.TLS.PeerCertificates) == 0 {
-		// Return server cert from TLS state
-		if r.TLS != nil && len(r.TLS.TLSUnique) > 0 {
-			http.Error(w, "no cert", http.StatusNotFound)
-			return
-		}
+	if len(s.certDER) == 0 {
+		http.Error(w, "certificate not available", http.StatusNotFound)
+		return
 	}
-	// The cert is embedded in the connection's TLS state
-	http.Error(w, "use /cert endpoint over TLS", http.StatusOK)
+	w.Header().Set("Content-Type", "application/pkix-cert")
+	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(s.certDER)))
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(s.certDER)
 }
 
 // handleWS handles WebSocket connections from clients.
@@ -224,6 +254,30 @@ func (s *Server) handleAllocate(conn *websocket.Conn, remoteAddr string, channel
 // handleJoin processes a receiver's join request.
 func (s *Server) handleJoin(conn *websocket.Conn, remoteAddr string, channelID uint16, _ []byte) {
 	s.logger.Debug("Receiver joining channel", "channel_id", channelID, "remote_addr", remoteAddr)
+
+	// Reject join for channels that were never allocated (M-05).
+	if !s.store.ChannelExists(channelID) {
+		s.logger.Warn("Receiver attempted to join non-existent channel",
+			"channel_id", channelID, "remote_addr", remoteAddr)
+		writeError(conn, "channel not found")
+		return
+	}
+
+	// Reject a second receiver on the same channel (L-04). Only one receiver
+	// is permitted per channel; a second joiner could race for the blob relay
+	// and displace the legitimate receiver.
+	s.mu.Lock()
+	for _, w := range s.waiters[channelID] {
+		if !w.sender {
+			s.mu.Unlock()
+			s.logger.Warn("Receiver already registered for channel — rejecting duplicate join",
+				"channel_id", channelID, "remote_addr", remoteAddr)
+			writeError(conn, "channel already has a receiver")
+			return
+		}
+	}
+	s.mu.Unlock()
+
 	host, _, _ := net.SplitHostPort(remoteAddr)
 	payload, _ := json.Marshal(map[string]string{"public_ip": host})
 	conn.WriteJSON(Message{Type: MsgOK, ChannelID: channelID, Payload: payload})

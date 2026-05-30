@@ -122,7 +122,7 @@ func runSenderVerify(serverURL string, channelID uint16, password string, payloa
 	allCandidates = append(allCandidates, peerBundle.LocalEndpoints...)
 	candidates, _ := network.ParseCandidates(allCandidates)
 
-	punchResult, err := network.HolePunch(ctx, mux, candidates)
+	punchResult, err := network.HolePunch(ctx, mux, candidates, [4]byte{})
 	if err != nil {
 		return verifyResult{err: fmt.Errorf("hole punch: %w", err)}
 	}
@@ -237,7 +237,7 @@ func runReceiverVerify(serverURL, code string, requireVerify bool) verifyResult 
 	allCandidates = append(allCandidates, senderBundle.LocalEndpoints...)
 	candidates, _ := network.ParseCandidates(allCandidates)
 
-	_, err = network.HolePunch(ctx, mux, candidates)
+	_, err = network.HolePunch(ctx, mux, candidates, [4]byte{})
 	if err != nil {
 		return verifyResult{err: fmt.Errorf("hole punch: %w", err)}
 	}

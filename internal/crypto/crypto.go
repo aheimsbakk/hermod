@@ -1,7 +1,12 @@
 // Package crypto implements cryptographic primitives for hermod.
 //
 // CPace is implemented per RFC 9496 using P-256 (NIST curve) with
-// hash-to-curve via try-and-increment.
+// hash-to-curve via the P256_XMD:SHA-256_SSWU_RO_ suite (RFC 9380).
+// SSWU produces a valid curve point in a single, fixed-length computation
+// with no data-dependent loop iterations, eliminating the timing side channel
+// present in try-and-increment. The role ("sender"/"receiver") is bound into
+// the ISK derivation via a role-ordered transcript, providing domain separation
+// per RFC 9496 intent.
 // AES-256-GCM is used for signaling payload encryption keyed by the CPace
 // shared secret.
 package crypto
@@ -26,6 +31,7 @@ import (
 type CPaceSession struct {
 	scalar  []byte // 32-byte big-endian scalar
 	pubMsg  []byte // 65-byte uncompressed point: 0x04 || X || Y
+	role    string // "sender" or "receiver" — used for ISK transcript ordering
 	sharedK []byte // set after Finish
 }
 
@@ -34,9 +40,12 @@ const cpacePointSize = 65
 
 // CPaceInit creates a new CPace initiator message from the password.
 // channelID is the transfer channel integer used as a domain separator.
+// role must be "sender" or "receiver"; it is bound into the ISK derivation
+// to provide role-based domain separation per RFC 9496 intent.
 // Returns the session and the public message (65 bytes) to send to the peer.
 func CPaceInit(password string, channelID uint16, role string) (*CPaceSession, []byte, error) {
-	// Generator = hash-to-curve(password || channelID || role)
+	// Generator = hash-to-curve(password || channelID || "sender:receiver")
+	// Both parties use the same combined role domain so the generator is shared.
 	gx, gy, err := cpaceGenerator(password, channelID)
 	if err != nil {
 		return nil, nil, fmt.Errorf("cpace generator: %w", err)
@@ -58,11 +67,16 @@ func CPaceInit(password string, channelID uint16, role string) (*CPaceSession, [
 	return &CPaceSession{
 		scalar: scalar.Bytes(),
 		pubMsg: pubMsg,
+		role:   role,
 	}, pubMsg, nil
 }
 
 // CPaceFinish completes the CPace exchange given the peer's public message (65 bytes).
 // Returns the 32-byte shared secret K.
+// The ISK is derived as SHA-256(iskX || pubSender || pubReceiver), where the
+// role stored in the session determines which public message belongs to sender
+// and which to receiver. This binds the role into the shared secret and
+// prevents cross-role composition attacks.
 func (s *CPaceSession) CPaceFinish(peerPub []byte) ([]byte, error) {
 	if len(peerPub) != cpacePointSize || peerPub[0] != 0x04 {
 		return nil, errors.New("cpace: invalid peer public message (must be 65-byte uncompressed P-256 point)")
@@ -74,7 +88,22 @@ func (s *CPaceSession) CPaceFinish(peerPub []byte) ([]byte, error) {
 	}
 	// ISK_x = scalar * peerPub (x-coordinate)
 	iskX, _ := curve.ScalarMult(peerX, peerY, s.scalar)
-	h := sha256.Sum256(padTo32(iskX))
+
+	// Build role-ordered transcript: iskX || pubSender || pubReceiver.
+	// Both sides resolve sender/receiver the same way using their stored role,
+	// so the byte sequence — and thus the derived key — is identical.
+	var senderPub, receiverPub []byte
+	if s.role == "sender" {
+		senderPub, receiverPub = s.pubMsg, peerPub
+	} else {
+		senderPub, receiverPub = peerPub, s.pubMsg
+	}
+	transcript := make([]byte, 0, 32+cpacePointSize+cpacePointSize)
+	transcript = append(transcript, padTo32(iskX)...)
+	transcript = append(transcript, senderPub...)
+	transcript = append(transcript, receiverPub...)
+
+	h := sha256.Sum256(transcript)
 	k := h[:]
 	s.sharedK = k
 	return k, nil
@@ -87,70 +116,24 @@ func (s *CPaceSession) SharedK() []byte { return s.sharedK }
 func (s *CPaceSession) PubMessage() []byte { return s.pubMsg }
 
 // cpaceGenerator hashes the password + channelID to a P-256 point using
-// try-and-increment (deterministic hash-to-curve).
+// the P256_XMD:SHA-256_SSWU_RO_ suite (RFC 9380).
+// The domain separation tag embeds the combined role tag "sender:receiver"
+// so the generator is role-aware while remaining identical for both peers.
+// Unlike the former try-and-increment approach, SSWU always produces a valid
+// point in a single, fixed-length computation, eliminating the loop-count
+// timing side channel.
 func cpaceGenerator(password string, channelID uint16) (*big.Int, *big.Int, error) {
-	curve := elliptic.P256()
-	p := curve.Params().P
-	// Domain: "hermod-cpace-v1:" || password || ":" || channelID
-	base := fmt.Sprintf("hermod-cpace-v1:%s:%d:", password, channelID)
-	for ctr := 0; ctr < 256; ctr++ {
-		h := sha256.Sum256([]byte(fmt.Sprintf("%s%d", base, ctr)))
-		x := new(big.Int).SetBytes(h[:])
-		x.Mod(x, p)
-		// y^2 = x^3 - 3x + b (mod p)
-		y2 := p256YSquared(x, curve.Params())
-		y := modSqrt(y2, p)
-		if y == nil {
-			continue
-		}
-		// Verify
-		check := new(big.Int).Mul(y, y)
-		check.Mod(check, p)
-		if check.Cmp(y2) != 0 {
-			continue
-		}
-		// Use even y
-		if y.Bit(0) != 0 {
-			y.Sub(p, y)
-		}
-		// Validate point is on curve
-		if !curve.IsOnCurve(x, y) {
-			continue
-		}
-		return x, y, nil
+	dst := p256DST(password, channelID)
+	// Input message is the fixed role tag; the password is in the DST.
+	msg := []byte("sender:receiver")
+	pt, err := hashToCurveP256(msg, dst)
+	if err != nil {
+		return nil, nil, fmt.Errorf("cpace hash-to-curve: %w", err)
 	}
-	return nil, nil, errors.New("cpace: hash-to-curve failed")
-}
-
-// p256YSquared computes x^3 - 3x + b mod p for P-256.
-func p256YSquared(x *big.Int, params *elliptic.CurveParams) *big.Int {
-	p := params.P
-	x3 := new(big.Int).Mul(x, x)
-	x3.Mul(x3, x)
-	x3.Mod(x3, p)
-	threeX := new(big.Int).Mul(big.NewInt(3), x)
-	threeX.Mod(threeX, p)
-	y2 := new(big.Int).Sub(x3, threeX)
-	y2.Add(y2, params.B)
-	y2.Mod(y2, p)
-	return y2
-}
-
-// modSqrt computes the modular square root using Euler's criterion for P-256
-// where p ≡ 3 (mod 4), so sqrt = a^((p+1)/4) mod p.
-func modSqrt(a, p *big.Int) *big.Int {
-	if new(big.Int).ModSqrt(a, p) == nil {
-		return nil
-	}
-	exp := new(big.Int).Add(p, big.NewInt(1))
-	exp.Rsh(exp, 2)
-	r := new(big.Int).Exp(a, exp, p)
-	check := new(big.Int).Mul(r, r)
-	check.Mod(check, p)
-	if check.Cmp(a) != 0 {
-		return nil
-	}
-	return r
+	// pt is a 65-byte uncompressed point: 0x04 || X(32) || Y(32).
+	x := new(big.Int).SetBytes(pt[1:33])
+	y := new(big.Int).SetBytes(pt[33:65])
+	return x, y, nil
 }
 
 func padTo32(n *big.Int) []byte {
@@ -183,7 +166,11 @@ func unmarshalPoint(curve elliptic.Curve, data []byte) (*big.Int, *big.Int, erro
 	return x, y, nil
 }
 
-// randScalar generates a random scalar in [1, n-1].
+// randScalar generates a uniformly random scalar in [1, n-1] using rejection
+// sampling (L-03). A 32-byte random value is accepted only if it falls in
+// [1, n-1]; otherwise a new value is drawn. This is unbiased and correctly
+// communicates the algorithm's intent, unlike the former modular-reduction
+// approach whose retry loop could never fire.
 func randScalar(n *big.Int) (*big.Int, error) {
 	for {
 		b := make([]byte, 32)
@@ -191,8 +178,6 @@ func randScalar(n *big.Int) (*big.Int, error) {
 			return nil, err
 		}
 		k := new(big.Int).SetBytes(b)
-		k.Mod(k, new(big.Int).Sub(n, big.NewInt(1)))
-		k.Add(k, big.NewInt(1))
 		if k.Sign() > 0 && k.Cmp(n) < 0 {
 			return k, nil
 		}
@@ -207,6 +192,14 @@ var _ = (*CPaceSession)(nil)
 // Seal encrypts plaintext with key (must be 32 bytes) using AES-256-GCM.
 // Returns nonce || ciphertext || tag.
 func Seal(key, plaintext []byte) ([]byte, error) {
+	return SealAAD(key, nil, plaintext)
+}
+
+// SealAAD encrypts plaintext with key (must be 32 bytes) using AES-256-GCM,
+// binding aad as Additional Authenticated Data. The AAD is authenticated but
+// not included in the ciphertext. Pass nil for no AAD.
+// Returns nonce || ciphertext || tag.
+func SealAAD(key, aad, plaintext []byte) ([]byte, error) {
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		return nil, fmt.Errorf("aes cipher: %w", err)
@@ -219,12 +212,18 @@ func Seal(key, plaintext []byte) ([]byte, error) {
 	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
 		return nil, fmt.Errorf("nonce: %w", err)
 	}
-	ct := gcm.Seal(nonce, nonce, plaintext, nil)
+	ct := gcm.Seal(nonce, nonce, plaintext, aad)
 	return ct, nil
 }
 
 // Open decrypts a blob produced by Seal.
 func Open(key, blob []byte) ([]byte, error) {
+	return OpenAAD(key, nil, blob)
+}
+
+// OpenAAD decrypts a blob produced by SealAAD, verifying the provided AAD.
+// Pass nil aad when no AAD was used during encryption.
+func OpenAAD(key, aad, blob []byte) ([]byte, error) {
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		return nil, fmt.Errorf("aes cipher: %w", err)
@@ -237,7 +236,7 @@ func Open(key, blob []byte) ([]byte, error) {
 	if len(blob) < ns {
 		return nil, errors.New("open: blob too short")
 	}
-	return gcm.Open(nil, blob[:ns], blob[ns:], nil)
+	return gcm.Open(nil, blob[:ns], blob[ns:], aad)
 }
 
 // --- SAS (Short Authentication String) ---
@@ -411,37 +410,259 @@ func Identicon(keyMaterial []byte) string {
 
 // --- Transfer code generation ---
 
+// effShortWordlist is the complete EFF Short Wordlist 1 (1,296 entries).
+// Source: https://www.eff.org/files/2016/09/08/eff_short_wordlist_1.txt
+// Each entry is unique. Using the full 1,296-word list gives
+// log₂(1296³) ≈ 31.9 bits of passphrase entropy for 3-word codes.
 var effShortWordlist = []string{
-	"acid", "aged", "also", "apex", "aqua", "arch", "area", "army", "aunt", "avid",
-	"baby", "back", "bail", "bait", "ball", "band", "bank", "barn", "bath", "bean",
-	"bear", "beat", "beef", "been", "bell", "belt", "best", "bird", "bite", "blue",
-	"boat", "body", "bold", "bolt", "bond", "bone", "book", "boom", "boot", "both",
-	"bowl", "buck", "bulk", "bull", "burn", "byte", "cafe", "cage", "cake", "calf",
-	"calm", "came", "cape", "care", "cart", "cash", "cast", "cave", "chat", "chip",
-	"chop", "city", "clam", "clap", "clay", "clip", "club", "clue", "coal", "coat",
-	"code", "coil", "cold", "cope", "cord", "core", "corn", "cost", "coup", "cove",
-	"cowl", "cram", "cran", "crop", "crow", "cube", "cure", "curl", "damp", "dare",
-	"dark", "dart", "dash", "data", "date", "dawn", "days", "dead", "deal", "dean",
-	"deep", "deft", "dell", "dent", "desk", "dike", "dill", "dime", "dine", "dirt",
-	"disk", "dock", "dome", "dose", "dote", "dove", "down", "drag", "draw", "drip",
-	"drop", "drug", "drum", "dual", "duel", "duke", "dune", "dusk", "dust", "earn",
-	"ease", "edge", "edit", "else", "emit", "emit", "epic", "even", "exam", "exit",
-	"face", "fact", "fail", "fair", "fake", "fame", "farm", "fast", "fate", "fawn",
-	"feed", "feel", "feet", "fell", "felt", "fern", "fest", "file", "fill", "film",
-	"find", "fire", "fish", "fist", "five", "flag", "flat", "flew", "flip", "flit",
-	"flow", "foam", "fold", "fond", "font", "food", "fool", "ford", "fore", "fork",
-	"form", "fort", "foul", "fox", "fray", "free", "from", "fuel", "fume", "fund",
-	"fuse", "gait", "gale", "game", "gang", "gaze", "gear", "gild", "gilt", "gist",
-	"give", "glee", "glob", "glow", "glue", "goal", "goat", "gold", "golf", "good",
-	"gore", "gown", "grab", "gram", "grit", "gust", "gybe", "hack", "hail", "half",
-	"hall", "halt", "hand", "hang", "hard", "harm", "harp", "hate", "haul", "have",
-	"hawk", "haze", "head", "heap", "heat", "heel", "help", "hemp", "herb", "herd",
-	"high", "hill", "hilt", "hint", "holy", "home", "hook", "hope", "horn", "host",
-	"huge", "hull", "hump", "hurt", "icon",
+	"acid", "acorn", "acre", "acts", "afar", "affix",
+	"aged", "agent", "agile", "aging", "agony", "ahead",
+	"aide", "aids", "aim", "ajar", "alarm", "alias",
+	"alibi", "alien", "alike", "alive", "aloe", "aloft",
+	"aloha", "alone", "amend", "amino", "ample", "amuse",
+	"angel", "anger", "angle", "ankle", "apple", "april",
+	"apron", "aqua", "area", "arena", "argue", "arise",
+	"armed", "armor", "army", "aroma", "array", "arson",
+	"art", "ashen", "ashes", "atlas", "atom", "attic",
+	"audio", "avert", "avoid", "awake", "award", "awoke",
+	"axis", "bacon", "badge", "bagel", "baggy", "baked",
+	"baker", "balmy", "banjo", "barge", "barn", "bash",
+	"basil", "bask", "batch", "bath", "baton", "bats",
+	"blade", "blank", "blast", "blaze", "bleak", "blend",
+	"bless", "blimp", "blink", "bloat", "blob", "blog",
+	"blot", "blunt", "blurt", "blush", "boast", "boat",
+	"body", "boil", "bok", "bolt", "boned", "boney",
+	"bonus", "bony", "book", "booth", "boots", "boss",
+	"botch", "both", "boxer", "breed", "bribe", "brick",
+	"bride", "brim", "bring", "brink", "brisk", "broad",
+	"broil", "broke", "brook", "broom", "brush", "buck",
+	"bud", "buggy", "bulge", "bulk", "bully", "bunch",
+	"bunny", "bunt", "bush", "bust", "busy", "buzz",
+	"cable", "cache", "cadet", "cage", "cake", "calm",
+	"cameo", "canal", "candy", "cane", "canon", "cape",
+	"card", "cargo", "carol", "carry", "carve", "case",
+	"cash", "cause", "cedar", "chain", "chair", "chant",
+	"chaos", "charm", "chase", "cheek", "cheer", "chef",
+	"chess", "chest", "chew", "chief", "chili", "chill",
+	"chip", "chomp", "chop", "chow", "chuck", "chump",
+	"chunk", "churn", "chute", "cider", "cinch", "city",
+	"civic", "civil", "clad", "claim", "clamp", "clap",
+	"clash", "clasp", "class", "claw", "clay", "clean",
+	"clear", "cleat", "cleft", "clerk", "click", "cling",
+	"clink", "clip", "cloak", "clock", "clone", "cloth",
+	"cloud", "clump", "coach", "coast", "coat", "cod",
+	"coil", "coke", "cola", "cold", "colt", "coma",
+	"come", "comic", "comma", "cone", "cope", "copy",
+	"coral", "cork", "cost", "cot", "couch", "cough",
+	"cover", "cozy", "craft", "cramp", "crane", "crank",
+	"crate", "crave", "crawl", "crazy", "creme", "crepe",
+	"crept", "crib", "cried", "crisp", "crook", "crop",
+	"cross", "crowd", "crown", "crumb", "crush", "crust",
+	"cub", "cult", "cupid", "cure", "curl", "curry",
+	"curse", "curve", "curvy", "cushy", "cut", "cycle",
+	"dab", "dad", "daily", "dairy", "daisy", "dance",
+	"dandy", "darn", "dart", "dash", "data", "date",
+	"dawn", "deaf", "deal", "dean", "debit", "debt",
+	"debug", "decaf", "decal", "decay", "deck", "decor",
+	"decoy", "deed", "delay", "denim", "dense", "dent",
+	"depth", "derby", "desk", "dial", "diary", "dice",
+	"dig", "dill", "dime", "dimly", "diner", "dingy",
+	"disco", "dish", "disk", "ditch", "ditzy", "dizzy",
+	"dock", "dodge", "doing", "doll", "dome", "donor",
+	"donut", "dose", "dot", "dove", "down", "dowry",
+	"doze", "drab", "drama", "drank", "draw", "dress",
+	"dried", "drift", "drill", "drive", "drone", "droop",
+	"drove", "drown", "drum", "dry", "duck", "duct",
+	"dude", "dug", "duke", "duo", "dusk", "dust",
+	"duty", "dwarf", "dwell", "eagle", "early", "earth",
+	"easel", "east", "eaten", "eats", "ebay", "ebony",
+	"ebook", "echo", "edge", "eel", "eject", "elbow",
+	"elder", "elf", "elk", "elm", "elope", "elude",
+	"elves", "email", "emit", "empty", "emu", "enter",
+	"entry", "envoy", "equal", "erase", "error", "erupt",
+	"essay", "etch", "evade", "even", "evict", "evil",
+	"evoke", "exact", "exit", "fable", "faced", "fact",
+	"fade", "fall", "false", "fancy", "fang", "fax",
+	"feast", "feed", "femur", "fence", "fend", "ferry",
+	"fetal", "fetch", "fever", "fiber", "fifth", "fifty",
+	"film", "filth", "final", "finch", "fit", "five",
+	"flag", "flaky", "flame", "flap", "flask", "fled",
+	"flick", "fling", "flint", "flip", "flirt", "float",
+	"flock", "flop", "floss", "flyer", "foam", "foe",
+	"fog", "foil", "folic", "folk", "food", "fool",
+	"found", "fox", "foyer", "frail", "frame", "fray",
+	"fresh", "fried", "frill", "frisk", "from", "front",
+	"frost", "froth", "frown", "froze", "fruit", "gag",
+	"gains", "gala", "game", "gap", "gas", "gave",
+	"gear", "gecko", "geek", "gem", "genre", "gift",
+	"gig", "gills", "given", "giver", "glad", "glass",
+	"glide", "gloss", "glove", "glow", "glue", "goal",
+	"going", "golf", "gong", "good", "gooey", "goofy",
+	"gore", "gown", "grab", "grain", "grant", "grape",
+	"graph", "grasp", "grass", "grave", "gravy", "gray",
+	"green", "greet", "grew", "grid", "grief", "grill",
+	"grip", "grit", "groom", "grope", "growl", "grub",
+	"grunt", "guide", "gulf", "gulp", "gummy", "guru",
+	"gush", "gut", "guy", "habit", "half", "halo",
+	"halt", "happy", "harm", "hash", "hasty", "hatch",
+	"hate", "haven", "hazel", "hazy", "heap", "heat",
+	"heave", "hedge", "hefty", "help", "herbs", "hers",
+	"hub", "hug", "hula", "hull", "human", "humid",
+	"hump", "hung", "hunk", "hunt", "hurry", "hurt",
+	"hush", "hut", "ice", "icing", "icon", "icy",
+	"igloo", "image", "ion", "iron", "islam", "issue",
+	"item", "ivory", "ivy", "jab", "jam", "jaws",
+	"jazz", "jeep", "jelly", "jet", "jiffy", "job",
+	"jog", "jolly", "jolt", "jot", "joy", "judge",
+	"juice", "juicy", "july", "jumbo", "jump", "junky",
+	"juror", "jury", "keep", "keg", "kept", "kick",
+	"kilt", "king", "kite", "kitty", "kiwi", "knee",
+	"knelt", "koala", "kung", "ladle", "lady", "lair",
+	"lake", "lance", "land", "lapel", "large", "lash",
+	"lasso", "last", "latch", "late", "lazy", "left",
+	"legal", "lemon", "lend", "lens", "lent", "level",
+	"lever", "lid", "life", "lift", "lilac", "lily",
+	"limb", "limes", "line", "lint", "lion", "lip",
+	"list", "lived", "liver", "lunar", "lunch", "lung",
+	"lurch", "lure", "lurk", "lying", "lyric", "mace",
+	"maker", "malt", "mama", "mango", "manor", "many",
+	"map", "march", "mardi", "marry", "mash", "match",
+	"mate", "math", "moan", "mocha", "moist", "mold",
+	"mom", "moody", "mop", "morse", "most", "motor",
+	"motto", "mount", "mouse", "mousy", "mouth", "move",
+	"movie", "mower", "mud", "mug", "mulch", "mule",
+	"mull", "mumbo", "mummy", "mural", "muse", "music",
+	"musky", "mute", "nacho", "nag", "nail", "name",
+	"nanny", "nap", "navy", "near", "neat", "neon",
+	"nerd", "nest", "net", "next", "niece", "ninth",
+	"nutty", "oak", "oasis", "oat", "ocean", "oil",
+	"old", "olive", "omen", "onion", "only", "ooze",
+	"opal", "open", "opera", "opt", "otter", "ouch",
+	"ounce", "outer", "oval", "oven", "owl", "ozone",
+	"pace", "pagan", "pager", "palm", "panda", "panic",
+	"pants", "panty", "paper", "park", "party", "pasta",
+	"patch", "path", "patio", "payer", "pecan", "penny",
+	"pep", "perch", "perky", "perm", "pest", "petal",
+	"petri", "petty", "photo", "plank", "plant", "plaza",
+	"plead", "plot", "plow", "pluck", "plug", "plus",
+	"poach", "pod", "poem", "poet", "pogo", "point",
+	"poise", "poker", "polar", "polio", "polka", "polo",
+	"pond", "pony", "poppy", "pork", "poser", "pouch",
+	"pound", "pout", "power", "prank", "press", "print",
+	"prior", "prism", "prize", "probe", "prong", "proof",
+	"props", "prude", "prune", "pry", "pug", "pull",
+	"pulp", "pulse", "puma", "punch", "punk", "pupil",
+	"puppy", "purr", "purse", "push", "putt", "quack",
+	"quake", "query", "quiet", "quill", "quilt", "quit",
+	"quota", "quote", "rabid", "race", "rack", "radar",
+	"radio", "raft", "rage", "raid", "rail", "rake",
+	"rally", "ramp", "ranch", "range", "rank", "rant",
+	"rash", "raven", "reach", "react", "ream", "rebel",
+	"recap", "relax", "relay", "relic", "remix", "repay",
+	"repel", "reply", "rerun", "reset", "rhyme", "rice",
+	"rich", "ride", "rigid", "rigor", "rinse", "riot",
+	"ripen", "rise", "risk", "ritzy", "rival", "river",
+	"roast", "robe", "robin", "rock", "rogue", "roman",
+	"romp", "rope", "rover", "royal", "ruby", "rug",
+	"ruin", "rule", "runny", "rush", "rust", "rut",
+	"sadly", "sage", "said", "saint", "salad", "salon",
+	"salsa", "salt", "same", "sandy", "santa", "satin",
+	"sauna", "saved", "savor", "sax", "say", "scale",
+	"scam", "scan", "scare", "scarf", "scary", "scoff",
+	"scold", "scoop", "scoot", "scope", "score", "scorn",
+	"scout", "scowl", "scrap", "scrub", "scuba", "scuff",
+	"sect", "sedan", "self", "send", "sepia", "serve",
+	"set", "seven", "shack", "shade", "shady", "shaft",
+	"shaky", "sham", "shape", "share", "sharp", "shed",
+	"sheep", "sheet", "shelf", "shell", "shine", "shiny",
+	"ship", "shirt", "shock", "shop", "shore", "shout",
+	"shove", "shown", "showy", "shred", "shrug", "shun",
+	"shush", "shut", "shy", "sift", "silk", "silly",
+	"silo", "sip", "siren", "sixth", "size", "skate",
+	"skew", "skid", "skier", "skies", "skip", "skirt",
+	"skit", "sky", "slab", "slack", "slain", "slam",
+	"slang", "slash", "slate", "slaw", "sled", "sleek",
+	"sleep", "sleet", "slept", "slice", "slick", "slimy",
+	"sling", "slip", "slit", "slob", "slot", "slug",
+	"slum", "slurp", "slush", "small", "smash", "smell",
+	"smile", "smirk", "smog", "snack", "snap", "snare",
+	"snarl", "sneak", "sneer", "sniff", "snore", "snort",
+	"snout", "snowy", "snub", "snuff", "speak", "speed",
+	"spend", "spent", "spew", "spied", "spill", "spiny",
+	"spoil", "spoke", "spoof", "spool", "spoon", "sport",
+	"spot", "spout", "spray", "spree", "spur", "squad",
+	"squat", "squid", "stack", "staff", "stage", "stain",
+	"stall", "stamp", "stand", "stank", "stark", "start",
+	"stash", "state", "stays", "steam", "steep", "stem",
+	"step", "stew", "stick", "sting", "stir", "stock",
+	"stole", "stomp", "stony", "stood", "stool", "stoop",
+	"stop", "storm", "stout", "stove", "straw", "stray",
+	"strut", "stuck", "stud", "stuff", "stump", "stung",
+	"stunt", "suds", "sugar", "sulk", "surf", "sushi",
+	"swab", "swan", "swarm", "sway", "swear", "sweat",
+	"sweep", "swell", "swept", "swim", "swing", "swipe",
+	"swirl", "swoop", "swore", "syrup", "tacky", "taco",
+	"tag", "take", "tall", "talon", "tamer", "tank",
+	"taper", "taps", "tarot", "tart", "task", "taste",
+	"tasty", "taunt", "thank", "thaw", "theft", "theme",
+	"thigh", "thing", "think", "thong", "thorn", "those",
+	"throb", "thud", "thumb", "thump", "thus", "tiara",
+	"tidal", "tidy", "tiger", "tile", "tilt", "tint",
+	"tiny", "trace", "track", "trade", "train", "trait",
+	"trap", "trash", "tray", "treat", "tree", "trek",
+	"trend", "trial", "tribe", "trick", "trio", "trout",
+	"truce", "truck", "trump", "trunk", "try", "tug",
+	"tulip", "tummy", "turf", "tusk", "tutor", "tutu",
+	"tux", "tweak", "tweet", "twice", "twine", "twins",
+	"twirl", "twist", "uncle", "uncut", "undo", "unify",
+	"union", "unit", "untie", "upon", "upper", "urban",
+	"used", "user", "usher", "utter", "value", "vapor",
+	"vegan", "venue", "verse", "vest", "veto", "vice",
+	"video", "view", "viral", "virus", "visa", "visor",
+	"vixen", "vocal", "voice", "void", "volt", "voter",
+	"vowel", "wad", "wafer", "wager", "wages", "wagon",
+	"wake", "walk", "wand", "wasp", "watch", "water",
+	"wavy", "wheat", "whiff", "whole", "whoop", "wick",
+	"widen", "widow", "width", "wife", "wifi", "wilt",
+	"wimp", "wind", "wing", "wink", "wipe", "wired",
+	"wiry", "wise", "wish", "wispy", "wok", "wolf",
+	"womb", "wool", "woozy", "word", "work", "worry",
+	"wound", "woven", "wrath", "wreck", "wrist", "xerox",
+	"yahoo", "yam", "yard", "year", "yeast", "yelp",
+	"yield", "yo-yo", "yodel", "yoga", "yoyo", "yummy",
+	"zebra", "zero", "zesty", "zippy", "zone", "zoom",
+}
+
+// EFFShortWordlist returns a copy of the wordlist slice for testing and inspection.
+func EFFShortWordlist() []string {
+	out := make([]string, len(effShortWordlist))
+	copy(out, effShortWordlist)
+	return out
+}
+
+// randomWordIndex returns a uniformly random index in [0, len(effShortWordlist))
+// using rejection sampling on uint16 values to eliminate modulo bias.
+func randomWordIndex() (int, error) {
+	n := len(effShortWordlist) // 1296
+	// Largest multiple of n that fits in a uint16 range (0..65535):
+	// floor(65536 / n) * n = 50 * 1296 = 64800.
+	limit := (65536 / n) * n
+	var buf [2]byte
+	for {
+		if _, err := rand.Read(buf[:]); err != nil {
+			return 0, fmt.Errorf("rng word index: %w", err)
+		}
+		v := int(binary.BigEndian.Uint16(buf[:]))
+		if v < limit {
+			return v % n, nil
+		}
+	}
 }
 
 // GenerateTransferCode generates a random transfer code: "<uint16>-word-word-..."
 // numWords is the number of words (minimum 3).
+// Words are drawn from the full 1,296-entry EFF short wordlist using
+// rejection sampling, giving log₂(1296^numWords) bits of passphrase entropy.
 func GenerateTransferCode(numWords int) (uint16, string, error) {
 	if numWords < 3 {
 		numWords = 3
@@ -452,13 +673,13 @@ func GenerateTransferCode(numWords int) (uint16, string, error) {
 	}
 	channelID := binary.BigEndian.Uint16(idBuf[:])
 
-	wordsBuf := make([]byte, numWords)
-	if _, err := rand.Read(wordsBuf); err != nil {
-		return 0, "", fmt.Errorf("rng words: %w", err)
-	}
 	words := make([]string, numWords)
-	for i, b := range wordsBuf {
-		words[i] = effShortWordlist[int(b)%len(effShortWordlist)]
+	for i := range words {
+		idx, err := randomWordIndex()
+		if err != nil {
+			return 0, "", err
+		}
+		words[i] = effShortWordlist[idx]
 	}
 
 	code := fmt.Sprintf("%d-%s", channelID, strings.Join(words, "-"))

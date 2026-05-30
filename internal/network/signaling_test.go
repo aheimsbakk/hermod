@@ -28,7 +28,7 @@ func startSignalingServer(t *testing.T) string {
 
 	store := server.NewMemoryStore()
 	rl := server.NewRateLimiter(100, 1000)
-	srv := server.NewServer(store, rl, 60*time.Second, server.DefaultMaxBlobsPerChannel, server.DefaultMaxCPaceFailures, slog.Default())
+	srv := server.NewServer(store, rl, 60*time.Second, server.DefaultMaxBlobsPerChannel, server.DefaultMaxCPaceFailures, nil, slog.Default())
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -239,6 +239,42 @@ func TestDialSignalingAllocateJoinErrorBranch(t *testing.T) {
 	_, err := c2.Join(6666)
 	if err != nil {
 		t.Fatalf("join: %v", err)
+	}
+}
+
+func TestJoinDuplicateReceiverRejected(t *testing.T) {
+	addr := startSignalingServer(t)
+	serverURL := "wss://" + addr
+
+	// Sender allocates channel
+	sender, err := network.DialSignaling(serverURL, "")
+	if err != nil {
+		t.Fatalf("dial sender: %v", err)
+	}
+	defer sender.Close()
+	if _, err := sender.Allocate(7777); err != nil {
+		t.Fatalf("allocate: %v", err)
+	}
+
+	// First receiver joins — should succeed
+	r1, err := network.DialSignaling(serverURL, "")
+	if err != nil {
+		t.Fatalf("dial r1: %v", err)
+	}
+	defer r1.Close()
+	if _, err := r1.Join(7777); err != nil {
+		t.Fatalf("first receiver join: %v", err)
+	}
+
+	// Second receiver joins same channel — must be rejected (L-04)
+	r2, err := network.DialSignaling(serverURL, "")
+	if err != nil {
+		t.Fatalf("dial r2: %v", err)
+	}
+	defer r2.Close()
+	_, err = r2.Join(7777)
+	if err == nil {
+		t.Fatal("expected error when second receiver joins the same channel (L-04)")
 	}
 }
 

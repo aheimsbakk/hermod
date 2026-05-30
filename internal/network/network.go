@@ -139,13 +139,19 @@ type HolePunchResult struct {
 }
 
 // HolePunch performs simultaneous UDP hole punching to each candidate address.
+// probeNonce is a 4-byte session-unique value derived by the caller (e.g.
+// SHA-256(kClassical)[:4]). The probe and ack payloads are derived from it,
+// making them unguessable to an off-path attacker and preventing spoofed
+// ack injection (L-07).
 // Returns as soon as a probe/ack exchange succeeds or ctx is cancelled.
-func HolePunch(ctx context.Context, mux *packetMux, candidates []*net.UDPAddr) (*HolePunchResult, error) {
+func HolePunch(ctx context.Context, mux *packetMux, candidates []*net.UDPAddr, probeNonce [4]byte) (*HolePunchResult, error) {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
-	probe := []byte{probeMarker, 0xAB}
-	ack := []byte{probeMarker, 0xCD}
+	// probe = [probeMarker, nonce[0], nonce[1]]
+	// ack   = [probeMarker, nonce[2], nonce[3]]
+	probe := []byte{probeMarker, probeNonce[0], probeNonce[1]}
+	ack := []byte{probeMarker, probeNonce[2], probeNonce[3]}
 
 	// Send probes to all candidates periodically
 	go func() {
@@ -168,16 +174,16 @@ func HolePunch(ctx context.Context, mux *packetMux, candidates []*net.UDPAddr) (
 		case <-ctx.Done():
 			return nil, fmt.Errorf("hole punch timed out: %w", ctx.Err())
 		case pkt := <-mux.probeCh:
-			if len(pkt.data) < 2 {
+			if len(pkt.data) < 3 {
 				continue
 			}
-			switch pkt.data[1] {
-			case 0xAB: // received probe — send ack
+			switch {
+			case pkt.data[1] == probeNonce[0] && pkt.data[2] == probeNonce[1]: // received probe — send ack
 				mux.conn.WriteTo(ack, pkt.addr) //nolint:errcheck
 				if udpAddr, ok := pkt.addr.(*net.UDPAddr); ok {
 					return &HolePunchResult{PeerAddr: udpAddr}, nil
 				}
-			case 0xCD: // received ack
+			case pkt.data[1] == probeNonce[2] && pkt.data[2] == probeNonce[3]: // received ack
 				if udpAddr, ok := pkt.addr.(*net.UDPAddr); ok {
 					return &HolePunchResult{PeerAddr: udpAddr}, nil
 				}

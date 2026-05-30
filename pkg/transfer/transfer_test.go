@@ -135,6 +135,28 @@ func TestDecodeMetadataInvalid(t *testing.T) {
 	}
 }
 
+func TestSafeDestinationPathTraversal(t *testing.T) {
+	dir := t.TempDir()
+
+	cases := []string{
+		"../../etc/passwd",
+		"../outside.txt",
+		"subdir/../../escape.txt",
+		"../../.ssh/authorized_keys",
+	}
+	for _, malicious := range cases {
+		result := transfer.SafeDestinationPath(dir, malicious)
+		// Result must not escape the destination directory.
+		rel, err := filepath.Rel(dir, result)
+		if err != nil {
+			t.Fatalf("filepath.Rel failed for %q: %v", malicious, err)
+		}
+		if len(rel) >= 2 && rel[:2] == ".." {
+			t.Fatalf("path traversal not prevented for %q: resolved to %q", malicious, result)
+		}
+	}
+}
+
 func TestSafeDestinationPath(t *testing.T) {
 	dir := t.TempDir()
 	name := "file.txt"

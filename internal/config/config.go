@@ -2,8 +2,9 @@
 package config
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
-	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
@@ -138,9 +139,9 @@ func BuildTLSConfig(cfg *Config) *tls.Config {
 }
 
 // GenerateServerCert generates a self-signed X.509 cert+key and stores PEM
-// strings in cfg.
+// strings in cfg. Uses ECDSA P-256 for fast generation and smaller signatures (L-02).
 func GenerateServerCert(cfg *Config) error {
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return fmt.Errorf("generate key: %w", err)
 	}
@@ -152,11 +153,11 @@ func GenerateServerCert(cfg *Config) error {
 		SerialNumber: serial,
 		Subject:      pkix.Name{CommonName: "hermod-server"},
 		NotBefore:    time.Now().Add(-time.Minute),
-		NotAfter:     time.Now().Add(10 * 365 * 24 * time.Hour),
-		KeyUsage:     x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
-		IsCA:         true,
+		NotAfter:     time.Now().Add(365 * 24 * time.Hour), // 1 year
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		IsCA:         false,
 	}
-	certDER, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	certDER, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, key.Public(), key)
 	if err != nil {
 		return fmt.Errorf("create cert: %w", err)
 	}
@@ -193,4 +194,57 @@ func PinServer(cfg *Config, serverURL, fingerprint string) {
 // Call Save after to persist the change.
 func SetDefaultServer(cfg *Config, serverURL string) {
 	cfg.ServerURL = serverURL
+}
+
+// CertExpiryInfo returns the expiry time of the server certificate stored in
+// cfg, and whether it could be parsed. Returns zero time and false if the cert
+// is missing or unparseable.
+func CertExpiryInfo(cfg *Config) (notAfter time.Time, ok bool) {
+	if cfg.ServerCertPEM == "" {
+		return time.Time{}, false
+	}
+	block, _ := pem.Decode([]byte(cfg.ServerCertPEM))
+	if block == nil {
+		return time.Time{}, false
+	}
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return cert.NotAfter, true
+}
+
+// certExpiryThresholds defines log-level thresholds for cert expiry warnings.
+// Each entry: days remaining → (level, message).
+// Checked in order; the first match applies.
+var certExpiryThresholds = []struct {
+	days  int
+	level string
+	msg   string
+}{
+	{7, "CRITICAL", "Server certificate expires in %d day(s) — renew immediately to avoid outages"},
+	{30, "ERROR", "Server certificate expires in %d day(s) — schedule renewal soon"},
+	{90, "WARN", "Server certificate expires in %d day(s) — consider renewing"},
+}
+
+// LogCertExpiry logs a warning (or critical) message if the server certificate
+// is approaching expiry. It does nothing if the cert cannot be parsed or is
+// not configured. Callers should invoke this at server startup and periodically.
+//
+// Log levels used:
+//   - ≤ 7 days  → CRITICAL (slog.LevelError, prefix "CRITICAL")
+//   - ≤ 30 days → ERROR    (slog.LevelError)
+//   - ≤ 90 days → WARN     (slog.LevelWarn)
+func LogCertExpiry(cfg *Config, logFn func(level, msg string, daysLeft int)) {
+	notAfter, ok := CertExpiryInfo(cfg)
+	if !ok {
+		return
+	}
+	daysLeft := int(time.Until(notAfter).Hours() / 24)
+	for _, t := range certExpiryThresholds {
+		if daysLeft <= t.days {
+			logFn(t.level, t.msg, daysLeft)
+			return
+		}
+	}
 }

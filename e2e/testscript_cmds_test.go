@@ -61,7 +61,7 @@ func cmdStartServer(ts *testscript.TestScript, neg bool, _ []string) {
 	srv := server.NewServer(
 		store, rl, 60*time.Second,
 		server.DefaultMaxBlobsPerChannel, server.DefaultMaxCPaceFailures,
-		slog.Default(),
+		nil, slog.Default(),
 	)
 
 	// Pick a free port before starting.

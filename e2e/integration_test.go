@@ -41,7 +41,7 @@ func startE2EServer(t *testing.T) string {
 
 	store := server.NewMemoryStore()
 	rl := server.NewRateLimiter(100, 1000)
-	srv := server.NewServer(store, rl, 60*time.Second, server.DefaultMaxBlobsPerChannel, server.DefaultMaxCPaceFailures, slog.Default())
+	srv := server.NewServer(store, rl, 60*time.Second, server.DefaultMaxBlobsPerChannel, server.DefaultMaxCPaceFailures, nil, slog.Default())
 
 	ln, _ := net.Listen("tcp", "127.0.0.1:0")
 	addr := ln.Addr().String()
@@ -252,7 +252,7 @@ func runSender(serverURL string, channelID uint16, password string, kind transfe
 	allCandidates = append(allCandidates, peerBundle.LocalEndpoints...)
 	candidates, _ := network.ParseCandidates(allCandidates)
 
-	punchResult, err := network.HolePunch(ctx, mux, candidates)
+	punchResult, err := network.HolePunch(ctx, mux, candidates, [4]byte{})
 	if err != nil {
 		return fmt.Errorf("hole punch: %w", err)
 	}
@@ -376,7 +376,7 @@ func runReceiver(serverURL, code string) ([]byte, error) {
 	allCandidates = append(allCandidates, senderBundle.LocalEndpoints...)
 	candidates, _ := network.ParseCandidates(allCandidates)
 
-	_, err = network.HolePunch(ctx, mux, candidates)
+	_, err = network.HolePunch(ctx, mux, candidates, [4]byte{})
 	if err != nil {
 		return nil, fmt.Errorf("hole punch: %w", err)
 	}

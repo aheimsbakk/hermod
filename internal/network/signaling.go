@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -17,8 +18,10 @@ import (
 
 // SignalingClient manages a WebSocket connection to the signaling server.
 type SignalingClient struct {
-	conn *websocket.Conn
-	ctx  context.Context
+	conn      *websocket.Conn
+	ctx       context.Context
+	done      chan struct{} // closed by Close() to unblock WithContext goroutines (L-08)
+	closeOnce sync.Once
 }
 
 // dialSignaling opens a WebSocket connection to serverURL, pinning the cert
@@ -71,7 +74,7 @@ func dialSignaling(serverURL string, pinnedFingerprint string) (*SignalingClient
 	if err != nil {
 		return nil, fmt.Errorf("ws dial %s: %w", wsURL, err)
 	}
-	return &SignalingClient{conn: conn, ctx: context.Background()}, nil
+	return &SignalingClient{conn: conn, ctx: context.Background(), done: make(chan struct{})}, nil
 }
 
 // DialSignaling opens a WebSocket to serverURL with optional cert pinning.
@@ -82,12 +85,19 @@ func DialSignaling(serverURL, pinnedFingerprint string) (*SignalingClient, error
 // WithContext returns a copy of the client whose blocking reads are cancelled
 // when ctx is done. It starts a background goroutine that, on cancellation,
 // sets a past read deadline on the connection to unblock any pending Recv call.
+// The goroutine also exits when the client is closed via Close(), preventing
+// goroutine leaks when a non-cancellable context (e.g. context.Background()) is
+// passed (L-08).
 func (c *SignalingClient) WithContext(ctx context.Context) *SignalingClient {
-	child := &SignalingClient{conn: c.conn, ctx: ctx}
+	child := &SignalingClient{conn: c.conn, ctx: ctx, done: c.done}
 	go func() {
-		<-ctx.Done()
-		// Unblock any blocking ReadJSON by expiring the read deadline.
-		_ = c.conn.SetReadDeadline(time.Unix(0, 0))
+		select {
+		case <-ctx.Done():
+			// Unblock any blocking ReadJSON by expiring the read deadline.
+			_ = c.conn.SetReadDeadline(time.Unix(0, 0))
+		case <-c.done:
+			// Client was closed — exit to avoid goroutine leak.
+		}
 	}()
 	return child
 }
@@ -101,8 +111,10 @@ func (c *SignalingClient) ctxErr(err error) error {
 	return err
 }
 
-// Close closes the WebSocket connection.
+// Close closes the WebSocket connection and signals any WithContext goroutines
+// to exit, preventing goroutine leaks (L-08).
 func (c *SignalingClient) Close() error {
+	c.closeOnce.Do(func() { close(c.done) })
 	return c.conn.Close()
 }
 
