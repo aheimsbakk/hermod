@@ -478,3 +478,11 @@ The TLS 1.3 layer correctly uses X25519MLKEM768 (hybrid post-quantum KEM). Howev
 10. **M-05** ✅ — Validate channel existence in `handleJoin`.
 11. **M-06** ✅ — Fix `/cert` endpoint to serve actual DER certificate.
 12. **M-07** ✅ — Compute hash in parallel during streaming; send as trailing metadata stream.
+13. **L-01** ✅ — Bind channel ID as context in `ExportKeyingMaterial` for SAS.
+14. **L-02** ✅ — Replace RSA-2048 with ECDSA P-256 for ephemeral and server certs.
+15. **L-03** ✅ — Replace biased modular reduction in `randScalar` with rejection sampling.
+16. **L-04** ✅ — Reject a second receiver joining the same channel.
+17. **L-05** ✅ — Add `--fingerprint` flag to `hermod trust`; document trusted-network requirement.
+18. **L-06** ✅ — Fix WebSocket upgrader to reject browser cross-origin connections.
+19. **L-07** ✅ — Use CPace-derived session nonce as hole-punch probe/ack discriminator.
+20. **L-08** ✅ — Fix `WithContext` goroutine leak via `done` channel in `SignalingClient`.
