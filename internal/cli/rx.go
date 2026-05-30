@@ -230,7 +230,7 @@ func runRx(code, destination, serverURL string, verify bool, listenUDP string, s
 
 	logInfo("Starting UDP hole punch", "candidates", len(candidates))
 	printStatus("Establishing P2P connection...")
-	punchResult, err := network.HolePunch(ctx, mux, candidates)
+	punchResult, err := network.HolePunch(ctx, mux, candidates, holePunchNonce(kClassical))
 	if err != nil {
 		return fmt.Errorf("hole punch: %w", err)
 	}
@@ -267,7 +267,7 @@ func runRx(code, destination, serverURL string, verify bool, listenUDP string, s
 	if verify {
 		logInfo("Starting SAS out-of-band verification")
 		quicState := quicConn.ConnectionState()
-		if err := performSASCoordinated(ctx, quicConn, quicState.TLS, false); err != nil {
+		if err := performSASCoordinated(ctx, quicConn, quicState.TLS, false, channelIDAad(channelID)); err != nil {
 			return err
 		}
 		logInfo("SAS verification passed")

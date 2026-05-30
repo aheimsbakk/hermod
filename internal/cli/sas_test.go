@@ -126,7 +126,7 @@ func TestPromptSASVerification_YesAnswer(t *testing.T) {
 		t.Fatalf("tls pipe: %v", err)
 	}
 
-	ok, err := promptSASVerificationFrom(clientConn.ConnectionState(), strings.NewReader("y\n"))
+	ok, err := promptSASVerificationFrom(clientConn.ConnectionState(), strings.NewReader("y\n"), nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -142,7 +142,7 @@ func TestPromptSASVerification_UpperYesAnswer(t *testing.T) {
 		t.Fatalf("tls pipe: %v", err)
 	}
 
-	ok, err := promptSASVerificationFrom(clientConn.ConnectionState(), strings.NewReader("Y\n"))
+	ok, err := promptSASVerificationFrom(clientConn.ConnectionState(), strings.NewReader("Y\n"), nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -164,7 +164,7 @@ func TestPromptSASVerification_NonYesAnswer(t *testing.T) {
 	}
 
 	// "test" is what echo-piped stdin would produce, simulating the bug scenario.
-	ok, err := promptSASVerificationFrom(clientConn.ConnectionState(), strings.NewReader("test\n"))
+	ok, err := promptSASVerificationFrom(clientConn.ConnectionState(), strings.NewReader("test\n"), nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -180,7 +180,7 @@ func TestPromptSASVerification_EmptyAnswer(t *testing.T) {
 		t.Fatalf("tls pipe: %v", err)
 	}
 
-	ok, err := promptSASVerificationFrom(clientConn.ConnectionState(), strings.NewReader(""))
+	ok, err := promptSASVerificationFrom(clientConn.ConnectionState(), strings.NewReader(""), nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -216,10 +216,10 @@ func TestSASCoordinated_BothConfirm(t *testing.T) {
 	errCh := make(chan error, 2)
 
 	go func() {
-		errCh <- performSASCoordinatedWith(ctx, senderConn, clientConn.ConnectionState(), true, strings.NewReader("y\n"))
+		errCh <- performSASCoordinatedWith(ctx, senderConn, clientConn.ConnectionState(), true, strings.NewReader("y\n"), nil)
 	}()
 	go func() {
-		errCh <- performSASCoordinatedWith(ctx, receiverConn, serverConn.ConnectionState(), false, strings.NewReader("y\n"))
+		errCh <- performSASCoordinatedWith(ctx, receiverConn, serverConn.ConnectionState(), false, strings.NewReader("y\n"), nil)
 	}()
 
 	for i := 0; i < 2; i++ {
@@ -255,10 +255,10 @@ func TestSASCoordinated_SenderPipedStdin_BothShouldSucceed(t *testing.T) {
 	senderTTYReader := strings.NewReader("y\n")
 
 	go func() {
-		errCh <- performSASCoordinatedWith(ctx, senderConn, clientConn.ConnectionState(), true, senderTTYReader)
+		errCh <- performSASCoordinatedWith(ctx, senderConn, clientConn.ConnectionState(), true, senderTTYReader, nil)
 	}()
 	go func() {
-		errCh <- performSASCoordinatedWith(ctx, receiverConn, serverConn.ConnectionState(), false, strings.NewReader("y\n"))
+		errCh <- performSASCoordinatedWith(ctx, receiverConn, serverConn.ConnectionState(), false, strings.NewReader("y\n"), nil)
 	}()
 
 	for i := 0; i < 2; i++ {
@@ -287,12 +287,12 @@ func TestSASCoordinated_ReceiverAnswersFirst_BothShouldSucceed(t *testing.T) {
 
 	// Receiver answers first (with a slight head start), sender answers after.
 	go func() {
-		errCh <- performSASCoordinatedWith(ctx, receiverConn, serverConn.ConnectionState(), false, strings.NewReader("y\n"))
+		errCh <- performSASCoordinatedWith(ctx, receiverConn, serverConn.ConnectionState(), false, strings.NewReader("y\n"), nil)
 	}()
 	// Small delay so receiver answers first.
 	time.Sleep(20 * time.Millisecond)
 	go func() {
-		errCh <- performSASCoordinatedWith(ctx, senderConn, clientConn.ConnectionState(), true, strings.NewReader("y\n"))
+		errCh <- performSASCoordinatedWith(ctx, senderConn, clientConn.ConnectionState(), true, strings.NewReader("y\n"), nil)
 	}()
 
 	for i := 0; i < 2; i++ {
@@ -319,10 +319,10 @@ func TestSASCoordinated_SenderRejects(t *testing.T) {
 	errCh := make(chan error, 2)
 
 	go func() {
-		errCh <- performSASCoordinatedWith(ctx, senderConn, clientConn.ConnectionState(), true, strings.NewReader("n\n"))
+		errCh <- performSASCoordinatedWith(ctx, senderConn, clientConn.ConnectionState(), true, strings.NewReader("n\n"), nil)
 	}()
 	go func() {
-		errCh <- performSASCoordinatedWith(ctx, receiverConn, serverConn.ConnectionState(), false, strings.NewReader("y\n"))
+		errCh <- performSASCoordinatedWith(ctx, receiverConn, serverConn.ConnectionState(), false, strings.NewReader("y\n"), nil)
 	}()
 
 	var errs []error
@@ -353,10 +353,10 @@ func TestSASCoordinated_ReceiverRejects(t *testing.T) {
 	errCh := make(chan error, 2)
 
 	go func() {
-		errCh <- performSASCoordinatedWith(ctx, senderConn, clientConn.ConnectionState(), true, strings.NewReader("y\n"))
+		errCh <- performSASCoordinatedWith(ctx, senderConn, clientConn.ConnectionState(), true, strings.NewReader("y\n"), nil)
 	}()
 	go func() {
-		errCh <- performSASCoordinatedWith(ctx, receiverConn, serverConn.ConnectionState(), false, strings.NewReader("n\n"))
+		errCh <- performSASCoordinatedWith(ctx, receiverConn, serverConn.ConnectionState(), false, strings.NewReader("n\n"), nil)
 	}()
 
 	var errs []error
@@ -425,10 +425,10 @@ func TestSASCoordinated_BothReject(t *testing.T) {
 
 	errCh := make(chan error, 2)
 	go func() {
-		errCh <- performSASCoordinatedWith(ctx, senderConn, clientConn.ConnectionState(), true, strings.NewReader("n\n"))
+		errCh <- performSASCoordinatedWith(ctx, senderConn, clientConn.ConnectionState(), true, strings.NewReader("n\n"), nil)
 	}()
 	go func() {
-		errCh <- performSASCoordinatedWith(ctx, receiverConn, serverConn.ConnectionState(), false, strings.NewReader("n\n"))
+		errCh <- performSASCoordinatedWith(ctx, receiverConn, serverConn.ConnectionState(), false, strings.NewReader("n\n"), nil)
 	}()
 
 	var errs []error
@@ -462,7 +462,7 @@ func TestSASCoordinated_OpenStreamError(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	err = performSASCoordinatedWith(ctx, conn, clientConn.ConnectionState(), true, strings.NewReader("y\n"))
+	err = performSASCoordinatedWith(ctx, conn, clientConn.ConnectionState(), true, strings.NewReader("y\n"), nil)
 	if err == nil || !strings.Contains(err.Error(), "open sas stream") {
 		t.Fatalf("expected 'open sas stream' error, got: %v", err)
 	}
@@ -479,7 +479,7 @@ func TestSASCoordinated_AcceptStreamError(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	err = performSASCoordinatedWith(ctx, conn, serverConn.ConnectionState(), false, strings.NewReader("y\n"))
+	err = performSASCoordinatedWith(ctx, conn, serverConn.ConnectionState(), false, strings.NewReader("y\n"), nil)
 	if err == nil || !strings.Contains(err.Error(), "accept sas stream") {
 		t.Fatalf("expected 'accept sas stream' error, got: %v", err)
 	}
@@ -496,7 +496,7 @@ func TestSASCoordinated_StreamWriteError(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	err = performSASCoordinatedWith(ctx, conn, clientConn.ConnectionState(), true, strings.NewReader("y\n"))
+	err = performSASCoordinatedWith(ctx, conn, clientConn.ConnectionState(), true, strings.NewReader("y\n"), nil)
 	if err == nil || !strings.Contains(err.Error(), "send sas result") {
 		t.Fatalf("expected 'send sas result' error, got: %v", err)
 	}
@@ -513,7 +513,7 @@ func TestSASCoordinated_StreamReadError(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	err = performSASCoordinatedWith(ctx, conn, clientConn.ConnectionState(), true, strings.NewReader("y\n"))
+	err = performSASCoordinatedWith(ctx, conn, clientConn.ConnectionState(), true, strings.NewReader("y\n"), nil)
 	if err == nil || !strings.Contains(err.Error(), "recv peer sas result") {
 		t.Fatalf("expected 'recv peer sas result' error, got: %v", err)
 	}

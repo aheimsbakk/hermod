@@ -567,7 +567,7 @@ func TestRunTrust_URLNormalization(t *testing.T) {
 	t.Setenv("HOME", dir)
 	t.Setenv("APPDATA", dir)
 
-	err := runTrust("localhost:19999")
+	err := runTrust("localhost:19999", "")
 	if err == nil {
 		t.Fatal("expected error (no server at localhost:19999)")
 	}
@@ -678,7 +678,7 @@ func TestPromptSASVerification_TTYError(t *testing.T) {
 		return nil, fmt.Errorf("no tty in test")
 	}
 
-	_, err := promptSASVerification(tls.ConnectionState{})
+	_, err := promptSASVerification(tls.ConnectionState{}, nil)
 	if err == nil {
 		t.Fatal("expected error from promptSASVerification when openTTYFunc fails")
 	}

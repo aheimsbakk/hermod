@@ -87,7 +87,12 @@ func NewServer(store SignalingStore, rl *RateLimiter, ttl time.Duration, maxBlob
 		logger:             logger,
 		waiters:            make(map[uint16][]*wsConn),
 		upgrader: websocket.Upgrader{
-			CheckOrigin: func(r *http.Request) bool { return true },
+			// Reject browser-sourced cross-origin WebSocket connections (L-06).
+			// Non-browser clients (CLI) do not set an Origin header, so this
+			// allows all legitimate hermod peers while blocking CSRF-style attacks.
+			CheckOrigin: func(r *http.Request) bool {
+				return r.Header.Get("Origin") == ""
+			},
 		},
 	}
 }
@@ -257,6 +262,21 @@ func (s *Server) handleJoin(conn *websocket.Conn, remoteAddr string, channelID u
 		writeError(conn, "channel not found")
 		return
 	}
+
+	// Reject a second receiver on the same channel (L-04). Only one receiver
+	// is permitted per channel; a second joiner could race for the blob relay
+	// and displace the legitimate receiver.
+	s.mu.Lock()
+	for _, w := range s.waiters[channelID] {
+		if !w.sender {
+			s.mu.Unlock()
+			s.logger.Warn("Receiver already registered for channel — rejecting duplicate join",
+				"channel_id", channelID, "remote_addr", remoteAddr)
+			writeError(conn, "channel already has a receiver")
+			return
+		}
+	}
+	s.mu.Unlock()
 
 	host, _, _ := net.SplitHostPort(remoteAddr)
 	payload, _ := json.Marshal(map[string]string{"public_ip": host})

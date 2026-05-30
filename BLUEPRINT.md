@@ -9,10 +9,10 @@ internal/cli/cancel.go      — QUIC cancellation error code, peer-cancel detect
 internal/cli/tty_unix.go    — /dev/tty open helper (Unix)
 internal/cli/tty_windows.go — CONIN$ open helper (Windows)
 internal/cli/verbosity.go   — --verbose flag parsing, slog/stdlog wiring, log helpers
-internal/config/            — YAML config load/save, TLS helpers, cert generation (1-year self-signed, IsCA=false), cert expiry warning helper
+internal/config/            — YAML config load/save, TLS helpers, cert generation (1-year self-signed ECDSA P-256, IsCA=false), cert expiry warning helper
 internal/crypto/            — CPace PAKE (P-256), AES-256-GCM, SAS, identicon, transfer codes
-internal/server/            — MemoryStore SignalingStore, WebSocket relay, HMAC-SHA256 IP-hashing rate limiter with 10-min cleanup ticker, per-channel blob/CPace-failure limits, TTL GC, /cert endpoint serving DER certificate
-internal/network/           — UDP mux (SO_REUSEADDR/REUSEPORT), hole punching, QUIC dial/listen, signaling client
+internal/server/            — MemoryStore SignalingStore, WebSocket relay (rejects browser cross-origin connections), HMAC-SHA256 IP-hashing rate limiter with 10-min cleanup ticker, per-channel blob/CPace-failure limits, single-receiver enforcement, TTL GC, /cert endpoint serving DER certificate
+internal/network/           — UDP mux (SO_REUSEADDR/REUSEPORT), hole punching (session-unique nonce derived from CPace key), QUIC dial/listen, signaling client (WithContext goroutine lifecycle managed via done channel)
 pkg/transfer/               — payload metadata, stream classification, SHA-256 integrity
 README.md                   — user-facing documentation
 docs/protocol.md            — wire protocol specification
@@ -96,7 +96,7 @@ The channel ID (2-byte big-endian) is used as AES-GCM Additional Authenticated D
 3. CPace handshake over signaling relay (P-256, password = transfer code words)
 4. Endpoint bundles exchanged (AES-256-GCM encrypted with CPace key + channel ID as AAD)
 5. UDP hole punch to peer candidates
-6. QUIC connection (TLS 1.3, ephemeral RSA-2048 certs, fingerprint-pinned)
+6. QUIC connection (TLS 1.3, ephemeral ECDSA P-256 certs, fingerprint-pinned)
 7. Stream 0 (SAS coordination, only when verify active): 1-byte confirm/reject exchange; Stream 1 (or 0 without verify): 4-byte-prefixed JSON metadata (sha256 = ""); Stream 2 (or 1 without verify): raw payload bytes streamed while sender computes SHA-256 in parallel; Stream 3 (or 2 without verify): 4-byte-prefixed trailing hash (hex SHA-256 computed during send)
 8. Receiver computes SHA-256 in parallel while receiving payload, then verifies against trailing hash stream
 9. Receiver sends ack stream; sender waits before closing QUIC connection

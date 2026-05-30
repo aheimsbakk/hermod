@@ -4,8 +4,10 @@ package cli
 import (
 	"bufio"
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
-	"crypto/rsa"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
@@ -259,7 +261,7 @@ func runTx(input, serverURL string, numWords int, verify bool, listenUDP string,
 	// UDP hole punching
 	logInfo("Starting UDP hole punch", "candidates", len(candidates))
 	printStatus("Establishing P2P connection...")
-	punchResult, err := network.HolePunch(ctx, mux, candidates)
+	punchResult, err := network.HolePunch(ctx, mux, candidates, holePunchNonce(kClassical))
 	if err != nil {
 		return fmt.Errorf("hole punch: %w", err)
 	}
@@ -290,7 +292,7 @@ func runTx(input, serverURL string, numWords int, verify bool, listenUDP string,
 	if verify {
 		logInfo("Starting SAS out-of-band verification")
 		quicState := quicConn.ConnectionState()
-		if err := performSASCoordinated(ctx, quicConn, quicState.TLS, true); err != nil {
+		if err := performSASCoordinated(ctx, quicConn, quicState.TLS, true, channelIDAad(channelID)); err != nil {
 			return err
 		}
 		logInfo("SAS verification passed")
@@ -436,6 +438,17 @@ func channelIDAad(id uint16) []byte {
 	return aad
 }
 
+// holePunchNonce derives a 4-byte session-unique nonce from the CPace shared
+// key for use as hole-punch probe and ack discriminators (L-07).
+// Both peers derive identical bytes, making probe packets unguessable to an
+// off-path attacker.
+func holePunchNonce(kClassical []byte) [4]byte {
+	h := sha256.Sum256(append(kClassical, []byte("hermod-holepunch-v1")...))
+	var nonce [4]byte
+	copy(nonce[:], h[:4])
+	return nonce
+}
+
 // appendLenPrefix prepends a 4-byte big-endian length to data.
 func appendLenPrefix(data []byte) []byte {
 	out := make([]byte, 4+len(data))
@@ -448,9 +461,10 @@ func appendLenPrefix(data []byte) []byte {
 }
 
 // generateEphemeralCert generates a short-lived self-signed X.509 cert and key.
+// Uses ECDSA P-256 for fast key generation and smaller signatures (L-02).
 // Returns the *x509.Certificate, crypto.PrivateKey, DER bytes, and error.
 func generateEphemeralCert() (*x509.Certificate, interface{}, []byte, error) {
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -465,7 +479,7 @@ func generateEphemeralCert() (*x509.Certificate, interface{}, []byte, error) {
 		NotAfter:     time.Now().Add(24 * time.Hour),
 		KeyUsage:     x509.KeyUsageDigitalSignature,
 	}
-	certDER, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	certDER, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, key.Public(), key)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -505,20 +519,22 @@ func (q *quicSASConn) AcceptStream(ctx context.Context) (io.ReadWriteCloser, err
 // isSender=true: sender opens the SAS stream (QUIC client role).
 // isSender=false: receiver accepts the SAS stream (QUIC server role).
 //
+// sasContext is bound into TLS ExportKeyingMaterial to couple the SAS to the
+// specific session (L-01). Pass the channel ID bytes.
 // User input is read from /dev/tty so that piped stdin does not interfere.
-func performSASCoordinated(ctx context.Context, conn *quic.Conn, tlsState tls.ConnectionState, isSender bool) error {
+func performSASCoordinated(ctx context.Context, conn *quic.Conn, tlsState tls.ConnectionState, isSender bool, sasContext []byte) error {
 	tty, err := openTTYFunc()
 	if err != nil {
 		return fmt.Errorf("open tty for SAS prompt: %w", err)
 	}
 	defer tty.Close()
-	return performSASCoordinatedWith(ctx, &quicSASConn{conn}, tlsState, isSender, tty)
+	return performSASCoordinatedWith(ctx, &quicSASConn{conn}, tlsState, isSender, tty, sasContext)
 }
 
 // performSASCoordinatedWith is the injectable core used by tests.
-func performSASCoordinatedWith(ctx context.Context, conn sasStreamConn, tlsState tls.ConnectionState, isSender bool, reader io.Reader) error {
+func performSASCoordinatedWith(ctx context.Context, conn sasStreamConn, tlsState tls.ConnectionState, isSender bool, reader io.Reader, sasContext []byte) error {
 	// Show prompt and collect local answer first.
-	localOK, err := promptSASVerificationFrom(tlsState, reader)
+	localOK, err := promptSASVerificationFrom(tlsState, reader, sasContext)
 	if err != nil {
 		return err
 	}
@@ -567,19 +583,21 @@ func performSASCoordinatedWith(ctx context.Context, conn sasStreamConn, tlsState
 
 // promptSASVerification shows the SAS + identicon and returns true if the user confirms.
 // It reads user input from /dev/tty to avoid interference from piped stdin.
-func promptSASVerification(tlsState tls.ConnectionState) (bool, error) {
+func promptSASVerification(tlsState tls.ConnectionState, sasContext []byte) (bool, error) {
 	tty, err := openTTYFunc()
 	if err != nil {
 		return false, fmt.Errorf("open tty for SAS prompt: %w", err)
 	}
 	defer tty.Close()
-	return promptSASVerificationFrom(tlsState, tty)
+	return promptSASVerificationFrom(tlsState, tty, sasContext)
 }
 
 // promptSASVerificationFrom shows the SAS + identicon and reads the answer from r.
+// sasContext is bound into TLS ExportKeyingMaterial to couple the SAS to the
+// specific session (L-01). Pass the channel ID bytes; nil is accepted.
 // Separating the reader makes this testable without a real terminal.
-func promptSASVerificationFrom(tlsState tls.ConnectionState, r io.Reader) (bool, error) {
-	material, err := tlsState.ExportKeyingMaterial("hermod-sas-v1", nil, 32)
+func promptSASVerificationFrom(tlsState tls.ConnectionState, r io.Reader, sasContext []byte) (bool, error) {
+	material, err := tlsState.ExportKeyingMaterial("hermod-sas-v1", sasContext, 32)
 	if err != nil {
 		return false, fmt.Errorf("export keying material: %w", err)
 	}

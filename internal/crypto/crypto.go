@@ -166,7 +166,11 @@ func unmarshalPoint(curve elliptic.Curve, data []byte) (*big.Int, *big.Int, erro
 	return x, y, nil
 }
 
-// randScalar generates a random scalar in [1, n-1].
+// randScalar generates a uniformly random scalar in [1, n-1] using rejection
+// sampling (L-03). A 32-byte random value is accepted only if it falls in
+// [1, n-1]; otherwise a new value is drawn. This is unbiased and correctly
+// communicates the algorithm's intent, unlike the former modular-reduction
+// approach whose retry loop could never fire.
 func randScalar(n *big.Int) (*big.Int, error) {
 	for {
 		b := make([]byte, 32)
@@ -174,8 +178,6 @@ func randScalar(n *big.Int) (*big.Int, error) {
 			return nil, err
 		}
 		k := new(big.Int).SetBytes(b)
-		k.Mod(k, new(big.Int).Sub(n, big.NewInt(1)))
-		k.Add(k, big.NewInt(1))
 		if k.Sign() > 0 && k.Cmp(n) < 0 {
 			return k, nil
 		}

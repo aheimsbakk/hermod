@@ -293,7 +293,7 @@ Hash stdin with a streaming SHA-256 and write bytes directly to the QUIC stream 
 
 ---
 
-#### L-01 — SAS Keying Material Has No Session Context Binding
+#### L-01 — SAS Keying Material Has No Session Context Binding ✅ FIXED
 
 **File:** `internal/cli/tx.go:567`
 
@@ -308,7 +308,7 @@ Pass the channel ID bytes as context: `tlsState.ExportKeyingMaterial("hermod-sas
 
 ---
 
-#### L-02 — RSA-2048 for Ephemeral Certs (Prefer ECDSA P-256)
+#### L-02 — RSA-2048 for Ephemeral Certs (Prefer ECDSA P-256) ✅ FIXED
 
 **Files:** `internal/cli/tx.go:438`, `internal/config/config.go:143`
 
@@ -319,7 +319,7 @@ Replace with `ecdsa.GenerateKey(elliptic.P256(), rand.Reader)`.
 
 ---
 
-#### L-03 — `randScalar` Uses Biased Modular Reduction (Loop Never Iterates)
+#### L-03 — `randScalar` Uses Biased Modular Reduction (Loop Never Iterates) ✅ FIXED
 
 **File:** `internal/crypto/crypto.go:187-200`
 
@@ -338,7 +338,7 @@ Use proper rejection sampling: generate a random 32-byte value; if it is less th
 
 ---
 
-#### L-04 — Multiple Receivers Can Join the Same Channel
+#### L-04 — Multiple Receivers Can Join the Same Channel ✅ FIXED
 
 **File:** `internal/server/server.go:225-246`
 
@@ -349,7 +349,7 @@ Reject a `join` if a receiver is already registered for `channelID`.
 
 ---
 
-#### L-05 — Trust-On-First-Use for Signaling Server (Documented Limitation)
+#### L-05 — Trust-On-First-Use for Signaling Server ✅ FIXED
 
 **File:** `internal/cli/trust.go:34-37`, `internal/network/signaling.go:203-239`
 
@@ -367,7 +367,7 @@ Document explicitly in the README that `hermod trust` should be run over a trust
 
 ---
 
-#### L-06 — WebSocket Upgrader Accepts All Origins
+#### L-06 — WebSocket Upgrader Accepts All Origins ✅ FIXED
 
 **File:** `internal/server/server.go:85-88`
 
@@ -384,7 +384,7 @@ Return `r.Header.Get("Origin") == ""` to reject browser-sourced cross-origin con
 
 ---
 
-#### L-07 — Hole Punch Probe Values Are Fixed and Predictable
+#### L-07 — Hole Punch Probe Values Are Fixed and Predictable ✅ FIXED
 
 **File:** `internal/network/network.go:147-148`
 
@@ -400,7 +400,7 @@ Use a session-unique nonce (e.g., the first 4 bytes of the CPace public message)
 
 ---
 
-#### L-08 — `WithContext` Goroutine Can Leak with Non-Cancellable Context
+#### L-08 — `WithContext` Goroutine Can Leak with Non-Cancellable Context ✅ FIXED
 
 **File:** `internal/network/signaling.go:85-93`
 
@@ -453,14 +453,14 @@ The TLS 1.3 layer correctly uses X25519MLKEM768 (hybrid post-quantum KEM). Howev
 | M-05 | Medium   | `internal/server/server.go`          | `handleJoin` does not validate channel existence ✅ |
 | M-06 | Medium   | `internal/server/server.go`          | `/cert` endpoint is dead code ✅ |
 | M-07 | Medium   | `internal/cli/tx.go`                 | stdin stream buffers entire input in RAM ✅ |
-| L-01 | Low      | `internal/cli/tx.go`                 | SAS keying material lacks session context binding     |
-| L-02 | Low      | `internal/cli/tx.go`, `config/config.go` | RSA-2048 for ephemeral certs (prefer ECDSA P-256) |
-| L-03 | Low      | `internal/crypto/crypto.go`          | `randScalar` uses biased reduction, loop never retries|
-| L-04 | Low      | `internal/server/server.go`          | Multiple receivers can join the same channel          |
-| L-05 | Low      | `internal/cli/trust.go`              | Trust-On-First-Use bootstrap (documented limitation)  |
-| L-06 | Low      | `internal/server/server.go`          | WebSocket upgrader accepts all origins                |
-| L-07 | Low      | `internal/network/network.go`        | Hole punch probe/ack bytes are fixed and guessable    |
-| L-08 | Low      | `internal/network/signaling.go`      | `WithContext` goroutine can leak on non-cancellable ctx|
+| L-01 | Low      | `internal/cli/tx.go`                 | SAS keying material lacks session context binding ✅ |
+| L-02 | Low      | `internal/cli/tx.go`, `config/config.go` | RSA-2048 for ephemeral certs (prefer ECDSA P-256) ✅ |
+| L-03 | Low      | `internal/crypto/crypto.go`          | `randScalar` uses biased reduction, loop never retries ✅ |
+| L-04 | Low      | `internal/server/server.go`          | Multiple receivers can join the same channel ✅ |
+| L-05 | Low      | `internal/cli/trust.go`              | Trust-On-First-Use bootstrap ✅ |
+| L-06 | Low      | `internal/server/server.go`          | WebSocket upgrader accepts all origins ✅ |
+| L-07 | Low      | `internal/network/network.go`        | Hole punch probe/ack bytes are fixed and guessable ✅ |
+| L-08 | Low      | `internal/network/signaling.go`      | `WithContext` goroutine can leak on non-cancellable ctx ✅ |
 
 ---
 

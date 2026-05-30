@@ -319,6 +319,10 @@ func TestMakeCertPinner_Match(t *testing.T) {
 
 // --- HolePunch ---
 
+// testProbeNonce is a fixed nonce used in HolePunch unit tests (L-07).
+// probe = [probeMarker, 0xAA, 0xBB], ack = [probeMarker, 0xCC, 0xDD].
+var testProbeNonce = [4]byte{0xAA, 0xBB, 0xCC, 0xDD}
+
 // TestHolePunch_Timeout verifies HolePunch returns a descriptive error when the
 // context deadline is exceeded before a peer is found.
 func TestHolePunch_Timeout(t *testing.T) {
@@ -329,7 +333,7 @@ func TestHolePunch_Timeout(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 80*time.Millisecond)
 	defer cancel()
 
-	_, err := HolePunch(ctx, mux, []*net.UDPAddr{})
+	_, err := HolePunch(ctx, mux, []*net.UDPAddr{}, testProbeNonce)
 	if err == nil {
 		t.Fatal("expected timeout error from HolePunch")
 	}
@@ -339,7 +343,7 @@ func TestHolePunch_Timeout(t *testing.T) {
 }
 
 // TestHolePunch_ProbeReceived verifies HolePunch succeeds when it receives a
-// probe packet (type 0xAB) — this triggers the ack-send-then-return path.
+// probe packet — this triggers the ack-send-then-return path.
 func TestHolePunch_ProbeReceived(t *testing.T) {
 	stub := newStubPacketConn()
 	mux := NewPacketMux(stub)
@@ -351,7 +355,7 @@ func TestHolePunch_ProbeReceived(t *testing.T) {
 	go func() {
 		time.Sleep(30 * time.Millisecond)
 		stub.readCh <- udpDatagram{
-			data: []byte{probeMarker, 0xAB},
+			data: []byte{probeMarker, testProbeNonce[0], testProbeNonce[1]},
 			addr: peerAddr,
 		}
 	}()
@@ -359,7 +363,7 @@ func TestHolePunch_ProbeReceived(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	result, err := HolePunch(ctx, mux, []*net.UDPAddr{})
+	result, err := HolePunch(ctx, mux, []*net.UDPAddr{}, testProbeNonce)
 	if err != nil {
 		t.Fatalf("HolePunch: unexpected error: %v", err)
 	}
@@ -369,7 +373,7 @@ func TestHolePunch_ProbeReceived(t *testing.T) {
 }
 
 // TestHolePunch_AckReceived verifies HolePunch succeeds when it receives an ack
-// packet (type 0xCD) — covers the alternate return path.
+// packet — covers the alternate return path.
 func TestHolePunch_AckReceived(t *testing.T) {
 	stub := newStubPacketConn()
 	mux := NewPacketMux(stub)
@@ -380,7 +384,7 @@ func TestHolePunch_AckReceived(t *testing.T) {
 	go func() {
 		time.Sleep(30 * time.Millisecond)
 		stub.readCh <- udpDatagram{
-			data: []byte{probeMarker, 0xCD},
+			data: []byte{probeMarker, testProbeNonce[2], testProbeNonce[3]},
 			addr: peerAddr,
 		}
 	}()
@@ -388,7 +392,7 @@ func TestHolePunch_AckReceived(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	result, err := HolePunch(ctx, mux, []*net.UDPAddr{})
+	result, err := HolePunch(ctx, mux, []*net.UDPAddr{}, testProbeNonce)
 	if err != nil {
 		t.Fatalf("HolePunch (ack path): unexpected error: %v", err)
 	}
@@ -397,7 +401,7 @@ func TestHolePunch_AckReceived(t *testing.T) {
 	}
 }
 
-// TestHolePunch_ShortProbeIgnored verifies that a probe packet shorter than 2 bytes
+// TestHolePunch_ShortProbeIgnored verifies that a probe packet shorter than 3 bytes
 // is ignored (the `continue` branch) and HolePunch keeps waiting.
 func TestHolePunch_ShortProbeIgnored(t *testing.T) {
 	stub := newStubPacketConn()
@@ -416,7 +420,7 @@ func TestHolePunch_ShortProbeIgnored(t *testing.T) {
 		// Then: inject a valid probe so HolePunch can return.
 		time.Sleep(20 * time.Millisecond)
 		stub.readCh <- udpDatagram{
-			data: []byte{probeMarker, 0xAB},
+			data: []byte{probeMarker, testProbeNonce[0], testProbeNonce[1]},
 			addr: peerAddr,
 		}
 	}()
@@ -424,7 +428,7 @@ func TestHolePunch_ShortProbeIgnored(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	result, err := HolePunch(ctx, mux, []*net.UDPAddr{})
+	result, err := HolePunch(ctx, mux, []*net.UDPAddr{}, testProbeNonce)
 	if err != nil {
 		t.Fatalf("HolePunch (short probe ignored): %v", err)
 	}
@@ -447,7 +451,7 @@ func TestHolePunch_ProbesSentToCandidates(t *testing.T) {
 		// Wait at least 200ms so the ticker fires at least once.
 		time.Sleep(250 * time.Millisecond)
 		stub.readCh <- udpDatagram{
-			data: []byte{probeMarker, 0xAB},
+			data: []byte{probeMarker, testProbeNonce[0], testProbeNonce[1]},
 			addr: candidate,
 		}
 	}()
@@ -455,7 +459,7 @@ func TestHolePunch_ProbesSentToCandidates(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	if _, err := HolePunch(ctx, mux, []*net.UDPAddr{candidate}); err != nil {
+	if _, err := HolePunch(ctx, mux, []*net.UDPAddr{candidate}, testProbeNonce); err != nil {
 		t.Fatalf("HolePunch with candidate: %v", err)
 	}
 

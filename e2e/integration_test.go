@@ -252,7 +252,7 @@ func runSender(serverURL string, channelID uint16, password string, kind transfe
 	allCandidates = append(allCandidates, peerBundle.LocalEndpoints...)
 	candidates, _ := network.ParseCandidates(allCandidates)
 
-	punchResult, err := network.HolePunch(ctx, mux, candidates)
+	punchResult, err := network.HolePunch(ctx, mux, candidates, [4]byte{})
 	if err != nil {
 		return fmt.Errorf("hole punch: %w", err)
 	}
@@ -376,7 +376,7 @@ func runReceiver(serverURL, code string) ([]byte, error) {
 	allCandidates = append(allCandidates, senderBundle.LocalEndpoints...)
 	candidates, _ := network.ParseCandidates(allCandidates)
 
-	_, err = network.HolePunch(ctx, mux, candidates)
+	_, err = network.HolePunch(ctx, mux, candidates, [4]byte{})
 	if err != nil {
 		return nil, fmt.Errorf("hole punch: %w", err)
 	}

@@ -242,6 +242,42 @@ func TestDialSignalingAllocateJoinErrorBranch(t *testing.T) {
 	}
 }
 
+func TestJoinDuplicateReceiverRejected(t *testing.T) {
+	addr := startSignalingServer(t)
+	serverURL := "wss://" + addr
+
+	// Sender allocates channel
+	sender, err := network.DialSignaling(serverURL, "")
+	if err != nil {
+		t.Fatalf("dial sender: %v", err)
+	}
+	defer sender.Close()
+	if _, err := sender.Allocate(7777); err != nil {
+		t.Fatalf("allocate: %v", err)
+	}
+
+	// First receiver joins — should succeed
+	r1, err := network.DialSignaling(serverURL, "")
+	if err != nil {
+		t.Fatalf("dial r1: %v", err)
+	}
+	defer r1.Close()
+	if _, err := r1.Join(7777); err != nil {
+		t.Fatalf("first receiver join: %v", err)
+	}
+
+	// Second receiver joins same channel — must be rejected (L-04)
+	r2, err := network.DialSignaling(serverURL, "")
+	if err != nil {
+		t.Fatalf("dial r2: %v", err)
+	}
+	defer r2.Close()
+	_, err = r2.Join(7777)
+	if err == nil {
+		t.Fatal("expected error when second receiver joins the same channel (L-04)")
+	}
+}
+
 func TestSignalingWithContextCancellation(t *testing.T) {
 	addr := startSignalingServer(t)
 	serverURL := "wss://" + addr

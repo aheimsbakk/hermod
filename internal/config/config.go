@@ -2,8 +2,9 @@
 package config
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
-	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
@@ -138,9 +139,9 @@ func BuildTLSConfig(cfg *Config) *tls.Config {
 }
 
 // GenerateServerCert generates a self-signed X.509 cert+key and stores PEM
-// strings in cfg.
+// strings in cfg. Uses ECDSA P-256 for fast generation and smaller signatures (L-02).
 func GenerateServerCert(cfg *Config) error {
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return fmt.Errorf("generate key: %w", err)
 	}
@@ -153,10 +154,10 @@ func GenerateServerCert(cfg *Config) error {
 		Subject:      pkix.Name{CommonName: "hermod-server"},
 		NotBefore:    time.Now().Add(-time.Minute),
 		NotAfter:     time.Now().Add(365 * 24 * time.Hour), // 1 year
-		KeyUsage:     x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,
+		KeyUsage:     x509.KeyUsageDigitalSignature,
 		IsCA:         false,
 	}
-	certDER, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	certDER, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, key.Public(), key)
 	if err != nil {
 		return fmt.Errorf("create cert: %w", err)
 	}
