@@ -20,7 +20,7 @@ However, the audit found **one critical path-traversal vulnerability** that allo
 
 ---
 
-#### C-01 — Path Traversal via Received Filename
+#### C-01 — Path Traversal via Received Filename ✅ FIXED
 
 **Files:** `pkg/transfer/transfer.go:82`, `internal/cli/rx.go:372-385`
 
@@ -61,7 +61,7 @@ if name == "" || name == "." || name == ".." {
 
 ---
 
-#### H-01 — CPace `role` Parameter Is Silently Dropped
+#### H-01 — CPace `role` Parameter Is Silently Dropped ✅ FIXED
 
 **File:** `internal/crypto/crypto.go:38-61`
 
@@ -94,7 +94,7 @@ func cpaceGenerator(password string, channelID uint16, role string) (*big.Int, *
 
 ---
 
-#### H-02 — Hash-to-Curve Is Not Constant-Time (Timing Side Channel)
+#### H-02 — Hash-to-Curve Is Not Constant-Time (Timing Side Channel) ✅ FIXED
 
 **File:** `internal/crypto/crypto.go:91-123`
 
@@ -120,7 +120,7 @@ Use the IETF `hash_to_field` method from RFC 9380 with constant-time field arith
 
 ---
 
-#### H-03 — Transfer Code Wordlist Has Insufficient Entropy and Defects
+#### H-03 — Transfer Code Wordlist Has Insufficient Entropy and Defects ✅ FIXED
 
 **File:** `internal/crypto/crypto.go:414-465`
 
@@ -145,7 +145,7 @@ Replace the custom list with the full EFF short wordlist (1,296 entries). Use `c
 
 ---
 
-#### H-04 — CPace Shared Secret Does Not Bind Both Public Messages
+#### H-04 — CPace Shared Secret Does Not Bind Both Public Messages ✅ FIXED
 
 **File:** `internal/crypto/crypto.go:76-80`
 
@@ -172,7 +172,7 @@ Derive K as `SHA256(x_coordinate || sender_pub || receiver_pub)`. This requires 
 
 ---
 
-#### M-01 — Server Certificate Is Marked CA with 10-Year Validity
+#### M-01 — Server Certificate Is Marked CA with 10-Year Validity ✅ FIXED
 
 **File:** `internal/config/config.go:151-158`
 
@@ -190,7 +190,7 @@ Set `IsCA: false`. Set validity to 1–2 years. Add a flag to regenerate the cer
 
 ---
 
-#### M-02 — AES-GCM Endpoint Bundle Has No Additional Authenticated Data
+#### M-02 — AES-GCM Endpoint Bundle Has No Additional Authenticated Data ✅ FIXED
 
 **File:** `internal/crypto/crypto.go:207-224`, `internal/cli/tx.go:214`, `internal/cli/rx.go:211`
 
@@ -205,7 +205,7 @@ Pass the channel ID (as a 2-byte big-endian value) as the AAD to `gcm.Seal` and 
 
 ---
 
-#### M-03 — Rate Limiter Bucket Map Is Unbounded
+#### M-03 — Rate Limiter Bucket Map Is Unbounded ✅ FIXED
 
 **File:** `internal/server/ratelimit.go:18-98`
 
@@ -232,7 +232,7 @@ Increase channel ID to `uint32` (4 billion channels). Add a per-IP channel alloc
 
 ---
 
-#### M-05 — `handleJoin` Does Not Validate Channel Existence
+#### M-05 — `handleJoin` Does Not Validate Channel Existence ✅ FIXED
 
 **File:** `internal/server/server.go:225-246`
 
@@ -249,7 +249,7 @@ Call `s.store.FetchBlob` or a dedicated `ChannelExists` method before returning 
 
 ---
 
-#### M-06 — `/cert` Endpoint Is Dead Code and Always Returns an Error
+#### M-06 — `/cert` Endpoint Is Dead Code and Always Returns an Error ✅ FIXED
 
 **File:** `internal/server/server.go:145-155`
 
@@ -272,7 +272,7 @@ Implement the endpoint correctly by reading `r.TLS.PeerCertificates[0]` (after r
 
 ---
 
-#### M-07 — stdin Payload Buffers Entire Input in Memory
+#### M-07 — stdin Payload Buffers Entire Input in Memory ✅ FIXED
 
 **File:** `internal/cli/tx.go:409-419`
 
@@ -441,18 +441,18 @@ The TLS 1.3 layer correctly uses X25519MLKEM768 (hybrid post-quantum KEM). Howev
 
 | ID   | Severity | File(s)                              | Title                                                 |
 |------|----------|--------------------------------------|-------------------------------------------------------|
-| C-01 | Critical | `pkg/transfer/transfer.go`, `cli/rx.go` | Path traversal via received filename                |
-| H-01 | High     | `internal/crypto/crypto.go`          | CPace `role` parameter silently dropped               |
-| H-02 | High     | `internal/crypto/crypto.go`          | Hash-to-curve not constant-time (timing side channel) |
-| H-03 | High     | `internal/crypto/crypto.go`          | Transfer code wordlist has low entropy and defects    |
-| H-04 | High     | `internal/crypto/crypto.go`          | CPace shared secret does not bind both public messages|
-| M-01 | Medium   | `internal/config/config.go`          | Server cert: IsCA=true, 10-year validity              |
-| M-02 | Medium   | `internal/crypto/crypto.go`, `cli/*` | AES-GCM endpoint bundle has no AAD                   |
-| M-03 | Medium   | `internal/server/ratelimit.go`       | Rate limiter bucket map unbounded                     |
-| M-04 | Medium   | `internal/server/store.go`           | Channel ID space exhaustion (uint16 = 65536 max)      |
-| M-05 | Medium   | `internal/server/server.go`          | `handleJoin` does not validate channel existence      |
-| M-06 | Medium   | `internal/server/server.go`          | `/cert` endpoint is dead code                         |
-| M-07 | Medium   | `internal/cli/tx.go`                 | stdin stream buffers entire input in RAM              |
+| C-01 | Critical | `pkg/transfer/transfer.go`, `cli/rx.go` | Path traversal via received filename ✅ |
+| H-01 | High     | `internal/crypto/crypto.go`          | CPace `role` parameter silently dropped ✅ |
+| H-02 | High     | `internal/crypto/crypto.go`          | Hash-to-curve not constant-time (timing side channel) ✅ |
+| H-03 | High     | `internal/crypto/crypto.go`          | Transfer code wordlist has low entropy and defects ✅ |
+| H-04 | High     | `internal/crypto/crypto.go`          | CPace shared secret does not bind both public messages ✅ |
+| M-01 | Medium   | `internal/config/config.go`          | Server cert: IsCA=true, 10-year validity ✅ |
+| M-02 | Medium   | `internal/crypto/crypto.go`, `cli/*` | AES-GCM endpoint bundle has no AAD ✅ |
+| M-03 | Medium   | `internal/server/ratelimit.go`       | Rate limiter bucket map unbounded ✅ |
+| M-04 | Medium   | `internal/server/store.go`           | Channel ID space exhaustion (uint16 = 65536 max) |
+| M-05 | Medium   | `internal/server/server.go`          | `handleJoin` does not validate channel existence ✅ |
+| M-06 | Medium   | `internal/server/server.go`          | `/cert` endpoint is dead code ✅ |
+| M-07 | Medium   | `internal/cli/tx.go`                 | stdin stream buffers entire input in RAM ✅ |
 | L-01 | Low      | `internal/cli/tx.go`                 | SAS keying material lacks session context binding     |
 | L-02 | Low      | `internal/cli/tx.go`, `config/config.go` | RSA-2048 for ephemeral certs (prefer ECDSA P-256) |
 | L-03 | Low      | `internal/crypto/crypto.go`          | `randScalar` uses biased reduction, loop never retries|
@@ -466,13 +466,15 @@ The TLS 1.3 layer correctly uses X25519MLKEM768 (hybrid post-quantum KEM). Howev
 
 ## Recommended Priority Order for Fixes
 
-1. **C-01** — Fix path traversal immediately. One line: `name = filepath.Base(meta.Name)` in `saveToFile`.
-2. **H-03** — Replace the custom wordlist with the full 1,296-word EFF short list and use rejection sampling for index selection.
-3. **H-01** — Pass `role` into `cpaceGenerator` to restore intended domain separation.
-4. **H-04** — Bind both public messages into the ISK derivation.
-5. **H-02** — Replace try-and-increment with a constant-time hash-to-curve (RFC 9380 SSWU).
-6. **M-01** — Remove `IsCA: true`; reduce cert validity to 1 year.
-7. **M-02** — Add channel ID as AAD to `crypto.Seal` / `crypto.Open` for endpoint bundles.
-8. **M-03** — Add `Cleanup` ticker in `runServe`.
-9. **M-04** — Increase channel ID to `uint32`.
-10. **M-05** — Validate channel existence in `handleJoin`.
+1. **C-01** ✅ — Fix path traversal immediately. One line: `name = filepath.Base(meta.Name)` in `saveToFile`.
+2. **H-03** ✅ — Replace the custom wordlist with the full 1,296-word EFF short list and use rejection sampling for index selection.
+3. **H-01** ✅ — Pass `role` into `cpaceGenerator` to restore intended domain separation.
+4. **H-04** ✅ — Bind both public messages into the ISK derivation.
+5. **H-02** ✅ — Replace try-and-increment with a constant-time hash-to-curve (RFC 9380 SSWU).
+6. **M-01** ✅ — Remove `IsCA: true`; reduce cert validity to 1 year.
+7. **M-02** ✅ — Add channel ID as AAD to `crypto.Seal` / `crypto.Open` for endpoint bundles.
+8. **M-03** ✅ — Add `Cleanup` ticker in `runServe`.
+9. **M-04** — Increase channel ID to `uint32`. *(deferred)*
+10. **M-05** ✅ — Validate channel existence in `handleJoin`.
+11. **M-06** ✅ — Fix `/cert` endpoint to serve actual DER certificate.
+12. **M-07** ✅ — Compute hash in parallel during streaming; send as trailing metadata stream.
