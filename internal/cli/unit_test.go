@@ -391,8 +391,11 @@ func TestReceivePayload_TTYText(t *testing.T) {
 		t.Fatalf("receivePayload TTY text: %v", recvErr)
 	}
 	got, _ := io.ReadAll(r)
-	if string(got) != string(data) {
-		t.Fatalf("stdout content mismatch: got %q, want %q", got, data)
+	// receivePayload appends a newline to text output so the shell prompt
+	// starts on a new line. The test expectation includes that trailing newline.
+	want := append(data, '\n')
+	if string(got) != string(want) {
+		t.Fatalf("stdout content mismatch: got %q, want %q", got, want)
 	}
 }
 
@@ -420,8 +423,11 @@ func TestReceivePayload_TTYTextNoSize(t *testing.T) {
 		t.Fatalf("receivePayload TTY text no-size: %v", recvErr)
 	}
 	got, _ := io.ReadAll(r)
-	if string(got) != string(data) {
-		t.Fatalf("stdout content mismatch: got %q, want %q", got, data)
+	// receivePayload appends a newline to text output so the shell prompt
+	// starts on a new line. The test expectation includes that trailing newline.
+	want := append(data, '\n')
+	if string(got) != string(want) {
+		t.Fatalf("stdout content mismatch: got %q, want %q", got, want)
 	}
 }
 

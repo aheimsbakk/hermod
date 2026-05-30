@@ -330,6 +330,7 @@ func runRx(code, destination, serverURL string, verify bool, listenUDP string, s
 			if senderHash != computedHash {
 				logError("Integrity check failed — sender hash does not match received data",
 					"sender_sha256", senderHash, "computed_sha256", computedHash)
+				fmt.Fprintf(os.Stderr, "Verification failed: received data does not match sender hash.\n")
 				return fmt.Errorf("integrity check failed: hash mismatch (sender=%s receiver=%s)",
 					senderHash, computedHash)
 			}
@@ -348,6 +349,7 @@ func runRx(code, destination, serverURL string, verify bool, listenUDP string, s
 	}
 
 	logInfo("Transfer complete", "kind", meta.Kind, "size_bytes", meta.Size)
+	printStatus("Receive and verification complete.")
 	return nil
 }
 
@@ -383,7 +385,9 @@ func receivePayload(ctx context.Context, meta *transfer.Metadata, r io.Reader, d
 			if _, err := io.Copy(dest, io.TeeReader(r, h)); err != nil {
 				return "", err
 			}
-			fmt.Fprintln(os.Stderr)
+			// Ensure text output ends with a newline so the shell prompt starts
+			// on a new line. Do not add an extra blank line.
+			fmt.Fprint(os.Stdout, "\n")
 			logDebug("text payload written to stdout", "size_bytes", meta.Size)
 			return fmt.Sprintf("%x", h.Sum(nil)), nil
 
@@ -475,7 +479,7 @@ func saveToFile(ctx context.Context, r io.Reader, meta *transfer.Metadata, desti
 	}
 
 	logInfo("File saved", "path", destPath, "size_bytes", meta.Size)
-	printStatus("\nSaved to %s", destPath)
+	printStatus("Saved to %s", destPath)
 	return computedHash, nil
 }
 

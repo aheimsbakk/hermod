@@ -118,7 +118,11 @@ func runServe(listenAddr string, ttl time.Duration, rateLimit, rateBurst float64
 	logInfo("Server starting", "addr", listenAddr, "channel_ttl", ttl,
 		"rate_limit", rateLimit, "rate_burst", rateBurst,
 		"max_blobs_per_channel", maxBlobsPerChannel, "max_cpace_failures", maxCPaceFailures)
+
+	fingerprint := config.CertFingerprint(certDER)
 	printStatus("hermod serve listening on %s", listenAddr)
+	printStatus("Server fingerprint: %s", fingerprint)
+
 	err = srv.ListenAndServe(ctx, listenAddr, tlsCfg)
 	if err != nil {
 		logError("Server stopped with error", "err", err)

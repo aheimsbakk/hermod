@@ -8,12 +8,18 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// Version is the application version string. It is set at build time via
+// -ldflags "-X github.com/hermod/hermod/internal/cli.Version=x.y.z".
+// Falls back to "dev" when not injected.
+var Version = "dev"
+
 func newRootCmd() *cobra.Command {
 	var verboseStr string
 
 	root := &cobra.Command{
-		Use:   "hermod",
-		Short: "Hermod — secure peer-to-peer file and text transfer",
+		Use:     "hermod",
+		Short:   "Hermod — secure peer-to-peer file and text transfer",
+		Version: Version,
 		Long: `Hermod transfers files and text directly between peers using QUIC/TLS 1.3.
 All data is end-to-end encrypted and never passes through the signaling server.`,
 		SilenceUsage:  true,
@@ -32,6 +38,9 @@ All data is end-to-end encrypted and never passes through the signaling server.`
 		&verboseStr, "verbose", "none",
 		`Log verbosity: none, error, warning, info, debug`,
 	)
+
+	// Cobra auto-generates --version from cmd.Version. Add -V as short alias.
+	root.Flags().BoolP("version", "V", false, "Print version and exit")
 
 	root.AddCommand(newServeCmd())
 	root.AddCommand(newTrustCmd())
