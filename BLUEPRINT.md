@@ -19,7 +19,7 @@ docs/protocol.md            — wire protocol specification
 docs/api.md                 — internal package API reference
 docs/worklogs/              — session worklogs
 scripts/                    — bump-version.sh, validate-worklog.sh
-VERSION                     — current version (0.10.0)
+VERSION                     — current version (0.10.1)
 ```
 
 ## Logging

@@ -34,7 +34,7 @@ attacks when the fingerprint is already known.`,
 	}
 
 	cmd.Flags().StringVar(&knownFingerprint, "fingerprint", "",
-		"Expected SHA-256 fingerprint (hex) — if set, the fetched cert is verified against this value before pinning (L-05)")
+		"Expected SHA-256 fingerprint (hex) — if set, the fetched cert is verified against this value before pinning")
 
 	return cmd
 }
