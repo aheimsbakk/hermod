@@ -18,7 +18,7 @@ README.md                   — user-facing documentation
 docs/protocol.md            — wire protocol specification
 docs/api.md                 — internal package API reference
 docs/worklogs/              — session worklogs
-scripts/                    — bump-version.sh, validate-worklog.sh
+scripts/                    — bump-version.sh, check-coverage.sh, validate-worklog.sh
 VERSION                     — current version (0.10.1)
 ```
 

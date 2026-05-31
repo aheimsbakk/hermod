@@ -53,7 +53,10 @@ echo "Coverage threshold: ${THRESHOLD}%"
 echo ""
 
 check_package "cli" "./internal/cli/..." || FAILED=1
+check_package "network" "./internal/config/..." || FAILED=1
+check_package "network" "./internal/crypto/..." || FAILED=1
 check_package "network" "./internal/network/..." || FAILED=1
+check_package "network" "./internal/server/..." || FAILED=1
 
 echo ""
 if [[ "$FAILED" -ne 0 ]]; then
