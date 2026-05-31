@@ -16,7 +16,6 @@ import (
 	"syscall"
 
 	"github.com/mattn/go-isatty"
-	"github.com/schollz/progressbar/v3"
 	"github.com/spf13/cobra"
 
 	"github.com/hermod/hermod/internal/config"
@@ -304,11 +303,15 @@ func runRx(code, destination, serverURL string, verify bool, listenUDP string, s
 	computedHash, err := receivePayload(ctx, meta, payloadStream, destination, isatty.IsTerminal(os.Stdout.Fd()))
 	if err != nil {
 		if peerErr := cancelledByPeer(err); peerErr != nil {
-			fmt.Fprintf(os.Stderr, "\nTransfer cancelled by sender.\n")
+			if !quietMode {
+				fmt.Fprintf(os.Stderr, "\nTransfer cancelled by sender.\n")
+			}
 			return peerErr
 		}
 		if ctx.Err() != nil {
-			fmt.Fprintf(os.Stderr, "\nTransfer cancelled by receiver.\n")
+			if !quietMode {
+				fmt.Fprintf(os.Stderr, "\nTransfer cancelled by receiver.\n")
+			}
 			return fmt.Errorf("transfer cancelled")
 		}
 		return err
@@ -374,15 +377,11 @@ func receivePayload(ctx context.Context, meta *transfer.Metadata, r io.Reader, d
 		// Interactive terminal
 		switch meta.Kind {
 		case transfer.KindText, transfer.KindStream:
-			// Print to stdout; show progress bar on stderr when size is known.
+			// Print to stdout; no progress bar — bar escape codes on stderr
+			// would corrupt text output on stdout.
 			// Compute hash in parallel using TeeReader.
 			h := sha256.New()
-			var dest io.Writer = os.Stdout
-			if meta.Size > 0 {
-				bar := progressbar.DefaultBytes(meta.Size, "receiving")
-				dest = io.MultiWriter(os.Stdout, bar)
-			}
-			if _, err := io.Copy(dest, io.TeeReader(r, h)); err != nil {
+			if _, err := io.Copy(os.Stdout, io.TeeReader(r, h)); err != nil {
 				return "", err
 			}
 			// Ensure text output ends with a newline so the shell prompt starts
@@ -442,8 +441,8 @@ func saveToFile(ctx context.Context, r io.Reader, meta *transfer.Metadata, desti
 
 	isTTY := isatty.IsTerminal(os.Stderr.Fd())
 	var w io.Writer = f
-	if isTTY && meta.Size > 0 {
-		bar := progressbar.DefaultBytes(meta.Size, "receiving")
+	if isTTY && !quietMode && meta.Size > 0 {
+		bar := newHashBar(meta.Size, "receiving")
 		w = io.MultiWriter(f, bar)
 	}
 

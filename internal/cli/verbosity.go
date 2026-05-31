@@ -23,6 +23,11 @@ const (
 // currentLevel holds the active level for the current invocation.
 var currentLevel VerboseLevel = VerboseNone
 
+// quietMode suppresses all user-facing status output when true.
+// Errors are always shown. -v and -q are orthogonal: -q silences printStatus
+// calls while -v still enables the slog-based structured log output.
+var quietMode bool
+
 // parseVerboseLevel converts a string flag value to a VerboseLevel.
 // Valid values: none, error, warning, info, debug.
 func parseVerboseLevel(s string) (VerboseLevel, bool) {

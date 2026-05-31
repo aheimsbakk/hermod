@@ -15,6 +15,7 @@ var Version = appVersion
 
 func newRootCmd() *cobra.Command {
 	var verboseStr string
+	var quiet bool
 
 	root := &cobra.Command{
 		Use:     "hermod",
@@ -30,6 +31,7 @@ All data is end-to-end encrypted and never passes through the signaling server.`
 				return fmt.Errorf("invalid --verbose value %q: must be one of none, error, warning, info, debug", verboseStr)
 			}
 			applyVerbosity(level)
+			quietMode = quiet
 			return nil
 		},
 	}
@@ -37,6 +39,10 @@ All data is end-to-end encrypted and never passes through the signaling server.`
 	root.PersistentFlags().StringVar(
 		&verboseStr, "verbose", "none",
 		`Log verbosity: none, error, warning, info, debug`,
+	)
+	root.PersistentFlags().BoolVarP(
+		&quiet, "quiet", "q", false,
+		`Suppress status output. Errors are always shown. Compatible with --verbose.`,
 	)
 
 	// Cobra auto-generates --version from cmd.Version. Add -V as short alias.
@@ -63,7 +69,10 @@ func ExecuteArgs(args []string) error {
 }
 
 // printStatus writes a user-facing status line to stderr.
-// Always shown regardless of --verbose level.
+// Suppressed when --quiet is active.
 func printStatus(format string, a ...any) {
+	if quietMode {
+		return
+	}
 	fmt.Fprintf(os.Stderr, format+"\n", a...)
 }
