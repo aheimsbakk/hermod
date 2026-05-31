@@ -391,8 +391,11 @@ func TestReceivePayload_TTYText(t *testing.T) {
 		t.Fatalf("receivePayload TTY text: %v", recvErr)
 	}
 	got, _ := io.ReadAll(r)
-	if string(got) != string(data) {
-		t.Fatalf("stdout content mismatch: got %q, want %q", got, data)
+	// receivePayload appends a newline to text output so the shell prompt
+	// starts on a new line. The test expectation includes that trailing newline.
+	want := append(data, '\n')
+	if string(got) != string(want) {
+		t.Fatalf("stdout content mismatch: got %q, want %q", got, want)
 	}
 }
 
@@ -420,8 +423,11 @@ func TestReceivePayload_TTYTextNoSize(t *testing.T) {
 		t.Fatalf("receivePayload TTY text no-size: %v", recvErr)
 	}
 	got, _ := io.ReadAll(r)
-	if string(got) != string(data) {
-		t.Fatalf("stdout content mismatch: got %q, want %q", got, data)
+	// receivePayload appends a newline to text output so the shell prompt
+	// starts on a new line. The test expectation includes that trailing newline.
+	want := append(data, '\n')
+	if string(got) != string(want) {
+		t.Fatalf("stdout content mismatch: got %q, want %q", got, want)
 	}
 }
 
@@ -817,7 +823,171 @@ func TestRunRx_UntrustedServerAborts(t *testing.T) {
 	}
 }
 
-// --- runServe existing certificate ---
+// --- quiet mode ---
+
+// testCapturingStderr redirects os.Stderr to a pipe for the duration of fn,
+// then returns everything written to it.
+func testCapturingStderr(t *testing.T, fn func()) string {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	old := os.Stderr
+	os.Stderr = w
+	defer func() { os.Stderr = old }()
+
+	fn()
+
+	w.Close()
+	got, _ := io.ReadAll(r)
+	return string(got)
+}
+
+// TestPrintStatus_Normal verifies printStatus writes to stderr when quietMode is off.
+func TestPrintStatus_Normal(t *testing.T) {
+	quietMode = false
+	defer func() { quietMode = false }()
+
+	out := testCapturingStderr(t, func() {
+		printStatus("hello %s", "world")
+	})
+	if !strings.Contains(out, "hello world") {
+		t.Errorf("expected 'hello world' in stderr, got: %q", out)
+	}
+}
+
+// TestPrintStatus_Quiet verifies printStatus is silent when quietMode is on.
+func TestPrintStatus_Quiet(t *testing.T) {
+	quietMode = true
+	defer func() { quietMode = false }()
+
+	out := testCapturingStderr(t, func() {
+		printStatus("should not appear")
+	})
+	if out != "" {
+		t.Errorf("expected no output in quiet mode, got: %q", out)
+	}
+}
+
+// TestExecuteArgs_QuietFlag verifies -q is accepted and sets quietMode.
+func TestExecuteArgs_QuietFlag(t *testing.T) {
+	defer func() { quietMode = false }()
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	t.Setenv("APPDATA", dir)
+	t.Setenv("HERMOD_SERVER", "")
+
+	// runTx will fail fast (no trusted server) but PersistentPreRunE still runs.
+	_ = ExecuteArgs([]string{"hermod", "-q", "tx", "hello"})
+	if !quietMode {
+		t.Fatal("expected quietMode=true after -q flag")
+	}
+}
+
+// TestExecuteArgs_QuietLong verifies --quiet is accepted and sets quietMode.
+func TestExecuteArgs_QuietLong(t *testing.T) {
+	defer func() { quietMode = false }()
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	t.Setenv("APPDATA", dir)
+	t.Setenv("HERMOD_SERVER", "")
+
+	_ = ExecuteArgs([]string{"hermod", "--quiet", "tx", "hello"})
+	if !quietMode {
+		t.Fatal("expected quietMode=true after --quiet flag")
+	}
+}
+
+// TestExecuteArgs_QuietAndVerbose verifies -q and --verbose can be combined
+// without error: quiet suppresses printStatus, verbose controls log output.
+func TestExecuteArgs_QuietAndVerbose(t *testing.T) {
+	defer func() { quietMode = false; applyVerbosity(VerboseNone) }()
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	t.Setenv("APPDATA", dir)
+	t.Setenv("HERMOD_SERVER", "")
+
+	err := ExecuteArgs([]string{"hermod", "-q", "--verbose", "info", "tx", "hello"})
+	// Error is expected (untrusted server) but it must not be a flag-parse error.
+	if err != nil && strings.Contains(err.Error(), "invalid") {
+		t.Errorf("unexpected flag error: %v", err)
+	}
+	if !quietMode {
+		t.Fatal("expected quietMode=true when -q and --verbose are combined")
+	}
+	if currentLevel != VerboseInfo {
+		t.Errorf("expected VerboseInfo, got %v", currentLevel)
+	}
+}
+
+// TestQuietMode_SaveToFile verifies file transfer still writes the file and
+// produces no extra output on stderr when quietMode is on (regression guard
+// for the `isTTY && !quietMode` progress-bar gate).
+func TestQuietMode_SaveToFile(t *testing.T) {
+	quietMode = true
+	defer func() { quietMode = false }()
+
+	data := []byte("quiet file content")
+	meta := &transfer.Metadata{
+		Kind:   transfer.KindFile,
+		Name:   "quiet.txt",
+		Size:   int64(len(data)),
+		SHA256: transfer.HashBytes(data),
+	}
+	destDir := t.TempDir()
+
+	out := testCapturingStderr(t, func() {
+		if _, err := saveToFile(context.Background(), bytes.NewReader(data), meta, destDir); err != nil {
+			t.Errorf("saveToFile: %v", err)
+		}
+	})
+
+	// File must be written correctly.
+	got, err := os.ReadFile(filepath.Join(destDir, "quiet.txt"))
+	if err != nil {
+		t.Fatalf("read output: %v", err)
+	}
+	if string(got) != string(data) {
+		t.Fatal("file content mismatch in quiet mode")
+	}
+	// No progress bar noise on stderr.
+	if out != "" {
+		t.Errorf("expected no stderr output in quiet mode, got: %q", out)
+	}
+}
+
+// TestQuietMode_ReceivePayload_Text verifies text payload still reaches stdout
+// in quiet mode — content is never suppressed, only status output is.
+func TestQuietMode_ReceivePayload_Text(t *testing.T) {
+	quietMode = true
+	defer func() { quietMode = false }()
+
+	data := []byte("quiet text payload")
+	meta := &transfer.Metadata{Kind: transfer.KindText, Size: int64(len(data))}
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	oldStdout := os.Stdout
+	os.Stdout = w
+
+	_, recvErr := receivePayload(context.Background(), meta, bytes.NewReader(data), "", false)
+
+	w.Close()
+	os.Stdout = oldStdout
+
+	if recvErr != nil {
+		t.Fatalf("receivePayload: %v", recvErr)
+	}
+	got, _ := io.ReadAll(r)
+	// Content must reach stdout unchanged. The piped (non-TTY) path does not
+	// append a trailing newline — that is only added in the interactive TTY path.
+	if string(got) != string(data) {
+		t.Fatalf("stdout mismatch: got %q, want %q", got, data)
+	}
+}
 
 // TestRunServe_ExistingCert verifies the else-branch of the cert-generation block
 // in runServe: when a certificate already exists the function reuses it.

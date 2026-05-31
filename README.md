@@ -15,6 +15,8 @@ Hermod transfers files and text directly between peers over an encrypted QUIC co
 **Build:**
 ```bash
 go build -o hermod ./cmd/hermod/
+# With version embedded:
+go build -ldflags "-X github.com/hermod/hermod/internal/cli.Version=$(cat VERSION)" -o hermod ./cmd/hermod/
 ```
 
 **Start a signaling server** (one machine, reachable by both peers):
@@ -199,6 +201,9 @@ go test ./...
 # Run with coverage
 go test -coverprofile=cover.out ./...
 go tool cover -html=cover.out
+
+# Bump the version (patch, minor, or major)
+scripts/bump-version.sh patch
 ```
 
 All packages target ≥ 80% test coverage. See [docs/api.md](docs/api.md) for the internal package API reference.

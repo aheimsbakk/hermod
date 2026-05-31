@@ -16,7 +16,6 @@ import (
 	"syscall"
 
 	"github.com/mattn/go-isatty"
-	"github.com/schollz/progressbar/v3"
 	"github.com/spf13/cobra"
 
 	"github.com/hermod/hermod/internal/config"
@@ -304,11 +303,15 @@ func runRx(code, destination, serverURL string, verify bool, listenUDP string, s
 	computedHash, err := receivePayload(ctx, meta, payloadStream, destination, isatty.IsTerminal(os.Stdout.Fd()))
 	if err != nil {
 		if peerErr := cancelledByPeer(err); peerErr != nil {
-			fmt.Fprintf(os.Stderr, "\nTransfer cancelled by sender.\n")
+			if !quietMode {
+				fmt.Fprintf(os.Stderr, "\nTransfer cancelled by sender.\n")
+			}
 			return peerErr
 		}
 		if ctx.Err() != nil {
-			fmt.Fprintf(os.Stderr, "\nTransfer cancelled by receiver.\n")
+			if !quietMode {
+				fmt.Fprintf(os.Stderr, "\nTransfer cancelled by receiver.\n")
+			}
 			return fmt.Errorf("transfer cancelled")
 		}
 		return err
@@ -330,6 +333,7 @@ func runRx(code, destination, serverURL string, verify bool, listenUDP string, s
 			if senderHash != computedHash {
 				logError("Integrity check failed — sender hash does not match received data",
 					"sender_sha256", senderHash, "computed_sha256", computedHash)
+				fmt.Fprintf(os.Stderr, "Verification failed: received data does not match sender hash.\n")
 				return fmt.Errorf("integrity check failed: hash mismatch (sender=%s receiver=%s)",
 					senderHash, computedHash)
 			}
@@ -348,6 +352,7 @@ func runRx(code, destination, serverURL string, verify bool, listenUDP string, s
 	}
 
 	logInfo("Transfer complete", "kind", meta.Kind, "size_bytes", meta.Size)
+	printStatus("Receive and verification complete.")
 	return nil
 }
 
@@ -372,18 +377,16 @@ func receivePayload(ctx context.Context, meta *transfer.Metadata, r io.Reader, d
 		// Interactive terminal
 		switch meta.Kind {
 		case transfer.KindText, transfer.KindStream:
-			// Print to stdout; show progress bar on stderr when size is known.
+			// Print to stdout; no progress bar — bar escape codes on stderr
+			// would corrupt text output on stdout.
 			// Compute hash in parallel using TeeReader.
 			h := sha256.New()
-			var dest io.Writer = os.Stdout
-			if meta.Size > 0 {
-				bar := progressbar.DefaultBytes(meta.Size, "receiving")
-				dest = io.MultiWriter(os.Stdout, bar)
-			}
-			if _, err := io.Copy(dest, io.TeeReader(r, h)); err != nil {
+			if _, err := io.Copy(os.Stdout, io.TeeReader(r, h)); err != nil {
 				return "", err
 			}
-			fmt.Fprintln(os.Stderr)
+			// Ensure text output ends with a newline so the shell prompt starts
+			// on a new line. Do not add an extra blank line.
+			fmt.Fprint(os.Stdout, "\n")
 			logDebug("text payload written to stdout", "size_bytes", meta.Size)
 			return fmt.Sprintf("%x", h.Sum(nil)), nil
 
@@ -438,8 +441,8 @@ func saveToFile(ctx context.Context, r io.Reader, meta *transfer.Metadata, desti
 
 	isTTY := isatty.IsTerminal(os.Stderr.Fd())
 	var w io.Writer = f
-	if isTTY && meta.Size > 0 {
-		bar := progressbar.DefaultBytes(meta.Size, "receiving")
+	if isTTY && !quietMode && meta.Size > 0 {
+		bar := newHashBar(meta.Size, "receiving")
 		w = io.MultiWriter(f, bar)
 	}
 
@@ -475,7 +478,7 @@ func saveToFile(ctx context.Context, r io.Reader, meta *transfer.Metadata, desti
 	}
 
 	logInfo("File saved", "path", destPath, "size_bytes", meta.Size)
-	printStatus("\nSaved to %s", destPath)
+	printStatus("Saved to %s", destPath)
 	return computedHash, nil
 }
 

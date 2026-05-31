@@ -34,6 +34,30 @@ import (
 	"github.com/hermod/hermod/pkg/transfer"
 )
 
+// newHashBar returns a progress bar styled with '#' fill and '.' padding.
+// Used for transfers with a known size. Stream transfers use streamBar instead.
+func newHashBar(size int64, description string) *progressbar.ProgressBar {
+	return progressbar.NewOptions64(
+		size,
+		progressbar.OptionSetDescription(description),
+		progressbar.OptionSetWriter(os.Stderr),
+		progressbar.OptionShowBytes(true),
+		progressbar.OptionShowTotalBytes(true),
+		progressbar.OptionSetWidth(10),
+		progressbar.OptionThrottle(65*time.Millisecond),
+		progressbar.OptionShowCount(),
+		progressbar.OptionOnCompletion(func() { fmt.Fprint(os.Stderr, "\n") }),
+		progressbar.OptionFullWidth(),
+		progressbar.OptionSetRenderBlankState(true),
+		progressbar.OptionSetTheme(progressbar.Theme{
+			Saucer:        "#",
+			SaucerPadding: ".",
+			BarStart:      "|",
+			BarEnd:        "|",
+		}),
+	)
+}
+
 func newTxCmd() *cobra.Command {
 	var (
 		serverURL string
@@ -341,20 +365,30 @@ func runTx(input, serverURL string, numWords int, verify bool, listenUDP string,
 	logInfo("Sending payload", "kind", meta.Kind, "size_bytes", meta.Size)
 	isTTY := isatty.IsTerminal(os.Stderr.Fd())
 	var payloadHash string
-	if isTTY && size > 0 {
-		bar := progressbar.DefaultBytes(size, "sending")
+	if isTTY && !quietMode && size > 0 {
+		bar := newHashBar(size, "sending")
 		dest := io.MultiWriter(payloadStream, bar)
 		payloadHash, err = transfer.HashStream(reader, dest)
+	} else if isTTY && !quietMode && size < 0 {
+		// Unknown size (stream): bouncing "###" bar that resizes with the terminal.
+		bar := newStreamBar()
+		dest := io.MultiWriter(payloadStream, bar)
+		payloadHash, err = transfer.HashStream(reader, dest)
+		bar.Finish()
 	} else {
 		payloadHash, err = transfer.HashStream(reader, payloadStream)
 	}
 	if err != nil {
 		if peerErr := cancelledByPeer(err); peerErr != nil {
-			fmt.Fprintf(os.Stderr, "\nTransfer cancelled by receiver.\n")
+			if !quietMode {
+				fmt.Fprintf(os.Stderr, "\nTransfer cancelled by receiver.\n")
+			}
 			return peerErr
 		}
 		if ctx.Err() != nil {
-			fmt.Fprintf(os.Stderr, "\nTransfer cancelled by sender.\n")
+			if !quietMode {
+				fmt.Fprintf(os.Stderr, "\nTransfer cancelled by sender.\n")
+			}
 			return fmt.Errorf("transfer cancelled")
 		}
 		return fmt.Errorf("send payload: %w", err)
@@ -384,7 +418,9 @@ func runTx(input, serverURL string, numWords int, verify bool, listenUDP string,
 		logDebug("acknowledgement received from receiver")
 	} else {
 		if peerErr := cancelledByPeer(err); peerErr != nil {
-			fmt.Fprintf(os.Stderr, "\nTransfer cancelled by receiver.\n")
+			if !quietMode {
+				fmt.Fprintf(os.Stderr, "\nTransfer cancelled by receiver.\n")
+			}
 			return peerErr
 		}
 		logWarn("did not receive acknowledgement from receiver — transfer may still have succeeded", "err", err)
