@@ -1,7 +1,7 @@
-# .github/workflows/release.yml — Build and publish Hermod on patch tag push.
+# .github/workflows/release.yml — Build and publish Hermod on version tag push.
 #
-# Triggered by: push of a semver patch tag (vX.Y.Z where Z > 0, e.g. v0.11.2).
-#              Non-patch tags (vX.Y.0) are rejected by the verify step.
+# Triggered by: push of a semver tag in the format vX.Y.Z (e.g. v0.11.0, v1.2.3).
+#              Each of X, Y, Z supports 1–3 digits.
 # Builds:       linux/amd64, linux/arm64, windows/amd64, windows/arm64, darwin/arm64
 # Publishes:    GitHub Release with changelog entry as body + all binaries + checksums
 name: Release
@@ -28,14 +28,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Verify patch version tag
+      - name: Verify version tag format
         run: |
           TAG="${GITHUB_REF_NAME}"
-          if ! echo "$TAG" | grep -qE '^v[0-9]+\.[0-9]+\.([1-9][0-9]*)$'; then
-            echo "ERROR: $TAG is not a patch version (expected vX.Y.Z where Z > 0)" >&2
+          if ! echo "$TAG" | grep -qE '^v\d{1,3}\.\d{1,3}\.\d{1,3}$'; then
+            echo "ERROR: $TAG is not a valid version tag (expected vX.Y.Z, each 1–3 digits)" >&2
             exit 1
           fi
-          echo "Patch version confirmed: $TAG"
+          echo "Version tag confirmed: $TAG"
 
       - name: Setup Go
         uses: actions/setup-go@v6
