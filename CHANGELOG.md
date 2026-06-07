@@ -5,6 +5,33 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.12.0] - 2026-06-07
+
+- **why:** Add dual-stack IPv4/IPv6 support to NAT hole punching with IPv6 preference, IPv4 fallback, and `-4`/`-6` enforcement flags
+- **model:** opencode/deepseek-v4-flash
+- **tags:** network, holepunch, ipv6, dual-stack, cli
+
+### Added
+
+- `HolePunchDual()` — two-phase NAT hole punching: IPv6 first (5 s timeout), then IPv4 fallback (remaining context timeout) (`internal/network/network.go`)
+- `IPFamily` type (`Any`/`V4`/`V6`) for filtering local address collection (`internal/network/handshake.go`)
+- `SplitPublicIP()` — classifies a bare IP string into the correct address family's `host:port` format (`internal/network/handshake.go`)
+- `EndpointBundle.CandidatesV4()` / `CandidatesV6()` — extract candidate lists by address family (`internal/network/handshake.go`)
+- `-4`/`--ipv4` and `-6`/`--ipv6` persistent flags, mutually exclusive, enforce a single IP protocol for hole punching (`internal/cli/root.go`)
+- Signaling server response now includes `public_ipv4` or `public_ipv6` key alongside `public_ip` (`internal/server/server.go`)
+
+### Changed
+
+- `EndpointBundle` now carries separate `LocalEndpointsV4/V6` and `PublicEndpointV4/V6` fields — legacy monomorphic fields removed (`internal/network/handshake.go`)
+- `LocalEndpoints()` now returns split v4/v6 slices and accepts an `IPFamily` filter (`internal/network/handshake.go`)
+- `Allocate()` and `Join()` return both IPv4 and IPv6 public addresses (`internal/network/signaling.go`)
+- `tx` and `rx` use dual-stack bundle exchange and two-phase holepunch (`internal/cli/tx.go`, `internal/cli/rx.go`)
+- Signaling server default listen address changed from `0.0.0.0:4376` (IPv4-only) to `:4376` (dual-stack) (`internal/cli/serve.go`)
+
+### Removed
+
+- Backward compatibility fields `PublicEndpoint` and `LocalEndpoints` from `EndpointBundle` — development-phase code, no migration needed
+
 ## [v0.11.0] - 2026-06-07
 
 - **why:** Apply plain language to all user-facing text, fix SAS prompt and progress bar UX issues, and add port 4376 fallback to `hermod trust`

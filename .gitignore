@@ -1,5 +1,8 @@
 # Build output
 /hermod
+/hermod-arm
+/hermod-arm64
+/hermod-amd64
 /dist/
 
 # Test coverage artifacts

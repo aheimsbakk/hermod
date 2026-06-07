@@ -142,14 +142,38 @@ type HolePunchResult struct {
     PeerAddr *net.UDPAddr
 }
 
-func HolePunch(ctx context.Context, mux *packetMux, candidates []*net.UDPAddr) (*HolePunchResult, error)
+func HolePunch(ctx context.Context, mux *packetMux, candidates []*net.UDPAddr, probeNonce [4]byte) (*HolePunchResult, error)
 ```
-Sends probe packets to all candidate addresses concurrently until one replies. Returns the first address that responds. Cancelled by `ctx` timeout.
+Sends probe packets to all candidate addresses concurrently until one replies. `probeNonce` is a 4-byte session-unique value derived from the CPace shared key. Returns the first address that responds. Cancelled by `ctx` timeout (default 10 s).
+
+```go
+func HolePunchDual(ctx context.Context, mux *packetMux, candidatesV4, candidatesV6 []*net.UDPAddr, probeNonce [4]byte) (*HolePunchResult, error)
+```
+Two-phase NAT hole punching: IPv6 first (5 s timeout), then IPv4 fallback (remaining ctx timeout). Pass an empty slice for a phase to skip it entirely (used when `-4` or `-6` flag enforces a single protocol).
 
 ```go
 func ParseCandidates(endpoints []string) ([]*net.UDPAddr, error)
 ```
 Parses a slice of `"host:port"` strings into UDP addresses.
+
+```go
+type IPFamily int
+const (
+    IPFamilyAny IPFamily = iota
+    IPFamilyV4
+    IPFamilyV6
+)
+```
+
+```go
+func LocalEndpoints(localPort int, family IPFamily) (v4, v6 []string, error)
+```
+Returns non-loopback local UDP addresses split by address family. `IPFamilyV4` returns only IPv4, `IPFamilyV6` returns only IPv6, `IPFamilyAny` returns both.
+
+```go
+func SplitPublicIP(publicIP, port string) (v4, v6 string)
+```
+Classifies a bare IP string into a `"host:port"` string for the correct address family. Returns `v4` for IPv4 addresses, `v6` for IPv6 addresses. When `publicIP` is empty or not a valid IP, it is treated as a hostname and returned as `v4`.
 
 ### QUIC
 
@@ -172,21 +196,21 @@ Returns the SHA-256 fingerprint of a DER-encoded certificate as a 64-character h
 
 ```go
 type EndpointBundle struct {
-    LocalEndpoints  []string
-    PublicEndpoint  string
-    CertFingerprint string
-    RequireVerify   bool
+    LocalEndpointsV4 []string
+    LocalEndpointsV6 []string
+    PublicEndpointV4 string
+    PublicEndpointV6 string
+    CertFingerprint  string
+    RequireVerify    bool
 }
 
 func EncodeEndpointBundle(b EndpointBundle) ([]byte, error)
 func DecodeEndpointBundle(data []byte) (EndpointBundle, error)
-```
-JSON serialisation for the encrypted endpoint exchange. `RequireVerify` is `true` when the local peer was started with `--verify`. After decoding the peer bundle, the caller merges the flags: `verify = local || peer.RequireVerify`.
 
-```go
-func LocalEndpoints(localPort int) ([]string, error)
+func (b *EndpointBundle) CandidatesV4() []string
+func (b *EndpointBundle) CandidatesV6() []string
 ```
-Returns all non-loopback local IP addresses formatted as `"host:port"` strings.
+JSON serialisation for the encrypted endpoint exchange. Endpoints are split by address family. `CandidatesV4` / `CandidatesV6` return the public endpoint first, then local endpoints, as a flat string slice. `RequireVerify` is `true` when the local peer was started with `--verify`. After decoding the peer bundle, the caller merges the flags: `verify = local || peer.RequireVerify`.
 
 ### CPace message
 
@@ -214,8 +238,8 @@ Returns a copy of the client whose blocking `RecvBlob` and `WaitReady` calls are
 
 ```go
 func (c *SignalingClient) Close() error
-func (c *SignalingClient) Allocate(channelID uint16) (publicIP string, err error)
-func (c *SignalingClient) Join(channelID uint16) (publicIP string, err error)
+func (c *SignalingClient) Allocate(channelID uint16) (publicV4, publicV6 string, err error)
+func (c *SignalingClient) Join(channelID uint16) (publicV4, publicV6 string, err error)
 func (c *SignalingClient) SendBlob(channelID uint16, blob []byte) error
 func (c *SignalingClient) RecvBlob() ([]byte, error)
 func (c *SignalingClient) WaitReady() error

@@ -7,6 +7,18 @@ import (
 	"net"
 )
 
+// IPFamily restricts address collection to a single IP protocol family.
+type IPFamily int
+
+const (
+	// IPFamilyAny collects both IPv4 and IPv6 addresses (default).
+	IPFamilyAny IPFamily = iota
+	// IPFamilyV4 collects only IPv4 addresses.
+	IPFamilyV4
+	// IPFamilyV6 collects only IPv6 addresses.
+	IPFamilyV6
+)
+
 // CPaceMsg carries one side's CPace public message.
 type CPaceMsg struct {
 	PubMsg []byte `json:"pub_msg"` // 65-byte uncompressed P-256 point
@@ -14,10 +26,13 @@ type CPaceMsg struct {
 
 // EndpointBundle is encrypted with K_classical and exchanged over the relay.
 type EndpointBundle struct {
-	LocalEndpoints  []string `json:"local_endpoints"`  // host:port UDP candidates
-	PublicEndpoint  string   `json:"public_endpoint"`  // server-reflexive host:port
-	CertFingerprint string   `json:"cert_fingerprint"` // SHA-256 hex of ephemeral TLS cert
-	RequireVerify   bool     `json:"require_verify"`   // true if this side requires SAS verification
+	LocalEndpointsV4 []string `json:"local_endpoints_v4,omitempty"` // IPv4 host:port candidates
+	LocalEndpointsV6 []string `json:"local_endpoints_v6,omitempty"` // IPv6 host:port candidates
+	PublicEndpointV4 string   `json:"public_endpoint_v4,omitempty"` // server-reflexive IPv4 host:port
+	PublicEndpointV6 string   `json:"public_endpoint_v6,omitempty"` // server-reflexive IPv6 host:port
+
+	CertFingerprint string `json:"cert_fingerprint"` // SHA-256 hex of ephemeral TLS cert
+	RequireVerify   bool   `json:"require_verify"`   // true if this side requires SAS verification
 }
 
 // EncodeCPaceMsg serializes a CPaceMsg to JSON.
@@ -44,6 +59,43 @@ func DecodeEndpointBundle(data []byte) (EndpointBundle, error) {
 	return b, err
 }
 
+// CandidatesV4 returns IPv4 candidate endpoint strings.
+func (b *EndpointBundle) CandidatesV4() []string {
+	var c []string
+	if b.PublicEndpointV4 != "" {
+		c = append(c, b.PublicEndpointV4)
+	}
+	return append(c, b.LocalEndpointsV4...)
+}
+
+// CandidatesV6 returns IPv6 candidate endpoint strings.
+// Returns nil when no IPv6 candidates are available.
+func (b *EndpointBundle) CandidatesV6() []string {
+	var c []string
+	if b.PublicEndpointV6 != "" {
+		c = append(c, b.PublicEndpointV6)
+	}
+	return append(c, b.LocalEndpointsV6...)
+}
+
+// SplitPublicIP classifies a server-reported public IP into v4 and v6 host:port
+// strings. The caller provides the port to use. When publicIP is empty, both
+// return values are empty strings.
+func SplitPublicIP(publicIP, port string) (v4, v6 string) {
+	if publicIP == "" {
+		return "", ""
+	}
+	ip := net.ParseIP(publicIP)
+	if ip == nil {
+		// Not a valid IP — return as-is (legacy hostname or error).
+		return net.JoinHostPort(publicIP, port), ""
+	}
+	if ip.To4() != nil {
+		return net.JoinHostPort(publicIP, port), ""
+	}
+	return "", net.JoinHostPort(publicIP, port)
+}
+
 // ParseCandidates converts endpoint strings to *net.UDPAddr slices.
 func ParseCandidates(endpoints []string) ([]*net.UDPAddr, error) {
 	var addrs []*net.UDPAddr
@@ -57,13 +109,18 @@ func ParseCandidates(endpoints []string) ([]*net.UDPAddr, error) {
 	return addrs, nil
 }
 
-// LocalEndpoints returns non-loopback local UDP candidate addresses.
-func LocalEndpoints(localPort int) ([]string, error) {
+// LocalEndpoints returns non-loopback local UDP candidate addresses,
+// split by address family.
+//
+// The family parameter controls which addresses are returned:
+//   - IPFamilyAny: returns both IPv4 and IPv6 (default)
+//   - IPFamilyV4:  returns only IPv4 addresses
+//   - IPFamilyV6:  returns only IPv6 addresses
+func LocalEndpoints(localPort int, family IPFamily) (v4, v6 []string, _ error) {
 	ifaces, err := net.Interfaces()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	var eps []string
 	for _, iface := range ifaces {
 		if iface.Flags&net.FlagUp == 0 {
 			continue
@@ -83,10 +140,17 @@ func LocalEndpoints(localPort int) ([]string, error) {
 			if ip == nil || ip.IsLoopback() {
 				continue
 			}
-			if ip.To4() != nil {
-				eps = append(eps, fmt.Sprintf("%s:%d", ip.String(), localPort))
+			switch {
+			case ip.To4() != nil:
+				if family != IPFamilyV6 {
+					v4 = append(v4, net.JoinHostPort(ip.String(), fmt.Sprintf("%d", localPort)))
+				}
+			default:
+				if family != IPFamilyV4 {
+					v6 = append(v6, net.JoinHostPort(ip.String(), fmt.Sprintf("%d", localPort)))
+				}
 			}
 		}
 	}
-	return eps, nil
+	return v4, v6, nil
 }

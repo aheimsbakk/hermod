@@ -1036,6 +1036,93 @@ func TestQuietMode_ReceivePayload_Text(t *testing.T) {
 	}
 }
 
+// --- IPv4/IPv6 enforcement flags ---
+
+func resetIPFlags() {
+	ipv4Only = false
+	ipv6Only = false
+}
+
+// TestExecuteArgs_IPv4Flag verifies -4 is accepted and sets ipv4Only.
+func TestExecuteArgs_IPv4Flag(t *testing.T) {
+	defer resetIPFlags()
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	t.Setenv("APPDATA", dir)
+	t.Setenv("HERMOD_SERVER", "")
+
+	// runTx will fail fast (no trusted server) but PersistentPreRunE still runs.
+	_ = ExecuteArgs([]string{"hermod", "-4", "tx", "hello"})
+	if !ipv4Only {
+		t.Fatal("expected ipv4Only=true after -4 flag")
+	}
+	if ipv6Only {
+		t.Fatal("expected ipv6Only=false after -4 flag")
+	}
+}
+
+// TestExecuteArgs_IPv6Flag verifies -6 is accepted and sets ipv6Only.
+func TestExecuteArgs_IPv6Flag(t *testing.T) {
+	defer resetIPFlags()
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	t.Setenv("APPDATA", dir)
+	t.Setenv("HERMOD_SERVER", "")
+
+	_ = ExecuteArgs([]string{"hermod", "-6", "tx", "hello"})
+	if !ipv6Only {
+		t.Fatal("expected ipv6Only=true after -6 flag")
+	}
+	if ipv4Only {
+		t.Fatal("expected ipv4Only=false after -6 flag")
+	}
+}
+
+// TestExecuteArgs_IPv4And6MutuallyExclusive verifies -4 and -6 together error.
+func TestExecuteArgs_IPv4And6MutuallyExclusive(t *testing.T) {
+	defer resetIPFlags()
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	t.Setenv("APPDATA", dir)
+	t.Setenv("HERMOD_SERVER", "")
+
+	err := ExecuteArgs([]string{"hermod", "-4", "-6", "tx", "hello"})
+	if err == nil {
+		t.Fatal("expected error when -4 and -6 are combined")
+	}
+	if !strings.Contains(err.Error(), "mutually exclusive") {
+		t.Errorf("expected 'mutually exclusive' in error, got: %v", err)
+	}
+}
+
+// TestExecuteArgs_IPv4LongFlag verifies --ipv4 is accepted.
+func TestExecuteArgs_IPv4LongFlag(t *testing.T) {
+	defer resetIPFlags()
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	t.Setenv("APPDATA", dir)
+	t.Setenv("HERMOD_SERVER", "")
+
+	_ = ExecuteArgs([]string{"hermod", "--ipv4", "tx", "hello"})
+	if !ipv4Only {
+		t.Fatal("expected ipv4Only=true after --ipv4 flag")
+	}
+}
+
+// TestExecuteArgs_IPv6LongFlag verifies --ipv6 is accepted.
+func TestExecuteArgs_IPv6LongFlag(t *testing.T) {
+	defer resetIPFlags()
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	t.Setenv("APPDATA", dir)
+	t.Setenv("HERMOD_SERVER", "")
+
+	_ = ExecuteArgs([]string{"hermod", "--ipv6", "tx", "hello"})
+	if !ipv6Only {
+		t.Fatal("expected ipv6Only=true after --ipv6 flag")
+	}
+}
+
 // TestRunServe_ExistingCert verifies the else-branch of the cert-generation block
 // in runServe: when a certificate already exists the function reuses it.
 func TestRunServe_ExistingCert(t *testing.T) {
