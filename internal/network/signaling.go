@@ -149,10 +149,10 @@ func (c *SignalingClient) Allocate(channelID uint16) (publicV4, publicV6 string,
 		return "", "", fmt.Errorf("server error: %s", resp.Error)
 	}
 	var m map[string]string
-	if err := json.Unmarshal(resp.Payload, &m); err == nil {
-		return m["public_ipv4"], m["public_ipv6"], nil
+	if err := json.Unmarshal(resp.Payload, &m); err != nil {
+		return "", "", fmt.Errorf("allocate decode response: %w", err)
 	}
-	return "", "", nil
+	return m["public_ipv4"], m["public_ipv6"], nil
 }
 
 // Join sends a join request for channelID.
@@ -170,10 +170,10 @@ func (c *SignalingClient) Join(channelID uint16) (publicV4, publicV6 string, err
 		return "", "", fmt.Errorf("server error: %s", resp.Error)
 	}
 	var m map[string]string
-	if err := json.Unmarshal(resp.Payload, &m); err == nil {
-		return m["public_ipv4"], m["public_ipv6"], nil
+	if err := json.Unmarshal(resp.Payload, &m); err != nil {
+		return "", "", fmt.Errorf("join decode response: %w", err)
 	}
-	return "", "", nil
+	return m["public_ipv4"], m["public_ipv6"], nil
 }
 
 // SendBlob sends an encrypted blob payload to the peer via the relay.

@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -251,9 +252,14 @@ func (s *Server) handleAllocate(conn *websocket.Conn, remoteAddr string, channel
 	}
 	// Reply with public IP (STUN-like), tagged with address family.
 	host, _, _ := net.SplitHostPort(remoteAddr)
-	payload, _ := json.Marshal(publicIPResponse(host))
+	respMap := publicIPResponse(host)
+	payload, _ := json.Marshal(respMap)
 	conn.WriteJSON(Message{Type: MsgOK, ChannelID: channelID, Payload: payload})
-	s.logger.Info("Channel allocated", "channel_id", channelID, "sender_ip", host, "ttl", s.ttl)
+	s.logger.Info("Channel allocated",
+		"channel_id", channelID,
+		"public_ipv4", respMap["public_ipv4"],
+		"public_ipv6", respMap["public_ipv6"],
+		"ttl", s.ttl)
 
 	wsc := &wsConn{conn: conn, sender: true}
 	s.mu.Lock()
@@ -312,9 +318,13 @@ func (s *Server) handleJoin(conn *websocket.Conn, remoteAddr string, channelID u
 	s.mu.Unlock()
 
 	host, _, _ := net.SplitHostPort(remoteAddr)
-	payload, _ := json.Marshal(publicIPResponse(host))
+	respMap := publicIPResponse(host)
+	payload, _ := json.Marshal(respMap)
 	conn.WriteJSON(Message{Type: MsgOK, ChannelID: channelID, Payload: payload})
-	s.logger.Info("Receiver joined channel", "channel_id", channelID, "receiver_ip", host)
+	s.logger.Info("Receiver joined channel",
+		"channel_id", channelID,
+		"public_ipv4", respMap["public_ipv4"],
+		"public_ipv6", respMap["public_ipv6"])
 
 	s.relay(conn, channelID, false)
 }
@@ -443,14 +453,32 @@ func (s *Server) recordFailureAndDrop(channelID uint16) bool {
 // publicIPResponse builds the allocate/join response payload map,
 // including an address-family-specific key so the client can distinguish
 // IPv4 from IPv6 without re-parsing.
+//
+// The server always knows the remote address of the client's WebSocket
+// connection. This function classifies it as IPv4 or IPv6 and populates
+// the corresponding key. If parsing fails (e.g. hostname or IPv6 zone ID),
+// it falls back to a family guess — the key is never silently omitted.
 func publicIPResponse(host string) map[string]string {
 	resp := map[string]string{"public_ip": host}
-	if ip := net.ParseIP(host); ip != nil {
+	if host == "" {
+		return resp
+	}
+	// Strip IPv6 zone ID (e.g. "fe80::1%eth0" -> "fe80::1") because
+	// net.ParseIP does not handle zone/scope IDs.
+	clean := host
+	if idx := strings.IndexByte(host, '%'); idx >= 0 {
+		clean = host[:idx]
+	}
+	if ip := net.ParseIP(clean); ip != nil {
 		if ip.To4() != nil {
 			resp["public_ipv4"] = host
 		} else {
 			resp["public_ipv6"] = host
 		}
+	} else {
+		// Hostname or unparseable address — assume IPv4 as a safe default
+		// so the caller always gets at least one populated family key.
+		resp["public_ipv4"] = host
 	}
 	return resp
 }
