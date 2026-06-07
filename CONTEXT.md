@@ -23,6 +23,7 @@ Go 1.25.0
 - Ephemeral X.509 fingerprint commitment prevents MitM during QUIC handshake
 - TLS 1.3 only; prefer X25519MLKEM768 (post-quantum hybrid)
 - Rate limiting: token bucket per /32 IPv4, /64 IPv6; bucket keys are HMAC-SHA256(daily-rotating salt, prefix) — raw IPs never stored; max 3 CPace failures and 10 blobs per channel
+- Server private key stored in `config.yaml` (PEM, file permission 0o600). This is intentional (H-04): a single config file avoids a separate keystore with its own permissions. The key is ephemeral — regenerated on `hermod serve` if missing. The 0o600 permission restricts access to the file owner. Users who need stronger isolation can restrict process access (containers, systemd `LoadCredential`, or a separate key file via bind mount).
 
 ## Config Locations
 - Linux/macOS: `~/.config/hermod/config.yaml`

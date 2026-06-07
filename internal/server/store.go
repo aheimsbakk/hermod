@@ -74,6 +74,9 @@ func (m *MemoryStore) StoreBlob(id uint16, sender bool, blob []byte) error {
 	if !ok {
 		return fmt.Errorf("channel %d not found", id)
 	}
+	if time.Now().After(ch.expires) {
+		return fmt.Errorf("channel %d expired", id)
+	}
 	idx := 0
 	if sender {
 		idx = 1
@@ -88,6 +91,9 @@ func (m *MemoryStore) FetchBlob(id uint16, sender bool) ([]byte, error) {
 	ch, ok := m.channels[id]
 	if !ok {
 		return nil, nil
+	}
+	if time.Now().After(ch.expires) {
+		return nil, fmt.Errorf("channel %d expired", id)
 	}
 	idx := 0
 	if sender {

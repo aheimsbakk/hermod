@@ -165,18 +165,21 @@ func cmdTxBackground(ts *testscript.TestScript, neg bool, args []string) {
 	txArgs := append([]string{"hermod", "tx", "--server", serverURL, "--words", "3"}, args...)
 
 	oldStdout := os.Stdout
+	oldStderr := os.Stderr
 	os.Stdout = stdoutW
+	os.Stderr = stdoutW
 	go func() {
 		txErr := cli.ExecuteArgs(txArgs)
 		stdoutW.Close()
 		os.Stdout = oldStdout
+		os.Stderr = oldStderr
 		errCh <- txErr
 	}()
 
 	select {
 	case code, ok := <-codeCh:
 		if !ok || code == "" {
-			ts.Fatalf("tx-background: transfer code not found in tx stdout")
+			ts.Fatalf("tx-background: transfer code not found in tx output (stdout/stderr)")
 		}
 		ts.Setenv("HERMOD_CODE", code)
 	case <-time.After(15 * time.Second):

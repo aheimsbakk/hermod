@@ -99,13 +99,30 @@ func TestMemoryStorePurgeExpired(t *testing.T) {
 		t.Fatalf("purge: %v", err)
 	}
 
-	// Channel 10 should be gone
+	// Channel 10 should be gone (purged)
 	if err := store.StoreBlob(10, true, []byte("x")); err == nil {
 		t.Fatal("expected error — channel 10 should be purged")
 	}
 	// Channel 11 should exist
 	if err := store.StoreBlob(11, true, []byte("y")); err != nil {
 		t.Fatalf("channel 11 should still exist: %v", err)
+	}
+}
+
+func TestMemoryStoreExpiredBlob(t *testing.T) {
+	store := server.NewMemoryStore()
+	store.AllocateChannel(42, -time.Second) // already expired
+
+	// StoreBlob should reject expired channels (M-02)
+	err := store.StoreBlob(42, true, []byte("data"))
+	if err == nil {
+		t.Fatal("expected error for StoreBlob on expired channel")
+	}
+
+	// FetchBlob should also reject expired channels (M-02)
+	_, err = store.FetchBlob(42, true)
+	if err == nil {
+		t.Fatal("expected error for FetchBlob on expired channel")
 	}
 }
 

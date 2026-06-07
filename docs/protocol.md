@@ -23,11 +23,14 @@ Example: `47832-apple-banana-cherry`
 - The words are drawn from the full EFF Short Wordlist 1 (1,296 unique entries). They form the shared passphrase for the CPace handshake. Each word is selected using rejection sampling on uniform random `uint16` values to eliminate modulo bias.
 - The default word count is 3 (≈31.9 bits of passphrase entropy), overridable with `--words` on `tx`.
 
-The sender generates the code and displays it. The receiver types it in.
+The sender generates the code and displays it on stderr. The receiver types it in.
 
 ## Signaling protocol
 
-The signaling server exposes a single WebSocket endpoint at `/ws` over TLS.
+The signaling server exposes two endpoints over TLS:
+
+- `/ws` — WebSocket endpoint for signaling messages (allocate, join, blob relay).
+- `/cert` — HTTPS endpoint that returns the server's TLS certificate in PEM format for client pinning (used by `hermod trust`). Both endpoints share the same per-IP rate limiter (`--rate-limit` / `--rate-burst` on `hermod serve`).
 
 All messages are JSON with this envelope:
 

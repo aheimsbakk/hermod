@@ -24,7 +24,7 @@
 ### C-01: TOCTOU race condition in `handleJoin` allows two receivers to join the same channel
 
 **File:** `internal/server/server.go` lines 269–297
-**Status:** Present in v0.10.2
+**Status:** Fixed in v0.10.3
 
 The channel has a one-receiver invariant that is enforced with a mutex-locked check:
 
@@ -67,6 +67,7 @@ Two concurrent `Join` requests for the same channel can both pass the check (nei
 
 **File:** `internal/network/network.go` line 246
 **File:** `internal/network/signaling.go` line 53
+**Status:** Fixed in v0.10.3
 
 The fingerprint comparison uses Go string equality (`!=`), which short-circuits on the first differing byte:
 
@@ -87,6 +88,7 @@ An attacker on the same LAN (or with sufficiently precise RTT measurements) coul
 ### H-02: `muxedConn` deadline methods are no-ops, risking resource starvation
 
 **File:** `internal/network/network.go` lines 110–112
+**Status:** Fixed in v0.10.3
 
 ```go
 func (c *muxedConn) SetDeadline(t time.Time) error      { return nil }
@@ -105,6 +107,7 @@ The `muxedConn` wrapper discards all deadline requests silently. QUIC transport 
 ### H-03: `Identicon` panics on short input — potential denial-of-service surface
 
 **File:** `internal/crypto/crypto.go` line 352
+**Status:** Fixed in v0.10.3
 
 ```go
 if len(keyMaterial) < 16 {
@@ -123,6 +126,7 @@ if len(keyMaterial) < 16 {
 ### H-04: Server private key stored in YAML config file with ambient read risk
 
 **File:** `internal/config/config.go` line 164–169
+**Status:** Intentionally not fixed (v0.10.3). Single config file avoids a separate keystore with its own permissions. Key is ephemeral (regenerated if missing); file is 0o600. Documented in CONTEXT.md under Security Model.
 
 The server's ECDSA P-256 private key is stored as PEM-in-YAML in `~/.config/hermod/config.yaml`:
 
@@ -163,6 +167,8 @@ If `n.Bytes()` returns exactly 33 bytes (possible for P-256 field elements where
 
 **Recommendation:** Add an explicit check: `if len(b) > 32 { panic or return error }`. Or use `big.Int.FillBytes(make([]byte, 32))` (Go 1.15+) which is guaranteed fixed-size.
 
+**Fix status:** Fixed in v0.10.3. Replaced truncation with `FillBytes(make([]byte, 32))` which panics if the value exceeds 32 bytes (correct behavior for crypto code).
+
 ---
 
 ### M-02: Channel expiry not enforced on `StoreBlob` / `FetchBlob`
@@ -189,6 +195,8 @@ Expired channels remain in the map until `PurgeExpired` runs (every 60 seconds v
 
 **Recommendation:** Check `time.Now().After(ch.expires)` in both `StoreBlob` and `FetchBlob`.
 
+**Fix status:** Fixed in v0.10.3. Both methods now reject operations on expired channels.
+
 ---
 
 ### M-03: `FetchServerFingerprint` opens a second WebSocket connection for cert extraction
@@ -211,6 +219,8 @@ The first connection is wasteful and performs a TLS handshake with no verificati
 
 **Recommendation:** Remove the first connection entirely. The `/cert` endpoint (M-06 in the codebase) was added to solve this — use an HTTPS GET to `/cert` instead of a second WebSocket upgrade.
 
+**Fix status:** Fixed in v0.10.3. `FetchServerFingerprint` now uses an HTTPS GET to the `/cert` endpoint instead of a double WebSocket connection.
+
 ---
 
 ### M-04: `rotateSaltIfNeeded` silently skips salt rotation on `rand.Read` failure
@@ -228,6 +238,8 @@ If `crypto/rand` fails (extremely rare, but possible in resource-constrained env
 **Impact:** Reduced anonymity — IP prefix hashes remain the same across daily rotation boundaries, making it easier to correlate requests from the same IP across days.
 
 **Recommendation:** Log the failure and retry on the next call, or fall back to a timer-based rotation with a warning.
+
+**Fix status:** Fixed in v0.10.3. Failure is logged via `slog.Warn`; retry happens naturally on the next `Allow` call.
 
 ---
 
@@ -251,6 +263,8 @@ The endpoint serves the server's DER-encoded TLS certificate with no authenticat
 
 **Recommendation:** Add rate limiting to the `/cert` endpoint, or serve it only over the established TLS connection.
 
+**Fix status:** Fixed in v0.10.3. `handleCert` now uses the server's existing `RateLimiter` to enforce per-IP rate limits.
+
 ---
 
 ### M-06: Config directory falls back to `"."` silently on `UserHomeDir()` error
@@ -273,6 +287,8 @@ If `os.UserHomeDir()` fails (possible in containers, minimal chroot jails, or mi
 
 **Recommendation:** Fall back to a well-known location with restricted permissions (e.g., `/tmp/hermod-<uid>`), or return an error so the user knows the config path is unreliable.
 
+**Fix status:** Fixed in v0.10.3. Falls back to `/tmp/hermod-<uid>` instead of `"."`.
+
 ---
 
 ### M-07: Transfer code printed to stdout — risk of log capture
@@ -288,6 +304,8 @@ The transfer code (the CPace PAKE password) is printed to stdout in plain text. 
 **Impact:** Anyone with access to the sender's stdout log can decrypt the P2P session (assuming they also have access to the signaling relay).
 
 **Recommendation:** Print to stderr (with `os.Stderr`) like all other user-facing status messages, or add a `--print-code` flag. Already the status message diverges from the `printStatus` / `log*` pattern used elsewhere.
+
+**Fix status:** Fixed in v0.10.3. Uses `fmt.Fprintf(os.Stderr, ...)` instead of `fmt.Printf`.
 
 ---
 
@@ -380,12 +398,14 @@ If all 9999 suffixed candidates already exist (extremely unlikely except in benc
 
 ## Summary
 
-| Severity | Count | Key Findings |
-|----------|-------|-------------|
-| CRITICAL | 1     | TOCTOU race in `handleJoin` allows dual receivers |
-| HIGH     | 4     | Timing side channel in cert pinning, no-op deadlines on muxed connection, `Identicon` panic, private key in config file |
-| MEDIUM   | 7     | `padTo32` silent truncation, channel expiry not enforced on blob operations, wasteful `FetchServerFingerprint` double-connect, salt rotation skip on `rand.Read` failure, unauthenticated `/cert` endpoint, config fallback to `"."`, transfer code on stdout |
-| LOW      | 5     | Rate limiter bucket growth, dropped packets on buffer overflow, SAS word bias, `dropChannel` race, `SafeDestinationPath` 9999-limit overflow |
-| **Total** | **17** | |
+| Severity | Count | Fixed | Status |
+|----------|-------|-------|--------|
+| CRITICAL | 1     | 1     | All fixed |
+| HIGH     | 4     | 3     | 3 fixed, 1 documented (H-04) |
+| MEDIUM   | 7     | 7     | All fixed |
+| LOW      | 5     | 0     | Accepted risk (not in fix scope) |
+| **Total** | **17** | **11** | |
 
-**Overall assessment:** The codebase is well-structured and demonstrates thoughtful security design (CPace PAKE, TLS pinning, SAS verification, rate limiting). The CRITICAL and HIGH findings are concentrated in two areas: concurrency safety in the signaling server's channel management, and the robustness of the cryptographic/network glue code. The CRITICAL race condition (C-01) should be addressed before production deployment. The HIGH findings (H-01 through H-04) represent defence-in-depth weaknesses rather than trivially exploitable vulnerabilities.
+**Fix status:** v0.10.3 — 11 findings fixed (C-01, H-01, H-02, H-03, M-01 through M-07). H-04 documented as intended behavior. Low findings accepted as-is.
+
+**Overall assessment:** The codebase is well-structured and demonstrates thoughtful security design (CPace PAKE, TLS pinning, SAS verification, rate limiting). The CRITICAL and HIGH findings are concentrated in two areas: concurrency safety in the signaling server's channel management, and the robustness of the cryptographic/network glue code. All actionable findings from this audit have been addressed in v0.10.3.

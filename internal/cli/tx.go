@@ -124,7 +124,7 @@ func runTx(input, serverURL string, numWords int, verify bool, listenUDP string,
 	password = strings.ReplaceAll(password, "-", "-")
 	logDebug("transfer code generated", "channel_id", channelID, "words", numWords)
 
-	fmt.Printf("Transfer code: %s\n", code)
+	fmt.Fprintf(os.Stderr, "Transfer code: %s\n", code)
 
 	// Enforce server trust — abort before any network call if the server
 	// certificate has not been pinned via 'hermod trust'.
@@ -641,7 +641,12 @@ func promptSASVerificationFrom(tlsState tls.ConnectionState, r io.Reader, sasCon
 	words := crypto.SASFromBytes(material)
 	fmt.Fprintf(os.Stderr, "=== Out-of-Band Verification ===\n")
 	fmt.Fprintf(os.Stderr, "SAS: %s\n", crypto.SASString(words))
-	fmt.Fprintln(os.Stderr, crypto.Identicon(material[:16]))
+	identicon, err := crypto.Identicon(material[:16])
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not render identicon: %v\n", err)
+	} else {
+		fmt.Fprint(os.Stderr, identicon)
+	}
 	fmt.Fprint(os.Stderr, "Compare these values with the other end. Do they match? [y/N]: ")
 
 	scanner := bufio.NewScanner(r)

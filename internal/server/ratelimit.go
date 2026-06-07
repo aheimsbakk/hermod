@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"log/slog"
 	"net"
 	"sync"
 	"time"
@@ -89,7 +90,9 @@ func (r *RateLimiter) rotateSaltIfNeeded(now time.Time) {
 	if today.After(r.saltDate) {
 		newSalt := make([]byte, 32)
 		if _, err := rand.Read(newSalt); err != nil {
-			// Keep existing salt on read failure rather than panic.
+			// Log the failure (M-04). The existing salt continues to be used;
+			// rotation is retried on the next Allow call.
+			slog.Warn("Rate limiter salt rotation failed — keeping existing salt", "err", err)
 			return
 		}
 		r.salt = newSalt

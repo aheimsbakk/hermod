@@ -137,12 +137,11 @@ func cpaceGenerator(password string, channelID uint16) (*big.Int, *big.Int, erro
 }
 
 func padTo32(n *big.Int) []byte {
-	b := n.Bytes()
-	if len(b) >= 32 {
-		return b[:32]
-	}
+	// FillBytes always produces exactly 32 bytes. For P-256 scalars and
+	// coordinates the value is guaranteed to fit in 32 bytes; if it does
+	// not the panic is correct (crypto code must not silently truncate).
 	out := make([]byte, 32)
-	copy(out[32-len(b):], b)
+	n.FillBytes(out)
 	return out
 }
 
@@ -348,9 +347,10 @@ const (
 
 // Identicon generates a visual fingerprint from 16 bytes of key material.
 // Grid: 8 rows × 16 columns (left 8 cols = entropy, right 8 = mirror).
-func Identicon(keyMaterial []byte) string {
+// Returns an error if keyMaterial is shorter than 16 bytes (H-03).
+func Identicon(keyMaterial []byte) (string, error) {
 	if len(keyMaterial) < 16 {
-		panic("identicon: need at least 16 bytes")
+		return "", fmt.Errorf("identicon: need at least 16 bytes, got %d", len(keyMaterial))
 	}
 	grid := [8][8]rune{}
 	byteIdx := 0
@@ -405,7 +405,7 @@ func Identicon(keyMaterial []byte) string {
 		sb.WriteRune(boxHoriz)
 	}
 	sb.WriteRune(boxBottomRight)
-	return sb.String()
+	return sb.String(), nil
 }
 
 // --- Transfer code generation ---

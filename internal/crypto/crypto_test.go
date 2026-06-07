@@ -158,7 +158,10 @@ func TestSASString(t *testing.T) {
 
 func TestIdenticon(t *testing.T) {
 	material := make([]byte, 16)
-	out := crypto.Identicon(material)
+	out, err := crypto.Identicon(material)
+	if err != nil {
+		t.Fatalf("identicon: %v", err)
+	}
 	if out == "" {
 		t.Fatal("empty identicon")
 	}
@@ -171,6 +174,13 @@ func TestIdenticon(t *testing.T) {
 	}
 	if lines != 9 {
 		t.Fatalf("expected 9 newlines in identicon, got %d", lines)
+	}
+}
+
+func TestIdenticonShortInput(t *testing.T) {
+	_, err := crypto.Identicon([]byte("short"))
+	if err == nil {
+		t.Fatal("expected error for short input")
 	}
 }
 

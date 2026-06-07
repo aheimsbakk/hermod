@@ -135,15 +135,18 @@ func cliTransfer(t *testing.T, serverURL, fingerprint string, txArgs []string, s
 		stdoutR.Close()
 	}()
 
-	// Run tx, capturing its stdout output.
+	// Run tx, capturing its stdout and stderr output.
 	txErrCh := make(chan error, 1)
 	oldStdout := os.Stdout
+	oldStderr := os.Stderr
 	os.Stdout = stdoutW
+	os.Stderr = stdoutW
 	go func() {
 		allArgs := append([]string{"hermod", "tx", "--server", serverURL, "--words", "3"}, txArgs...)
 		txErrCh <- cli.ExecuteArgs(allArgs)
 		stdoutW.Close()
 		os.Stdout = oldStdout
+		os.Stderr = oldStderr
 	}()
 
 	// Wait for the transfer code (with timeout).

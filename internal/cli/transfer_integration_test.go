@@ -136,12 +136,15 @@ func cliTransferInternal(t *testing.T, serverURL, fingerprint string, txArgs []s
 
 	txErrCh := make(chan error, 1)
 	oldStdout := os.Stdout
+	oldStderr := os.Stderr
 	os.Stdout = stdoutW
+	os.Stderr = stdoutW
 	go func() {
 		allArgs := append([]string{"hermod", "tx", "--server", serverURL, "--words", "3"}, txArgs...)
 		txErrCh <- ExecuteArgs(allArgs)
 		stdoutW.Close()
 		os.Stdout = oldStdout
+		os.Stderr = oldStderr
 	}()
 
 	var code string
@@ -268,12 +271,15 @@ func TestTransfer_SASVerify_Internal(t *testing.T) {
 
 	txErrCh := make(chan error, 1)
 	oldStdout := os.Stdout
+	oldStderr := os.Stderr
 	os.Stdout = stdoutW
+	os.Stderr = stdoutW
 	go func() {
 		allArgs := []string{"hermod", "tx", "--server", serverURL, "--words", "3", "--verify", want}
 		txErrCh <- ExecuteArgs(allArgs)
 		stdoutW.Close()
 		os.Stdout = oldStdout
+		os.Stderr = oldStderr
 	}()
 
 	var code string

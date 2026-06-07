@@ -5,6 +5,35 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.10.3] - 2026-06-07
+
+- **why:** Fix all 11 actionable findings from the deepseek-v4-flash-max security audit
+- **model:** opencode/deepseek-v4-flash
+- **tags:** security, audit, crypto, timing-attack, race-condition
+
+### Security
+
+- `internal/server/server.go`: Fixed TOCTOU race in `handleJoin` that allowed two receivers to join the same channel (C-01). Check and add now happen under a single mutex lock.
+- `internal/network/network.go`, `signaling.go`: Replaced string comparison with `crypto/subtle.ConstantTimeCompare` for TLS cert fingerprint pinning, closing a timing side channel (H-01).
+- `internal/network/network.go`: Implemented proper deadline tracking in `muxedConn` (SetDeadline/SetReadDeadline/SetWriteDeadline) to prevent goroutine leaks on stalled peers (H-02).
+- `internal/crypto/crypto.go`: Changed `Identicon` to return `(string, error)` instead of panicking on short input (H-03).
+- `internal/crypto/crypto.go`: Replaced `padTo32` silent truncation with `big.Int.FillBytes` for guaranteed fixed-size output (M-01).
+- `internal/server/store.go`: Added expiry checks to `StoreBlob` and `FetchBlob` to reject operations on expired channels (M-02).
+- `internal/network/signaling.go`: Rewrote `FetchServerFingerprint` to use an HTTPS GET to `/cert` instead of a wasteful double WebSocket connection (M-03).
+- `internal/server/server.go`: Changed `/cert` endpoint to serve PEM format (`application/x-pem-file`) instead of raw DER, so users can inspect it directly with `curl -k https://host:4376/cert`.
+- `internal/server/ratelimit.go`: Added `slog.Warn` logging when salt rotation fails on `rand.Read` error (M-04).
+- `internal/server/server.go`: Added rate limiting to the `/cert` endpoint using the existing `RateLimiter` (M-05).
+- `internal/config/config.go`: Changed config directory fallback from `"."` to `/tmp/hermod-<uid>` when `UserHomeDir` fails (M-06).
+- `internal/cli/tx.go`: Moved transfer code output from stdout to stderr to prevent log capture of the PAKE passphrase (M-07).
+
+### Changed
+
+- `CONTEXT.md`: Documented H-04 design rationale for storing server private key in config.yaml
+
+### Fixed
+
+- All test helpers that capture the transfer code now redirect both stdout and stderr to the same pipe (M-07 compatibility)
+
 ## [0.10.2] - 2026-06-07
 
 - **why:** Migrate historical worklogs from `docs/worklogs/` to proper CHANGELOG.md format

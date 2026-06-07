@@ -32,7 +32,7 @@ go build -ldflags "-X github.com/hermod/hermod/internal/cli.Version=$(cat VERSIO
 **Send a file:**
 ```bash
 ./hermod tx report.pdf
-# Prints a transfer code, e.g.: 3-apple-banana-cherry
+# Prints a transfer code to stderr, e.g.: 3-apple-banana-cherry
 ```
 
 **Receive:**
@@ -111,8 +111,8 @@ hermod serve [flags]
 |---|---|---|
 | `-l`, `--listen` | `0.0.0.0:4376` | Bind address |
 | `-T`, `--ttl` | `600` | Channel TTL in seconds |
-| `--rate-limit` | `5` | Requests per second per IP prefix |
-| `--rate-burst` | `15` | Burst capacity per IP prefix |
+| `--rate-limit` | `5` | Requests per second per IP prefix (applies to both the WebSocket `/ws` and the `/cert` endpoint) |
+| `--rate-burst` | `15` | Burst capacity per IP prefix (applies to both the WebSocket `/ws` and the `/cert` endpoint) |
 | `--max-blobs-per-channel` | `10` | Hard cap on relayed blobs per channel |
 | `--max-cpace-failures` | `3` | Max CPace failures before a channel is dropped |
 | `--verbose` | `none` | Log verbosity: `none`, `error`, `warning`, `info`, `debug` |

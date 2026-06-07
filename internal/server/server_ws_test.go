@@ -3,8 +3,10 @@ package server_test
 import (
 	"context"
 	"crypto/tls"
+	"io"
 	"log/slog"
 	"net"
+	"net/http"
 	"testing"
 	"time"
 
@@ -15,10 +17,12 @@ import (
 )
 
 func startTestServer(t *testing.T) (string, func()) {
-	return startTestServerWithLimits(t, server.DefaultMaxBlobsPerChannel, server.DefaultMaxCPaceFailures)
+	return startTestServerWithLimits(t, server.DefaultMaxBlobsPerChannel, server.DefaultMaxCPaceFailures, nil)
 }
 
-func startTestServerWithLimits(t *testing.T, maxBlobs, maxCPaceFailures int) (string, func()) {
+// startTestServerWithLimits starts a test signaling server. certDER may be nil
+// to disable the /cert endpoint, or the DER-encoded TLS certificate to enable it.
+func startTestServerWithLimits(t *testing.T, maxBlobs, maxCPaceFailures int, certDER []byte) (string, func()) {
 	t.Helper()
 	cfg := config.Default()
 	if err := config.GenerateServerCert(cfg); err != nil {
@@ -34,7 +38,10 @@ func startTestServerWithLimits(t *testing.T, maxBlobs, maxCPaceFailures int) (st
 	store := server.NewMemoryStore()
 	rl := server.NewRateLimiter(100, 1000)
 	logger := slog.Default()
-	srv := server.NewServer(store, rl, 60*time.Second, maxBlobs, maxCPaceFailures, nil, logger)
+	if certDER == nil {
+		certDER = tlsCert.Certificate[0]
+	}
+	srv := server.NewServer(store, rl, 60*time.Second, maxBlobs, maxCPaceFailures, certDER, logger)
 
 	// Find a free port
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -72,6 +79,76 @@ func dialTestWS(t *testing.T, addr string) *websocket.Conn {
 		t.Fatalf("ws dial: %v", err)
 	}
 	return conn
+}
+
+// TestServerConcurrentJoinRejectsDuplicateReceiver verifies the C-01 fix:
+// two concurrent Join requests for the same channel cannot both succeed.
+// Receivers stay connected after joining to prevent the relay cleanup from
+// removing them from the waiters list before the second joiner checks.
+func TestServerConcurrentJoinRejectsDuplicateReceiver(t *testing.T) {
+	addr, cancel := startTestServer(t)
+	defer cancel()
+
+	// Sender: allocate channel
+	sender := dialTestWS(t, addr)
+	defer sender.Close()
+	sender.WriteJSON(server.Message{Type: server.MsgAllocate, ChannelID: 42})
+	var allocResp server.Message
+	if err := sender.ReadJSON(&allocResp); err != nil {
+		t.Fatalf("allocate read: %v", err)
+	}
+	if allocResp.Type != server.MsgOK {
+		t.Fatalf("expected MsgOK, got %s (error: %s)", allocResp.Type, allocResp.Error)
+	}
+
+	// Launch two concurrent joiners. Each stays connected (blocking on ReadJSON)
+	// until the test ends, so the relay cleanup does not race against the check.
+	type joinResult struct {
+		msgType server.MsgType
+		errMsg  string
+	}
+	results := make(chan joinResult, 2)
+	done := make(chan struct{})
+
+	for i := 0; i < 2; i++ {
+		go func() {
+			r := dialTestWS(t, addr)
+			r.WriteJSON(server.Message{Type: server.MsgJoin, ChannelID: 42})
+			r.SetReadDeadline(time.Now().Add(3 * time.Second))
+			var resp server.Message
+			if err := r.ReadJSON(&resp); err != nil {
+				results <- joinResult{msgType: server.MsgType("error"), errMsg: err.Error()}
+				<-done
+				return
+			}
+			results <- joinResult{msgType: resp.Type, errMsg: resp.Error}
+			// Stay connected so relay cleanup does not run until after check.
+			<-done
+		}()
+	}
+
+	okCount := 0
+	errCount := 0
+	for i := 0; i < 2; i++ {
+		select {
+		case r := <-results:
+			if r.msgType == server.MsgOK {
+				okCount++
+			} else {
+				errCount++
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("timeout waiting for join results")
+		}
+	}
+	close(done)
+
+	if okCount != 1 {
+		t.Fatalf("expected exactly 1 successful join, got %d", okCount)
+	}
+	if errCount != 1 {
+		t.Fatalf("expected exactly 1 rejected join, got %d", errCount)
+	}
 }
 
 func TestServerAllocateAndJoin(t *testing.T) {
@@ -199,7 +276,7 @@ func TestRunGC(t *testing.T) {
 // the per-channel hard cap is reached (GAP.md §6).
 func TestServerBlobLimitEnforced(t *testing.T) {
 	const limit = 2
-	addr, cancel := startTestServerWithLimits(t, limit, server.DefaultMaxCPaceFailures)
+	addr, cancel := startTestServerWithLimits(t, limit, server.DefaultMaxCPaceFailures, nil)
 	defer cancel()
 
 	sender := dialTestWS(t, addr)
@@ -268,7 +345,7 @@ func TestServerBlobLimitEnforced(t *testing.T) {
 // violations (GAP.md §5).
 func TestServerCPaceFailureLimitEnforced(t *testing.T) {
 	// maxCPaceFailures=1 so a single bad message terminates the channel.
-	addr, cancel := startTestServerWithLimits(t, server.DefaultMaxBlobsPerChannel, 1)
+	addr, cancel := startTestServerWithLimits(t, server.DefaultMaxBlobsPerChannel, 1, nil)
 	defer cancel()
 
 	sender := dialTestWS(t, addr)
@@ -323,5 +400,43 @@ func TestServerCPaceFailureLimitEnforced(t *testing.T) {
 		// expected
 	case <-time.After(3 * time.Second):
 		t.Fatal("timeout: receiver connection was not closed after channel drop")
+	}
+}
+
+// TestServerCertEndpoint verifies the /cert endpoint returns the DER-encoded
+// TLS certificate (M-05).
+func TestServerCertEndpoint(t *testing.T) {
+	addr, cancel := startTestServer(t)
+	defer cancel()
+
+	tlsCfg := &tls.Config{InsecureSkipVerify: true}
+	client := &http.Client{
+		Transport: &http.Transport{TLSClientConfig: tlsCfg},
+		Timeout:   5 * time.Second,
+	}
+
+	resp, err := client.Get("https://" + addr + "/cert")
+	if err != nil {
+		t.Fatalf("GET /cert: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	if resp.Header.Get("Content-Type") != "application/x-pem-file" {
+		t.Fatalf("expected Content-Type application/x-pem-file, got %q", resp.Header.Get("Content-Type"))
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read body: %v", err)
+	}
+	if len(body) == 0 {
+		t.Fatal("empty certificate body")
+	}
+	// Verify it's valid PEM
+	if string(body[:27]) != "-----BEGIN CERTIFICATE-----" {
+		t.Fatal("expected PEM certificate format")
 	}
 }

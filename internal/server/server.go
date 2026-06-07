@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"log/slog"
 	"net"
@@ -169,19 +170,25 @@ func (s *Server) Addr() string {
 	return ""
 }
 
-// handleCert serves the server's DER-encoded certificate for client pinning.
-// Clients can hash the response with SHA-256 to obtain the fingerprint they
-// should store via `hermod trust`. The /cert endpoint replaces the prior
-// double-connection hack in FetchServerFingerprint (M-06).
+// handleCert serves the server's TLS certificate as PEM for client pinning.
+// Clients can hash the DER bytes inside the PEM block with SHA-256 to obtain
+// the fingerprint they should store via `hermod trust`.
+// Rate limiting is applied to prevent abuse (M-05).
 func (s *Server) handleCert(w http.ResponseWriter, r *http.Request) {
+	if !s.rl.Allow(r.RemoteAddr) {
+		s.logger.Warn("cert endpoint rate-limited", "remote_addr", r.RemoteAddr)
+		http.Error(w, "rate limited", http.StatusTooManyRequests)
+		return
+	}
 	if len(s.certDER) == 0 {
 		http.Error(w, "certificate not available", http.StatusNotFound)
 		return
 	}
-	w.Header().Set("Content-Type", "application/pkix-cert")
-	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(s.certDER)))
+	pemBlock := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: s.certDER})
+	w.Header().Set("Content-Type", "application/x-pem-file")
+	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(pemBlock)))
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(s.certDER)
+	_, _ = w.Write(pemBlock)
 }
 
 // handleWS handles WebSocket connections from clients.
@@ -263,9 +270,9 @@ func (s *Server) handleJoin(conn *websocket.Conn, remoteAddr string, channelID u
 		return
 	}
 
-	// Reject a second receiver on the same channel (L-04). Only one receiver
-	// is permitted per channel; a second joiner could race for the blob relay
-	// and displace the legitimate receiver.
+	// Check for existing receiver AND add the new one under a single lock
+	// to prevent a TOCTOU race (C-01). Two concurrent joins must not both
+	// pass the check before either adds itself.
 	s.mu.Lock()
 	for _, w := range s.waiters[channelID] {
 		if !w.sender {
@@ -276,15 +283,8 @@ func (s *Server) handleJoin(conn *websocket.Conn, remoteAddr string, channelID u
 			return
 		}
 	}
-	s.mu.Unlock()
-
-	host, _, _ := net.SplitHostPort(remoteAddr)
-	payload, _ := json.Marshal(map[string]string{"public_ip": host})
-	conn.WriteJSON(Message{Type: MsgOK, ChannelID: channelID, Payload: payload})
-	s.logger.Info("Receiver joined channel", "channel_id", channelID, "receiver_ip", host)
 
 	wsc := &wsConn{conn: conn, sender: false}
-	s.mu.Lock()
 	s.waiters[channelID] = append(s.waiters[channelID], wsc)
 	// Notify sender that receiver has joined
 	for _, w := range s.waiters[channelID] {
@@ -295,6 +295,11 @@ func (s *Server) handleJoin(conn *websocket.Conn, remoteAddr string, channelID u
 		}
 	}
 	s.mu.Unlock()
+
+	host, _, _ := net.SplitHostPort(remoteAddr)
+	payload, _ := json.Marshal(map[string]string{"public_ip": host})
+	conn.WriteJSON(Message{Type: MsgOK, ChannelID: channelID, Payload: payload})
+	s.logger.Info("Receiver joined channel", "channel_id", channelID, "receiver_ip", host)
 
 	s.relay(conn, channelID, false)
 }

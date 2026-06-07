@@ -199,8 +199,8 @@ hermod-p2p/
 * `--listen` (`-l`): Bind address (`host:port`). Default: `0.0.0.0:4376`. Assigning port `0` triggers automatic ephemeral allocation.
 * `--db` (`-d`): SQLite database path. Default: `~/.config/hermod/signaling.db`.
 * `--ttl` (`-T`): TTL in seconds for channels. Default: `600`.
-* `--rate-limit`: Token bucket permitted requests per second per IP prefix. Default: `5`.
-* `--rate-burst`: Token bucket maximum burst capacity per IP prefix. Default: `15`.
+* `--rate-limit`: Token bucket permitted requests per second per IP prefix (applies to both `/ws` and `/cert`). Default: `5`.
+* `--rate-burst`: Token bucket maximum burst capacity per IP prefix (applies to both `/ws` and `/cert`). Default: `15`.
 
 **Command: `tx` | `send`**
 
@@ -255,7 +255,7 @@ hermod-p2p/
     1. The test harness compiles a temporary `hermod` executable.
     2. A `testscript` routine starts `hermod serve` in the background, bound to a local network interface (`localhost`).
     3. The routine executes `hermod tx` with an automatically generated test file.
-    4. The routine parses standard output (`stdout`) to extract the generated transfer code.
+     4. The routine parses the combined output (both stdout and stderr are redirected to the same pipe) to extract the generated transfer code.
     5. The routine executes `hermod rx` concurrently.
     6. The test harness evaluates process exit codes and performs a SHA-256 hash comparison of the initial payload and the received payload to verify QUIC transport integrity and file I/O operations.
 * **Concurrency Verification**: All tests are executed with the `-race` flag enabled (`go test -race ./...`) for deterministic detection of data races in asynchronous UDP operations and QUIC stream handling.

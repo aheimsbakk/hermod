@@ -57,7 +57,9 @@ func Dir() string {
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return "."
+		// Fall back to /tmp/hermod-<uid> (M-06). This avoids writing the
+		// server private key to an uncontrolled working directory like ".".
+		return fmt.Sprintf("/tmp/hermod-%d", os.Getuid())
 	}
 	return filepath.Join(home, ".config", "hermod")
 }

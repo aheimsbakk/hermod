@@ -10,6 +10,7 @@ import (
 	"crypto/x509/pkix"
 	"math/big"
 	"net"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -235,6 +236,76 @@ func TestMuxedConnReadFrom_Closed(t *testing.T) {
 	}
 	if n != 0 || addr != nil {
 		t.Errorf("expected n=0 and addr=nil on closed ReadFrom, got n=%d addr=%v", n, addr)
+	}
+}
+
+// TestMuxedConnReadFrom_DeadlineExceeded verifies that ReadFrom returns
+// os.ErrDeadlineExceeded when the read deadline is set in the past (H-02).
+func TestMuxedConnReadFrom_DeadlineExceeded(t *testing.T) {
+	stub := newStubPacketConn()
+	mux := NewPacketMux(stub)
+	defer mux.Close()
+
+	mc := &muxedConn{mux: mux}
+
+	// Set a deadline in the past.
+	if err := mc.SetReadDeadline(time.Now().Add(-time.Second)); err != nil {
+		t.Fatalf("SetReadDeadline: %v", err)
+	}
+
+	buf := make([]byte, 1024)
+	_, _, err := mc.ReadFrom(buf)
+	if err == nil {
+		t.Fatal("expected deadline exceeded error")
+	}
+	if !os.IsTimeout(err) {
+		t.Fatalf("expected timeout error, got %v", err)
+	}
+}
+
+// TestMuxedConnReadFrom_DeadlineFires verifies that ReadFrom returns
+// os.ErrDeadlineExceeded when the deadline expires while waiting (H-02).
+func TestMuxedConnReadFrom_DeadlineFires(t *testing.T) {
+	stub := newStubPacketConn()
+	mux := NewPacketMux(stub)
+	defer mux.Close()
+
+	mc := &muxedConn{mux: mux}
+
+	// Set a deadline 50ms in the future.
+	if err := mc.SetReadDeadline(time.Now().Add(50 * time.Millisecond)); err != nil {
+		t.Fatalf("SetReadDeadline: %v", err)
+	}
+
+	buf := make([]byte, 1024)
+	_, _, err := mc.ReadFrom(buf)
+	if err == nil {
+		t.Fatal("expected deadline exceeded error")
+	}
+	if !os.IsTimeout(err) {
+		t.Fatalf("expected timeout error, got %v", err)
+	}
+}
+
+// TestMuxedConnWriteTo_DeadlineExceeded verifies that WriteTo returns
+// os.ErrDeadlineExceeded when the write deadline is set in the past (H-02).
+func TestMuxedConnWriteTo_DeadlineExceeded(t *testing.T) {
+	stub := newStubPacketConn()
+	mux := NewPacketMux(stub)
+	defer mux.Close()
+
+	mc := &muxedConn{mux: mux}
+
+	if err := mc.SetWriteDeadline(time.Now().Add(-time.Second)); err != nil {
+		t.Fatalf("SetWriteDeadline: %v", err)
+	}
+
+	_, err := mc.WriteTo([]byte{0x01}, &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 9999})
+	if err == nil {
+		t.Fatal("expected deadline exceeded error")
+	}
+	if !os.IsTimeout(err) {
+		t.Fatalf("expected timeout error, got %v", err)
 	}
 }
 

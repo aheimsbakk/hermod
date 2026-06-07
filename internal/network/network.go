@@ -4,11 +4,13 @@ package network
 import (
 	"context"
 	"crypto/sha256"
+	"crypto/subtle"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/hex"
 	"fmt"
 	"net"
+	"os"
 	"sync"
 	"time"
 
@@ -85,13 +87,32 @@ func (m *packetMux) LocalAddr() net.Addr {
 
 // muxedConn implements net.PacketConn backed by the QUIC channel of a packetMux.
 type muxedConn struct {
-	mux *packetMux
+	mux           *packetMux
+	mu            sync.Mutex
+	readDeadline  time.Time
+	writeDeadline time.Time
 }
 
 func (c *muxedConn) ReadFrom(p []byte) (n int, addr net.Addr, err error) {
+	// Check whether a read deadline is set and build a timer channel.
+	c.mu.Lock()
+	dl := c.readDeadline
+	c.mu.Unlock()
+
+	var timerCh <-chan time.Time
+	if !dl.IsZero() {
+		d := time.Until(dl)
+		if d <= 0 {
+			return 0, nil, os.ErrDeadlineExceeded
+		}
+		timerCh = time.After(d)
+	}
+
 	select {
 	case <-c.mux.closed:
 		return 0, nil, net.ErrClosed
+	case <-timerCh:
+		return 0, nil, os.ErrDeadlineExceeded
 	case pkt, ok := <-c.mux.quicCh:
 		if !ok {
 			return 0, nil, net.ErrClosed
@@ -102,14 +123,39 @@ func (c *muxedConn) ReadFrom(p []byte) (n int, addr net.Addr, err error) {
 }
 
 func (c *muxedConn) WriteTo(p []byte, addr net.Addr) (n int, err error) {
+	// Check write deadline before delegating to the underlying connection.
+	c.mu.Lock()
+	dl := c.writeDeadline
+	c.mu.Unlock()
+	if !dl.IsZero() && time.Now().After(dl) {
+		return 0, os.ErrDeadlineExceeded
+	}
 	return c.mux.conn.WriteTo(p, addr)
 }
 
-func (c *muxedConn) Close() error                       { return nil } // managed by mux
-func (c *muxedConn) LocalAddr() net.Addr                { return c.mux.conn.LocalAddr() }
-func (c *muxedConn) SetDeadline(t time.Time) error      { return nil }
-func (c *muxedConn) SetReadDeadline(t time.Time) error  { return nil }
-func (c *muxedConn) SetWriteDeadline(t time.Time) error { return nil }
+func (c *muxedConn) Close() error { return nil } // managed by mux
+func (c *muxedConn) LocalAddr() net.Addr {
+	return c.mux.conn.LocalAddr()
+}
+func (c *muxedConn) SetDeadline(t time.Time) error {
+	c.mu.Lock()
+	c.readDeadline = t
+	c.writeDeadline = t
+	c.mu.Unlock()
+	return nil
+}
+func (c *muxedConn) SetReadDeadline(t time.Time) error {
+	c.mu.Lock()
+	c.readDeadline = t
+	c.mu.Unlock()
+	return nil
+}
+func (c *muxedConn) SetWriteDeadline(t time.Time) error {
+	c.mu.Lock()
+	c.writeDeadline = t
+	c.mu.Unlock()
+	return nil
+}
 
 // BindUDP binds a UDP socket on the given address (":0" for OS-assigned port).
 // SO_REUSEADDR/SO_REUSEPORT are set via udpControl (platform-specific file).
@@ -236,6 +282,8 @@ func ListenQUIC(mux *packetMux, cert tls.Certificate, baseTLS *tls.Config, peerC
 }
 
 // makeCertPinner returns a VerifyPeerCertificate function that enforces cert hash pinning.
+// The fingerprint comparison uses crypto/subtle.ConstantTimeCompare to prevent
+// timing side-channel attacks (H-01).
 func makeCertPinner(expectedHex string) func(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error {
 	return func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
 		if len(rawCerts) == 0 {
@@ -243,7 +291,7 @@ func makeCertPinner(expectedHex string) func(rawCerts [][]byte, verifiedChains [
 		}
 		sum := sha256.Sum256(rawCerts[0])
 		got := hex.EncodeToString(sum[:])
-		if got != expectedHex {
+		if subtle.ConstantTimeCompare([]byte(got), []byte(expectedHex)) != 1 {
 			return fmt.Errorf("cert fingerprint mismatch: got %s, want %s", got, expectedHex)
 		}
 		return nil

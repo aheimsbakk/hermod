@@ -3,10 +3,14 @@ package network
 
 import (
 	"context"
+	"crypto/subtle"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
+	"io"
+	"net/http"
 	"net/url"
 	"sync"
 	"time"
@@ -50,7 +54,7 @@ func dialSignaling(serverURL string, pinnedFingerprint string) (*SignalingClient
 				return fmt.Errorf("no server certificate")
 			}
 			got := CertFingerprint(rawCerts[0])
-			if got != pinnedFingerprint {
+			if subtle.ConstantTimeCompare([]byte(got), []byte(pinnedFingerprint)) != 1 {
 				return fmt.Errorf("server cert fingerprint mismatch: got %s, want %s", got, pinnedFingerprint)
 			}
 			return nil
@@ -210,43 +214,50 @@ func (c *SignalingClient) WaitReady() error {
 	}
 }
 
-// FetchServerFingerprint connects to serverURL with no cert verification and
-// returns the server's certificate SHA-256 fingerprint.
+// FetchServerFingerprint fetches the server's TLS certificate via the HTTPS
+// /cert endpoint and returns its SHA-256 fingerprint.
+// This replaces the prior double-WebSocket-connection approach (M-03).
 func FetchServerFingerprint(serverURL string) (string, error) {
-	client, err := dialSignaling(serverURL, "")
-	if err != nil {
-		return "", fmt.Errorf("connect: %w", err)
-	}
-	defer client.Close()
-
-	// Extract fingerprint from the underlying TLS connection
-	// We need to get it from the handshake — reconnect with custom verifier
-	var fp string
-	tlsCfg := &tls.Config{
-		InsecureSkipVerify: true,
-		VerifyPeerCertificate: func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
-			if len(rawCerts) > 0 {
-				fp = CertFingerprint(rawCerts[0])
-			}
-			return nil
-		},
-	}
 	u, err := url.Parse(serverURL)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("parse server URL: %w", err)
 	}
-	wsURL := u.String()
-	if wsURL[len(wsURL)-3:] != "/ws" {
-		wsURL += "/ws"
+	// Convert wss:// → https:// for the HTTP request.
+	u.Scheme = "https"
+	certURL := u.String()
+	// Strip any trailing /ws path and append /cert.
+	if len(certURL) >= 3 && certURL[len(certURL)-3:] == "/ws" {
+		certURL = certURL[:len(certURL)-3]
 	}
-	dialer := websocket.Dialer{TLSClientConfig: tlsCfg}
-	conn2, _, err := dialer.Dial(wsURL, nil)
+	certURL += "/cert"
+
+	tlsCfg := &tls.Config{InsecureSkipVerify: true}
+	client := &http.Client{
+		Transport: &http.Transport{TLSClientConfig: tlsCfg},
+		Timeout:   10 * time.Second,
+	}
+	resp, err := client.Get(certURL)
 	if err != nil {
-		return "", fmt.Errorf("dial for fingerprint: %w", err)
+		return "", fmt.Errorf("fetch cert from %s: %w", certURL, err)
 	}
-	conn2.Close()
-	if fp == "" {
-		return "", fmt.Errorf("could not extract certificate fingerprint")
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("cert endpoint returned %s", resp.Status)
 	}
-	return fp, nil
+
+	certPEM, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("read cert response: %w", err)
+	}
+	if len(certPEM) == 0 {
+		return "", fmt.Errorf("empty certificate response")
+	}
+
+	block, _ := pem.Decode(certPEM)
+	if block == nil || block.Type != "CERTIFICATE" {
+		return "", fmt.Errorf("cert endpoint did not return a valid PEM certificate")
+	}
+
+	return CertFingerprint(block.Bytes), nil
 }
