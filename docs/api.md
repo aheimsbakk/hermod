@@ -262,9 +262,9 @@ Signaling server and in-memory store.
 const DefaultMaxBlobsPerChannel = 10
 const DefaultMaxCPaceFailures   = 3
 
-func NewServer(store SignalingStore, rl *RateLimiter, ttl time.Duration, maxBlobsPerChannel, maxCPaceFailures int, certDER []byte, logger *slog.Logger) *Server
+func NewServer(store SignalingStore, certRL, wsRL, joinRL *RateLimiter, ttl time.Duration, maxBlobsPerChannel, maxCPaceFailures int, certDER []byte, logger *slog.Logger) *Server
 ```
-Creates a new signaling server. `store` holds channel state. `rl` enforces per-IP rate limits on both the WebSocket upgrade path (`/ws`) and the `/cert` endpoint. `ttl` is how long an allocated channel lives before the server expires it. `maxBlobsPerChannel` caps the total number of relayed blobs per channel; use `DefaultMaxBlobsPerChannel`. `maxCPaceFailures` caps CPace protocol violations before the channel is dropped and all peers are disconnected; use `DefaultMaxCPaceFailures`. `certDER` is the DER-encoded server certificate served via the `/cert` endpoint (pass nil to disable it).
+Creates a new signaling server with separate rate limiters: `certRL` for the `/cert` HTTP endpoint, `wsRL` for WebSocket upgrades, and `joinRL` for join attempts (channel enumeration protection). `store` holds channel state. `ttl` is how long an allocated channel lives before the server expires it. `maxBlobsPerChannel` caps the total number of relayed blobs per channel; use `DefaultMaxBlobsPerChannel`. `maxCPaceFailures` caps CPace protocol violations before the channel is dropped and all peers are disconnected; use `DefaultMaxCPaceFailures`. `certDER` is the DER-encoded server certificate served via the `/cert` endpoint (pass nil to disable it).
 
 ```go
 func (s *Server) ListenAndServe(ctx context.Context, addr string, tlsCfg *tls.Config) error
@@ -302,7 +302,7 @@ func NewRateLimiter(rate, burst float64) *RateLimiter
 func (rl *RateLimiter) Allow(addr string) bool
 func (rl *RateLimiter) Cleanup(maxAge time.Duration)
 ```
-Token-bucket rate limiter keyed by IP prefix (`/32` IPv4, `/64` IPv6). The same limiter is shared across both the WebSocket upgrade path and the `/cert` endpoint. The bucket key is `hex(HMAC-SHA256(salt, prefix))` — raw IP addresses are never stored. A 32-byte cryptographic salt is generated at startup and replaced every UTC calendar day; all buckets are cleared on rotation to prevent cross-day tracking. `addr` is a `"host:port"` or bare IP string. `Cleanup` removes entries not seen within `maxAge`.
+Token-bucket rate limiter keyed by IP prefix (`/32` IPv4, `/64` IPv6). The server uses separate instances for the `/cert` endpoint, WebSocket upgrades, and join attempts, so abuse of one endpoint does not starve the others. The bucket key is `hex(HMAC-SHA256(salt, prefix))` — raw IP addresses are never stored. A 32-byte cryptographic salt is generated at startup and replaced every UTC calendar day; all buckets are cleared on rotation to prevent cross-day tracking. `addr` is a `"host:port"` or bare IP string. `Cleanup` removes entries not seen within `maxAge`.
 
 ---
 

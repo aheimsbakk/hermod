@@ -59,7 +59,7 @@ func cmdStartServer(ts *testscript.TestScript, neg bool, _ []string) {
 	store := server.NewMemoryStore()
 	rl := server.NewRateLimiter(100, 1000)
 	srv := server.NewServer(
-		store, rl, 60*time.Second,
+		store, rl, rl, rl, 60*time.Second,
 		server.DefaultMaxBlobsPerChannel, server.DefaultMaxCPaceFailures,
 		nil, slog.Default(),
 	)

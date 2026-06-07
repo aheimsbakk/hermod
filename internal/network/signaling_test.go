@@ -29,7 +29,7 @@ func startSignalingServer(t *testing.T) string {
 	store := server.NewMemoryStore()
 	rl := server.NewRateLimiter(100, 1000)
 	// Pass the DER-encoded TLS certificate so the /cert endpoint works.
-	srv := server.NewServer(store, rl, 60*time.Second, server.DefaultMaxBlobsPerChannel, server.DefaultMaxCPaceFailures, tlsCert.Certificate[0], slog.Default())
+	srv := server.NewServer(store, rl, rl, rl, 60*time.Second, server.DefaultMaxBlobsPerChannel, server.DefaultMaxCPaceFailures, tlsCert.Certificate[0], slog.Default())
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

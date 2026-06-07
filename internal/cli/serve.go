@@ -102,12 +102,14 @@ func runServe(listenAddr string, ttl time.Duration, rateLimit, rateBurst float64
 	defer store.Close()
 	logDebug("in-memory signaling store initialised")
 
-	rl := server.NewRateLimiter(rateLimit, rateBurst)
-	logDebug("rate limiter configured", "rate", rateLimit, "burst", rateBurst)
+	certRL := server.NewRateLimiter(rateLimit, rateBurst)
+	wsRL := server.NewRateLimiter(rateLimit, rateBurst)
+	joinRL := server.NewRateLimiter(rateLimit, rateBurst)
+	logDebug("rate limiters configured", "rate", rateLimit, "burst", rateBurst)
 
 	// The server uses the global slog logger, which is already wired to stderr
 	// at the active verbosity level by applyVerbosity.
-	srv := server.NewServer(store, rl, ttl, maxBlobsPerChannel, maxCPaceFailures, certDER, nil)
+	srv := server.NewServer(store, certRL, wsRL, joinRL, ttl, maxBlobsPerChannel, maxCPaceFailures, certDER, nil)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()

@@ -37,6 +37,8 @@ The `--fingerprint` flag allows the user to supply a previously known fingerprin
 
 **Mitigation:** When `--fingerprint` is set, verify it *during* the TLS handshake (use `VerifyPeerCertificate`), not after. Document that `trust` without `--fingerprint` must only be run over a trusted network.
 
+**Status: Fixed** in commit 3d16227 — `VerifyPeerCertificate` checks the fingerprint during the TLS handshake when `--fingerprint` is set. The post-hoc comparison in `trust.go` was removed as redundant.
+
 ---
 
 #### 2. Signaling client always sets `InsecureSkipVerify: true` without fallback chain validation
@@ -54,6 +56,8 @@ When `pinnedFingerprint` is non-empty, a custom `VerifyPeerCertificate` callback
 **Risk:** The TLS tunnel provides encryption but the peer's identity is not authenticated.
 
 **Recommendation:** When `pinnedFingerprint` is empty, still perform standard TLS verification. Use `InsecureSkipVerify: true` only when cert pinning is active.
+
+**Status: Won't fix — intended functionality.** The signaling server uses a self-signed certificate, so CA chain verification would always reject it. The TOFU bootstrap phase (`trust` without `--fingerprint`) is intentionally unauthenticated — the connection is encrypted but identity is not verified. Operational guidance already documents that this must run over a trusted network. When `pinnedFingerprint` is set (normal tx/rx), `VerifyPeerCertificate` provides strong identity verification via cert pinning.
 
 ---
 
@@ -95,6 +99,8 @@ A client learns whether a specific 16-bit channel ID exists by trying to join it
 
 **Mitigation:** Rate limiting (5 req/s, burst 15) limits enumeration to ~15 channels per burst, then 5/second. At this rate, enumerating the full space takes ~3.6 hours. Consider returning a generic "operation failed" for all join errors on non-existent or already-joined channels.
 
+**Status: Fixed.** A dedicated `joinRL` rate limiter is applied to `handleJoin` before any channel lookup, and all join failures (non-existent channel, duplicate receiver) return the generic error `"operation failed"`. Per-endpoint rate limiters prevent cross-endpoint starvation (see #6).
+
 ---
 
 ### P2 — Fix when possible
@@ -121,6 +127,8 @@ The small space also means that an active server with many concurrent channels c
 The single `RateLimiter` instance protects both `/cert` and `/ws`. An attacker who uses `/cert` requests consumes from the same token bucket as WebSocket operations. A burst of `/cert` requests (e.g., 15) could temporarily starve WebSocket connections.
 
 **Recommendation:** Create separate rate limiters for `/cert` and WebSocket, or use a stricter per-endpoint configuration in production.
+
+**Status: Fixed.** `Server` now holds `certRL`, `wsRL`, and `joinRL` — separate `RateLimiter` instances for the `/cert` endpoint, WebSocket upgrades, and join attempts. Each endpoint has its own token bucket, so `/cert` abuse no longer starves WebSocket connections. The `joinRL` instance also protects against channel enumeration (see #4).
 
 ---
 

@@ -23,6 +23,12 @@ func startTestServer(t *testing.T) (string, func()) {
 // startTestServerWithLimits starts a test signaling server. certDER may be nil
 // to disable the /cert endpoint, or the DER-encoded TLS certificate to enable it.
 func startTestServerWithLimits(t *testing.T, maxBlobs, maxCPaceFailures int, certDER []byte) (string, func()) {
+	rl := server.NewRateLimiter(100, 1000)
+	return startTestServerWithRL(t, rl, rl, rl, maxBlobs, maxCPaceFailures, certDER)
+}
+
+// startTestServerWithRL starts a test signaling server with separate rate limiters.
+func startTestServerWithRL(t *testing.T, certRL, wsRL, joinRL *server.RateLimiter, maxBlobs, maxCPaceFailures int, certDER []byte) (string, func()) {
 	t.Helper()
 	cfg := config.Default()
 	if err := config.GenerateServerCert(cfg); err != nil {
@@ -36,12 +42,11 @@ func startTestServerWithLimits(t *testing.T, maxBlobs, maxCPaceFailures int, cer
 	tlsCfg.Certificates = []tls.Certificate{tlsCert}
 
 	store := server.NewMemoryStore()
-	rl := server.NewRateLimiter(100, 1000)
 	logger := slog.Default()
 	if certDER == nil {
 		certDER = tlsCert.Certificate[0]
 	}
-	srv := server.NewServer(store, rl, 60*time.Second, maxBlobs, maxCPaceFailures, certDER, logger)
+	srv := server.NewServer(store, certRL, wsRL, joinRL, 60*time.Second, maxBlobs, maxCPaceFailures, certDER, logger)
 
 	// Find a free port
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -438,5 +443,130 @@ func TestServerCertEndpoint(t *testing.T) {
 	// Verify it's valid PEM
 	if string(body[:27]) != "-----BEGIN CERTIFICATE-----" {
 		t.Fatal("expected PEM certificate format")
+	}
+}
+
+// TestServerCertRateLimitIsolation verifies that exhausting the /cert rate
+// limiter does not affect WebSocket connections (fix #6).
+func TestServerCertRateLimitIsolation(t *testing.T) {
+	// certRL: burst=1 (tight), wsRL: burst=1000 (generous).
+	certRL := server.NewRateLimiter(100, 1)
+	wsRL := server.NewRateLimiter(100, 1000)
+	joinRL := server.NewRateLimiter(100, 1000)
+	addr, cancel := startTestServerWithRL(t, certRL, wsRL, joinRL,
+		server.DefaultMaxBlobsPerChannel, server.DefaultMaxCPaceFailures, nil)
+	defer cancel()
+
+	tlsCfg := &tls.Config{InsecureSkipVerify: true}
+	client := &http.Client{
+		Transport: &http.Transport{TLSClientConfig: tlsCfg},
+		Timeout:   5 * time.Second,
+	}
+
+	// First /cert request — should succeed (burst=1).
+	resp, err := client.Get("https://" + addr + "/cert")
+	if err != nil {
+		t.Fatalf("first GET /cert: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("first /cert: expected 200, got %d", resp.StatusCode)
+	}
+
+	// Second /cert request — rate-limited (burst exhausted).
+	resp, err = client.Get("https://" + addr + "/cert")
+	if err != nil {
+		t.Fatalf("second GET /cert: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("second /cert: expected 429, got %d", resp.StatusCode)
+	}
+
+	// WebSocket should still connect — its rate limiter is independent.
+	wsDialer := &websocket.Dialer{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+	}
+	conn, _, err := wsDialer.Dial("wss://"+addr+"/ws", nil)
+	if err != nil {
+		t.Fatalf("WS dial after cert rate-limit exhausted: %v", err)
+	}
+	conn.Close()
+}
+
+// TestServerJoinRateLimitBlocksEnumeration verifies that exhausting the join
+// rate limiter prevents further join attempts (fix #4 channel enumeration).
+func TestServerJoinRateLimitBlocksEnumeration(t *testing.T) {
+	// joinRL: burst=1 so the first join for each IP passes, the second is blocked.
+	certRL := server.NewRateLimiter(100, 1000)
+	wsRL := server.NewRateLimiter(100, 1000)
+	joinRL := server.NewRateLimiter(100, 1)
+	addr, cancel := startTestServerWithRL(t, certRL, wsRL, joinRL,
+		server.DefaultMaxBlobsPerChannel, server.DefaultMaxCPaceFailures, nil)
+	defer cancel()
+
+	// Allocate a channel so we can attempt joins.
+	sender := dialTestWS(t, addr)
+	defer sender.Close()
+	sender.WriteJSON(server.Message{Type: server.MsgAllocate, ChannelID: 9001})
+	var allocResp server.Message
+	if err := sender.ReadJSON(&allocResp); err != nil {
+		t.Fatalf("allocate: %v", err)
+	}
+	if allocResp.Type != server.MsgOK {
+		t.Fatalf("allocate expected MsgOK, got %s", allocResp.Type)
+	}
+
+	// First join to a valid channel — allowed (burst=1).
+	receiver1 := dialTestWS(t, addr)
+	receiver1.WriteJSON(server.Message{Type: server.MsgJoin, ChannelID: 9001})
+	var joinResp1 server.Message
+	receiver1.SetReadDeadline(time.Now().Add(3 * time.Second))
+	if err := receiver1.ReadJSON(&joinResp1); err != nil {
+		t.Fatalf("first join read: %v", err)
+	}
+	if joinResp1.Type != server.MsgOK {
+		t.Fatalf("first join expected MsgOK, got %s (error: %s)", joinResp1.Type, joinResp1.Error)
+	}
+	receiver1.Close()
+
+	// Second join from the same IP — rate-limited (burst exhausted).
+	receiver2 := dialTestWS(t, addr)
+	receiver2.WriteJSON(server.Message{Type: server.MsgJoin, ChannelID: 9001})
+	var joinResp2 server.Message
+	receiver2.SetReadDeadline(time.Now().Add(3 * time.Second))
+	if err := receiver2.ReadJSON(&joinResp2); err != nil {
+		t.Fatalf("second join read: %v", err)
+	}
+	if joinResp2.Type != server.MsgError {
+		t.Fatalf("second join expected MsgError (rate-limited), got %s", joinResp2.Type)
+	}
+	if joinResp2.Error != "operation failed" {
+		t.Fatalf("second join expected 'operation failed', got %q", joinResp2.Error)
+	}
+	receiver2.Close()
+}
+
+// TestServerJoinNonExistentChannelGenericError verifies that joining a
+// non-existent channel returns "operation failed" instead of "channel not
+// found", preventing channel enumeration (fix #4).
+func TestServerJoinNonExistentChannelGenericError(t *testing.T) {
+	addr, cancel := startTestServer(t)
+	defer cancel()
+
+	conn := dialTestWS(t, addr)
+	defer conn.Close()
+
+	conn.WriteJSON(server.Message{Type: server.MsgJoin, ChannelID: 9999})
+	var resp server.Message
+	conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+	if err := conn.ReadJSON(&resp); err != nil {
+		t.Fatalf("join read: %v", err)
+	}
+	if resp.Type != server.MsgError {
+		t.Fatalf("expected MsgError, got %s", resp.Type)
+	}
+	if resp.Error != "operation failed" {
+		t.Fatalf("expected 'operation failed', got %q", resp.Error)
 	}
 }
