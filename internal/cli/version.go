@@ -3,4 +3,4 @@ package cli
 
 // appVersion is the current application version.
 // Updated automatically by scripts/bump-version.sh.
-const appVersion = "0.10.1"
+const appVersion = "0.10.2"
