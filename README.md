@@ -2,6 +2,10 @@
 
 Hermod transfers files and text directly between peers over an encrypted QUIC connection. No data passes through the signaling server — it only helps the two peers find each other.
 
+The project is named after Hermod, the messenger god in Norse mythology — the primary courier of the Æsir, best known for riding to Hel to negotiate the return of Baldr.
+
+Hermod was inspired by [Magic Wormhole](https://github.com/magic-wormhole/magic-wormhole), a Python tool that transfers files between computers using short, human-readable codes.
+
 ## What it does
 
 - End-to-end encrypted transfer using QUIC + TLS 1.3
@@ -44,6 +48,18 @@ The file lands in the current directory.
 
 ## Usage
 
+### Global flags
+
+These flags apply to every command.
+
+| Flag | Short | Default | Description |
+|---|---|---|---|
+| `--verbose` | | `none` | Log verbosity: `none`, `error`, `warning`, `info`, `debug` |
+| `--quiet` | `-q` | off | Suppress status output. Errors are always shown. |
+| `--ipv4` | `-4` | off | Use IPv4 only for hole punching. Cannot be combined with `--ipv6`. |
+| `--ipv6` | `-6` | off | Use IPv6 only for hole punching. Cannot be combined with `--ipv4`. |
+| `--version` | `-V` | | Print the version and exit. |
+
 ### tx — send
 
 ```
@@ -55,15 +71,14 @@ hermod tx [INPUT] [flags]
 - A quoted string — sends it as text
 - Omitted — reads from stdin
 
-| Flag | Default | Description |
+| Flag | Short | Default | Description |
 |---|---|---|---|
-| `-s`, `--server` | `wss://localhost:4376` | Signaling server URL (saved as default when specified) |
-| `-w`, `--words` | `3` | Number of words in the transfer code |
-| `-l`, `--listen` | `:0` | Local UDP bind address |
-| `-v`, `--verify` | off | Require out-of-band SAS verification (symmetric — enforced on both sides) |
-| `-4`, `--ipv4` | off | Use IPv4 only for hole punching. Cannot be combined with `-6`. |
-| `-6`, `--ipv6` | off | Use IPv6 only for hole punching. Cannot be combined with `-4`. |
-| `--verbose` | `none` | Log verbosity: `none`, `error`, `warning`, `info`, `debug` |
+| `--server` | `-s` | `wss://localhost:4376` | Signaling server URL (saved as default when specified) |
+| `--words` | `-w` | `3` | Number of words in the transfer code |
+| `--listen` | `-l` | `:0` | Local UDP bind address |
+| `--verify` | `-v` | off | Require out-of-band SAS verification (symmetric — enforced on both sides) |
+
+Global flags `--verbose`, `--quiet`, `--ipv4`, and `--ipv6` also apply.
 
 **Examples:**
 ```bash
@@ -86,15 +101,14 @@ tar czf - ./project | ./hermod tx
 hermod rx [CODE] [flags]
 ```
 
-| Flag | Default | Description |
+| Flag | Short | Default | Description |
 |---|---|---|---|
-| `-s`, `--server` | `wss://localhost:4376` | Signaling server URL (saved as default when specified) |
-| `-d`, `--destination` | current directory | Output path |
-| `-l`, `--listen` | `:0` | Local UDP bind address |
-| `-v`, `--verify` | off | Require out-of-band SAS verification (symmetric — enforced on both sides) |
-| `-4`, `--ipv4` | off | Use IPv4 only for hole punching. Cannot be combined with `-6`. |
-| `-6`, `--ipv6` | off | Use IPv6 only for hole punching. Cannot be combined with `-4`. |
-| `--verbose` | `none` | Log verbosity: `none`, `error`, `warning`, `info`, `debug` |
+| `--server` | `-s` | `wss://localhost:4376` | Signaling server URL (saved as default when specified) |
+| `--destination` | `-d` | current directory | Output path |
+| `--listen` | `-l` | `:0` | Local UDP bind address |
+| `--verify` | `-v` | off | Require out-of-band SAS verification (symmetric — enforced on both sides) |
+
+Global flags `--verbose`, `--quiet`, `--ipv4`, and `--ipv6` also apply.
 
 **Examples:**
 ```bash
@@ -111,15 +125,16 @@ hermod rx [CODE] [flags]
 hermod serve [flags]
 ```
 
-| Flag | Default | Description |
-|---|---|---|
-| `-l`, `--listen` | `:4376` | Bind address (default is dual-stack — both IPv4 and IPv6) |
-| `-T`, `--ttl` | `600` | Channel TTL in seconds |
-| `--rate-limit` | `5` | Requests per second per IP prefix (applies to both the WebSocket `/ws` and the `/cert` endpoint) |
-| `--rate-burst` | `15` | Burst capacity per IP prefix (applies to both the WebSocket `/ws` and the `/cert` endpoint) |
-| `--max-blobs-per-channel` | `10` | Hard cap on relayed blobs per channel |
-| `--max-cpace-failures` | `3` | Max CPace failures before a channel is dropped |
-| `--verbose` | `none` | Log verbosity: `none`, `error`, `warning`, `info`, `debug` |
+| Flag | Short | Default | Description |
+|---|---|---|---|
+| `--listen` | `-l` | `:4376` | Bind address (default is dual-stack — both IPv4 and IPv6) |
+| `--ttl` | `-T` | `600` | Channel TTL in seconds |
+| `--rate-limit` | | `5` | Requests per second per IP prefix (applies to both the WebSocket `/ws` and the `/cert` endpoint) |
+| `--rate-burst` | | `15` | Burst capacity per IP prefix (applies to both the WebSocket `/ws` and the `/cert` endpoint) |
+| `--max-blobs-per-channel` | | `10` | Hard cap on relayed blobs per channel |
+| `--max-cpace-failures` | | `3` | Max CPace failures before a channel is dropped |
+
+Global flags `--verbose` and `--quiet` also apply.
 
 The server generates a self-signed TLS certificate on first run and saves it to the config directory (`~/.config/hermod/` on Linux).
 
@@ -134,6 +149,12 @@ hermod trust [SERVER_URL] [--fingerprint FINGERPRINT]
 Connects to the server, fetches its certificate fingerprint, saves it to the local config, and sets the server as the default for future `tx` and `rx` calls.
 
 If you omit the port, `trust` defaults to port 4376 — hermod's standard signaling port.
+
+| Flag | Short | Default | Description |
+|---|---|---|---|
+| `--fingerprint` | | `""` | Expected SHA-256 fingerprint (hex). When set, the server's TLS certificate is verified against this value during the handshake. |
+
+Global flags `--verbose` and `--quiet` also apply.
 
 ```bash
 # With explicit port:
