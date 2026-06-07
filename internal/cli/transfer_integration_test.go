@@ -42,7 +42,7 @@ func startLocalServer(t *testing.T) (serverURL, fingerprint string) {
 	srv := server.NewServer(store, rl, 60*time.Second, server.DefaultMaxBlobsPerChannel, server.DefaultMaxCPaceFailures, nil, slog.Default())
 
 	// Pick a free port, then release the listener so the server can bind it.
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := net.Listen("tcp", ":0")
 	if err != nil {
 		t.Fatalf("pick port: %v", err)
 	}
@@ -220,6 +220,96 @@ func TestTransfer_Stdin_Internal(t *testing.T) {
 	if !bytes.Equal(got, stdinData) {
 		t.Fatalf("stdin mismatch:\n got: %q\nwant: %q", string(got), string(stdinData))
 	}
+}
+
+// TestTransfer_IPv4Flag_Internal verifies file transfer works with -4 flag.
+func TestTransfer_IPv4Flag_Internal(t *testing.T) {
+	// Reset ipv4Only before and after to avoid leaking state into other tests.
+	ipv4Only = false
+	ipv6Only = false
+	defer func() { ipv4Only = false; ipv6Only = false }()
+
+	serverURL, fp := startLocalServer(t)
+	trustServerInTempHome(t, serverURL, fp)
+	srcDir := t.TempDir()
+	srcPath := filepath.Join(srcDir, "data.bin")
+	content := make([]byte, 1024)
+	rand.Read(content)
+	if err := os.WriteFile(srcPath, content, 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+
+	destDir := t.TempDir()
+	stdoutR, stdoutW, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("stdout pipe: %v", err)
+	}
+
+	codeCh := make(chan string, 1)
+	go func() {
+		scanner := bufio.NewScanner(stdoutR)
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if strings.HasPrefix(line, "Transfer code:") {
+				parts := strings.SplitN(line, ":", 2)
+				if len(parts) == 2 {
+					codeCh <- strings.TrimSpace(parts[1])
+				}
+			}
+		}
+		close(codeCh)
+		stdoutR.Close()
+	}()
+
+	txErrCh := make(chan error, 1)
+	oldStdout := os.Stdout
+	oldStderr := os.Stderr
+	os.Stdout = stdoutW
+	os.Stderr = stdoutW
+	go func() {
+		allArgs := []string{"hermod", "-4", "tx", "--server", serverURL, "--words", "3", srcPath}
+		txErrCh <- ExecuteArgs(allArgs)
+		stdoutW.Close()
+		os.Stdout = oldStdout
+		os.Stderr = oldStderr
+	}()
+
+	var code string
+	select {
+	case c, ok := <-codeCh:
+		if !ok || c == "" {
+			t.Fatal("did not receive transfer code from tx (ipv4)")
+		}
+		code = c
+	case <-time.After(10 * time.Second):
+		t.Fatal("timed out waiting for transfer code from tx (ipv4)")
+	}
+
+	rxArgs := []string{"hermod", "-4", "rx", "--server", serverURL, "--destination", destDir, code}
+	if err := ExecuteArgs(rxArgs); err != nil {
+		t.Fatalf("rx error (ipv4): %v", err)
+	}
+	if err := <-txErrCh; err != nil {
+		t.Fatalf("tx error (ipv4): %v", err)
+	}
+
+	entries, err := os.ReadDir(destDir)
+	if err != nil {
+		t.Fatalf("read dest dir: %v", err)
+	}
+	for _, e := range entries {
+		if !e.IsDir() {
+			data, err := os.ReadFile(filepath.Join(destDir, e.Name()))
+			if err != nil {
+				t.Fatalf("read received file: %v", err)
+			}
+			if !bytes.Equal(data, content) {
+				t.Fatalf("ipv4 transfer content mismatch")
+			}
+			return
+		}
+	}
+	t.Fatalf("no file found in %s after ipv4 transfer", destDir)
 }
 
 // TestTransfer_SASVerify_Internal covers the --verify (SAS out-of-band) path through

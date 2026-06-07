@@ -66,11 +66,10 @@ func TestSignalingClientAllocateJoin(t *testing.T) {
 	}
 	defer sender.Close()
 
-	publicIP, err := sender.Allocate(2222)
+	_, _, err = sender.Allocate(2222)
 	if err != nil {
 		t.Fatalf("allocate: %v", err)
 	}
-	_ = publicIP
 
 	// Receiver joins
 	done := make(chan error, 1)
@@ -81,7 +80,7 @@ func TestSignalingClientAllocateJoin(t *testing.T) {
 			return
 		}
 		defer receiver.Close()
-		_, err = receiver.Join(2222)
+		_, _, err = receiver.Join(2222)
 		done <- err
 	}()
 
@@ -219,7 +218,7 @@ func TestAllocateTwiceSameChannelErrors(t *testing.T) {
 	// Second allocation of same channel should error
 	c2, _ := network.DialSignaling(serverURL, "")
 	defer c2.Close()
-	_, err := c2.Allocate(5555)
+	_, _, err := c2.Allocate(5555)
 	if err == nil {
 		t.Fatal("expected error allocating duplicate channel")
 	}
@@ -237,7 +236,7 @@ func TestDialSignalingAllocateJoinErrorBranch(t *testing.T) {
 	// Join as receiver
 	c2, _ := network.DialSignaling(serverURL, "")
 	defer c2.Close()
-	_, err := c2.Join(6666)
+	_, _, err := c2.Join(6666)
 	if err != nil {
 		t.Fatalf("join: %v", err)
 	}
@@ -253,7 +252,7 @@ func TestJoinDuplicateReceiverRejected(t *testing.T) {
 		t.Fatalf("dial sender: %v", err)
 	}
 	defer sender.Close()
-	if _, err := sender.Allocate(7777); err != nil {
+	if _, _, err := sender.Allocate(7777); err != nil {
 		t.Fatalf("allocate: %v", err)
 	}
 
@@ -263,7 +262,7 @@ func TestJoinDuplicateReceiverRejected(t *testing.T) {
 		t.Fatalf("dial r1: %v", err)
 	}
 	defer r1.Close()
-	if _, err := r1.Join(7777); err != nil {
+	if _, _, err := r1.Join(7777); err != nil {
 		t.Fatalf("first receiver join: %v", err)
 	}
 
@@ -273,7 +272,7 @@ func TestJoinDuplicateReceiverRejected(t *testing.T) {
 		t.Fatalf("dial r2: %v", err)
 	}
 	defer r2.Close()
-	_, err = r2.Join(7777)
+	_, _, err = r2.Join(7777)
 	if err == nil {
 		t.Fatal("expected error when second receiver joins the same channel (L-04)")
 	}
@@ -289,7 +288,7 @@ func TestSignalingWithContextCancellation(t *testing.T) {
 	}
 	defer client.Close()
 
-	if _, err := client.Allocate(8888); err != nil {
+	if _, _, err := client.Allocate(8888); err != nil {
 		t.Fatalf("allocate: %v", err)
 	}
 

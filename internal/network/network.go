@@ -281,6 +281,38 @@ func ListenQUIC(mux *packetMux, cert tls.Certificate, baseTLS *tls.Config, peerC
 	return ln, nil
 }
 
+// HolePunchDual performs two-phase NAT hole punching: IPv6 first (preferred),
+// then IPv4 (fallback). Each phase uses the existing HolePunch function.
+//
+// The v6 phase has a 5-second timeout. If it succeeds, the v4 phase is skipped.
+// If the v6 phase times out or no v6 candidates exist, the v4 phase runs with
+// the remaining context timeout.
+//
+// Pass an empty candidatesV4 or candidatesV6 slice to skip that phase entirely
+// (used when -4 or -6 flag enforces a single protocol).
+func HolePunchDual(ctx context.Context, mux *packetMux, candidatesV4, candidatesV6 []*net.UDPAddr, probeNonce [4]byte) (*HolePunchResult, error) {
+	// Phase 1: IPv6 (preferred) — 5-second timeout.
+	if len(candidatesV6) > 0 {
+		v6Ctx, v6Cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer v6Cancel()
+		result, err := HolePunch(v6Ctx, mux, candidatesV6, probeNonce)
+		if err == nil {
+			return result, nil
+		}
+	}
+
+	// Phase 2: IPv4 (fallback) — use remaining context timeout.
+	if len(candidatesV4) > 0 {
+		result, err := HolePunch(ctx, mux, candidatesV4, probeNonce)
+		if err != nil {
+			return nil, fmt.Errorf("UDP hole punch failed for all candidates: %w", err)
+		}
+		return result, nil
+	}
+
+	return nil, fmt.Errorf("UDP hole punch failed: no candidates available")
+}
+
 // makeCertPinner returns a VerifyPeerCertificate function that enforces cert hash pinning.
 // The fingerprint comparison uses crypto/subtle.ConstantTimeCompare to prevent
 // timing side-channel attacks (H-01).

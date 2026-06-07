@@ -243,9 +243,9 @@ func (s *Server) handleAllocate(conn *websocket.Conn, remoteAddr string, channel
 		writeError(conn, "could not allocate channel")
 		return
 	}
-	// Reply with public IP (STUN-like)
+	// Reply with public IP (STUN-like), tagged with address family.
 	host, _, _ := net.SplitHostPort(remoteAddr)
-	payload, _ := json.Marshal(map[string]string{"public_ip": host})
+	payload, _ := json.Marshal(publicIPResponse(host))
 	conn.WriteJSON(Message{Type: MsgOK, ChannelID: channelID, Payload: payload})
 	s.logger.Info("Channel allocated", "channel_id", channelID, "sender_ip", host, "ttl", s.ttl)
 
@@ -297,7 +297,7 @@ func (s *Server) handleJoin(conn *websocket.Conn, remoteAddr string, channelID u
 	s.mu.Unlock()
 
 	host, _, _ := net.SplitHostPort(remoteAddr)
-	payload, _ := json.Marshal(map[string]string{"public_ip": host})
+	payload, _ := json.Marshal(publicIPResponse(host))
 	conn.WriteJSON(Message{Type: MsgOK, ChannelID: channelID, Payload: payload})
 	s.logger.Info("Receiver joined channel", "channel_id", channelID, "receiver_ip", host)
 
@@ -423,6 +423,21 @@ func (s *Server) recordFailureAndDrop(channelID uint16) bool {
 		return true
 	}
 	return false
+}
+
+// publicIPResponse builds the allocate/join response payload map,
+// including an address-family-specific key so the client can distinguish
+// IPv4 from IPv6 without re-parsing.
+func publicIPResponse(host string) map[string]string {
+	resp := map[string]string{"public_ip": host}
+	if ip := net.ParseIP(host); ip != nil {
+		if ip.To4() != nil {
+			resp["public_ipv4"] = host
+		} else {
+			resp["public_ipv6"] = host
+		}
+	}
+	return resp
 }
 
 func writeError(conn *websocket.Conn, msg string) {

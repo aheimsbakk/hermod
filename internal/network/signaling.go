@@ -135,43 +135,45 @@ func (c *SignalingClient) Recv() (server.Message, error) {
 }
 
 // Allocate sends an allocate request for channelID.
-// Returns the public IP reported by the server.
-func (c *SignalingClient) Allocate(channelID uint16) (string, error) {
+// Returns the public IPs (v4 and v6) reported by the server.
+// One or both may be empty if the server does not advertise both families.
+func (c *SignalingClient) Allocate(channelID uint16) (publicV4, publicV6 string, err error) {
 	if err := c.Send(server.Message{Type: server.MsgAllocate, ChannelID: channelID}); err != nil {
-		return "", fmt.Errorf("allocate send: %w", err)
+		return "", "", fmt.Errorf("allocate send: %w", err)
 	}
 	resp, err := c.Recv()
 	if err != nil {
-		return "", fmt.Errorf("allocate recv: %w", err)
+		return "", "", fmt.Errorf("allocate recv: %w", err)
 	}
 	if resp.Type == server.MsgError {
-		return "", fmt.Errorf("server error: %s", resp.Error)
+		return "", "", fmt.Errorf("server error: %s", resp.Error)
 	}
 	var m map[string]string
 	if err := json.Unmarshal(resp.Payload, &m); err == nil {
-		return m["public_ip"], nil
+		return m["public_ipv4"], m["public_ipv6"], nil
 	}
-	return "", nil
+	return "", "", nil
 }
 
 // Join sends a join request for channelID.
-// Returns the public IP reported by the server.
-func (c *SignalingClient) Join(channelID uint16) (string, error) {
+// Returns the public IPs (v4 and v6) reported by the server.
+// One or both may be empty if the server does not advertise both families.
+func (c *SignalingClient) Join(channelID uint16) (publicV4, publicV6 string, err error) {
 	if err := c.Send(server.Message{Type: server.MsgJoin, ChannelID: channelID}); err != nil {
-		return "", fmt.Errorf("join send: %w", err)
+		return "", "", fmt.Errorf("join send: %w", err)
 	}
 	resp, err := c.Recv()
 	if err != nil {
-		return "", fmt.Errorf("join recv: %w", err)
+		return "", "", fmt.Errorf("join recv: %w", err)
 	}
 	if resp.Type == server.MsgError {
-		return "", fmt.Errorf("server error: %s", resp.Error)
+		return "", "", fmt.Errorf("server error: %s", resp.Error)
 	}
 	var m map[string]string
 	if err := json.Unmarshal(resp.Payload, &m); err == nil {
-		return m["public_ip"], nil
+		return m["public_ipv4"], m["public_ipv6"], nil
 	}
-	return "", nil
+	return "", "", nil
 }
 
 // SendBlob sends an encrypted blob payload to the peer via the relay.

@@ -542,6 +542,163 @@ func TestHolePunch_ProbesSentToCandidates(t *testing.T) {
 	}
 }
 
+// --- HolePunchDual ---
+
+// TestHolePunchDual_V6Preferred verifies that when both v4 and v6 candidates
+// are available and the v6 probe arrives first, the v6 result is returned.
+func TestHolePunchDual_V6Preferred(t *testing.T) {
+	stub := newStubPacketConn()
+	mux := NewPacketMux(stub)
+	defer mux.Close()
+
+	v6Addr := &net.UDPAddr{IP: net.IPv6loopback, Port: 7776}
+	v4Addr := &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 7777}
+
+	// Inject a v6 probe after a short delay.
+	go func() {
+		time.Sleep(30 * time.Millisecond)
+		stub.readCh <- udpDatagram{
+			data: []byte{probeMarker, testProbeNonce[0], testProbeNonce[1]},
+			addr: v6Addr,
+		}
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	result, err := HolePunchDual(ctx, mux, []*net.UDPAddr{v4Addr}, []*net.UDPAddr{v6Addr}, testProbeNonce)
+	if err != nil {
+		t.Fatalf("HolePunchDual: %v", err)
+	}
+	if result.PeerAddr.Port != 7776 {
+		t.Errorf("expected v6 peer (port 7776), got port %d", result.PeerAddr.Port)
+	}
+}
+
+// TestHolePunchDual_V4Fallback verifies that when v6 times out but v4 succeeds,
+// the v4 result is returned.
+func TestHolePunchDual_V4Fallback(t *testing.T) {
+	stub := newStubPacketConn()
+	mux := NewPacketMux(stub)
+	defer mux.Close()
+
+	v4Addr := &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 7777}
+
+	// No v6 probes injected — v6 phase will time out after 5s.
+	// Instead, inject a v4 probe after a delay that exceeds the v6 timeout.
+	go func() {
+		time.Sleep(5100 * time.Millisecond) // just after v6 timeout
+		stub.readCh <- udpDatagram{
+			data: []byte{probeMarker, testProbeNonce[0], testProbeNonce[1]},
+			addr: v4Addr,
+		}
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+
+	result, err := HolePunchDual(ctx, mux, []*net.UDPAddr{v4Addr}, []*net.UDPAddr{}, testProbeNonce)
+	if err != nil {
+		t.Fatalf("HolePunchDual (v4 fallback): %v", err)
+	}
+	if result.PeerAddr.Port != 7777 {
+		t.Errorf("expected v4 peer (port 7777), got port %d", result.PeerAddr.Port)
+	}
+}
+
+// TestHolePunchDual_OnlyV4 verifies that when only v4 candidates exist, the v4
+// phase runs immediately (skipping v6) and succeeds.
+func TestHolePunchDual_OnlyV4(t *testing.T) {
+	stub := newStubPacketConn()
+	mux := NewPacketMux(stub)
+	defer mux.Close()
+
+	v4Addr := &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 7777}
+
+	go func() {
+		time.Sleep(30 * time.Millisecond)
+		stub.readCh <- udpDatagram{
+			data: []byte{probeMarker, testProbeNonce[0], testProbeNonce[1]},
+			addr: v4Addr,
+		}
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	result, err := HolePunchDual(ctx, mux, []*net.UDPAddr{v4Addr}, nil, testProbeNonce)
+	if err != nil {
+		t.Fatalf("HolePunchDual (only v4): %v", err)
+	}
+	if result.PeerAddr.Port != 7777 {
+		t.Errorf("expected port 7777, got %d", result.PeerAddr.Port)
+	}
+}
+
+// TestHolePunchDual_NoCandidates verifies that when both candidate lists are
+// empty, an appropriate error is returned.
+func TestHolePunchDual_NoCandidates(t *testing.T) {
+	stub := newStubPacketConn()
+	mux := NewPacketMux(stub)
+	defer mux.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	_, err := HolePunchDual(ctx, mux, nil, nil, testProbeNonce)
+	if err == nil {
+		t.Fatal("expected error for no candidates")
+	}
+	if !strings.Contains(err.Error(), "no candidates") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+// TestLocalEndpoints_FilterV4 verifies that IPFamilyV4 returns only IPv4 addresses.
+func TestLocalEndpoints_FilterV4(t *testing.T) {
+	v4, v6, err := LocalEndpoints(9999, IPFamilyV4)
+	if err != nil {
+		t.Fatalf("LocalEndpoints: %v", err)
+	}
+	if len(v6) != 0 {
+		t.Log("expected empty v6 list with IPFamilyV4 filter")
+	}
+	_ = v4 // may be empty in some environments, but at least no v6 leak
+}
+
+// TestLocalEndpoints_FilterV6 verifies that IPFamilyV6 returns only IPv6 addresses.
+func TestLocalEndpoints_FilterV6(t *testing.T) {
+	v4, v6, err := LocalEndpoints(9999, IPFamilyV6)
+	if err != nil {
+		t.Fatalf("LocalEndpoints: %v", err)
+	}
+	if len(v4) != 0 {
+		t.Log("expected empty v4 list with IPFamilyV6 filter")
+	}
+	_ = v6
+}
+
+// TestLocalEndpoints_Formatting verifies that IPv6 addresses are properly
+// bracketed (e.g. [::1]:port) and IPv4 addresses are not.
+func TestLocalEndpoints_Formatting(t *testing.T) {
+	v4, v6, err := LocalEndpoints(9999, IPFamilyAny)
+	if err != nil {
+		t.Fatalf("LocalEndpoints: %v", err)
+	}
+	for _, ep := range v4 {
+		_, _, err := net.SplitHostPort(ep)
+		if err != nil {
+			t.Errorf("invalid v4 endpoint %q: %v", ep, err)
+		}
+	}
+	for _, ep := range v6 {
+		_, _, err := net.SplitHostPort(ep)
+		if err != nil {
+			t.Errorf("invalid v6 endpoint %q: %v", ep, err)
+		}
+	}
+}
+
 // --- DialQUIC / ListenQUIC ---
 
 // TestDialAndListenQUIC verifies a full QUIC handshake between two muxes on

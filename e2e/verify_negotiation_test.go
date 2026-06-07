@@ -11,6 +11,7 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"net"
 	"strings"
 	"sync"
 	"testing"
@@ -53,7 +54,7 @@ func runSenderVerify(serverURL string, channelID uint16, password string, payloa
 	}
 	defer sig.Close()
 
-	publicIP, err := sig.Allocate(channelID)
+	publicIPV4, publicIPV6, err := sig.Allocate(channelID)
 	if err != nil {
 		return verifyResult{err: fmt.Errorf("allocate: %w", err)}
 	}
@@ -91,12 +92,22 @@ func runSenderVerify(serverURL string, channelID uint16, password string, payloa
 		return verifyResult{err: fmt.Errorf("complete CPace handshake: %w", err)}
 	}
 
-	localEPs, _ := network.LocalEndpoints(localAddr.Port)
+	localV4, localV6, _ := network.LocalEndpoints(localAddr.Port, network.IPFamilyAny)
+	portStr := fmt.Sprintf("%d", localAddr.Port)
+	var publicEPV4, publicEPV6 string
+	if publicIPV4 != "" {
+		publicEPV4 = net.JoinHostPort(publicIPV4, portStr)
+	}
+	if publicIPV6 != "" {
+		publicEPV6 = net.JoinHostPort(publicIPV6, portStr)
+	}
 	bundle := network.EndpointBundle{
-		LocalEndpoints:  localEPs,
-		PublicEndpoint:  fmt.Sprintf("%s:%d", publicIP, localAddr.Port),
-		CertFingerprint: myFP,
-		RequireVerify:   requireVerify,
+		LocalEndpointsV4: localV4,
+		LocalEndpointsV6: localV6,
+		PublicEndpointV4: publicEPV4,
+		PublicEndpointV6: publicEPV6,
+		CertFingerprint:  myFP,
+		RequireVerify:    requireVerify,
 	}
 	bundleBytes, _ := network.EncodeEndpointBundle(bundle)
 	encBundle, _ := crypto.Seal(kClassical, bundleBytes)
@@ -118,11 +129,9 @@ func runSenderVerify(serverURL string, channelID uint16, password string, payloa
 	// Symmetric merge — same logic as cli/tx.go.
 	mergedVerify := requireVerify || peerBundle.RequireVerify
 
-	allCandidates := []string{peerBundle.PublicEndpoint}
-	allCandidates = append(allCandidates, peerBundle.LocalEndpoints...)
-	candidates, _ := network.ParseCandidates(allCandidates)
-
-	punchResult, err := network.HolePunch(ctx, mux, candidates, [4]byte{})
+	candidatesV4, _ := network.ParseCandidates(peerBundle.CandidatesV4())
+	candidatesV6, _ := network.ParseCandidates(peerBundle.CandidatesV6())
+	punchResult, err := network.HolePunchDual(ctx, mux, candidatesV4, candidatesV6, [4]byte{})
 	if err != nil {
 		return verifyResult{err: fmt.Errorf("UDP hole punch: %w", err)}
 	}
@@ -192,7 +201,7 @@ func runReceiverVerify(serverURL, code string, requireVerify bool) verifyResult 
 	}
 	defer sig.Close()
 
-	publicIP, _ := sig.Join(channelID)
+	publicIPV4, publicIPV6, _ := sig.Join(channelID)
 
 	udpConn, _ := network.BindUDP(":0")
 	mux := network.NewPacketMux(udpConn)
@@ -222,22 +231,30 @@ func runReceiverVerify(serverURL, code string, requireVerify bool) verifyResult 
 	// Symmetric merge — same logic as cli/rx.go.
 	mergedVerify := requireVerify || senderBundle.RequireVerify
 
-	localEPs, _ := network.LocalEndpoints(localAddr.Port)
+	localV4, localV6, _ := network.LocalEndpoints(localAddr.Port, network.IPFamilyAny)
+	portStr := fmt.Sprintf("%d", localAddr.Port)
+	var publicEPV4, publicEPV6 string
+	if publicIPV4 != "" {
+		publicEPV4 = net.JoinHostPort(publicIPV4, portStr)
+	}
+	if publicIPV6 != "" {
+		publicEPV6 = net.JoinHostPort(publicIPV6, portStr)
+	}
 	myBundle := network.EndpointBundle{
-		LocalEndpoints:  localEPs,
-		PublicEndpoint:  fmt.Sprintf("%s:%d", publicIP, localAddr.Port),
-		CertFingerprint: myFP,
-		RequireVerify:   mergedVerify,
+		LocalEndpointsV4: localV4,
+		LocalEndpointsV6: localV6,
+		PublicEndpointV4: publicEPV4,
+		PublicEndpointV6: publicEPV6,
+		CertFingerprint:  myFP,
+		RequireVerify:    mergedVerify,
 	}
 	myBundleBytes, _ := network.EncodeEndpointBundle(myBundle)
 	encMyBundle, _ := crypto.Seal(kClassical, myBundleBytes)
 	sig.SendBlob(channelID, encMyBundle)
 
-	allCandidates := []string{senderBundle.PublicEndpoint}
-	allCandidates = append(allCandidates, senderBundle.LocalEndpoints...)
-	candidates, _ := network.ParseCandidates(allCandidates)
-
-	_, err = network.HolePunch(ctx, mux, candidates, [4]byte{})
+	candidatesV4, _ := network.ParseCandidates(senderBundle.CandidatesV4())
+	candidatesV6, _ := network.ParseCandidates(senderBundle.CandidatesV6())
+	_, err = network.HolePunchDual(ctx, mux, candidatesV4, candidatesV6, [4]byte{})
 	if err != nil {
 		return verifyResult{err: fmt.Errorf("UDP hole punch: %w", err)}
 	}

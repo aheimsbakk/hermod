@@ -13,6 +13,12 @@ import (
 // build time via -ldflags "-X github.com/hermod/hermod/internal/cli.Version=x.y.z".
 var Version = appVersion
 
+// IP version enforcement flags. Set by -4/--ipv4 and -6/--ipv6 flags.
+// Both default to false, meaning both families are used with IPv6 preferred.
+// The flags are mutually exclusive.
+var ipv4Only bool
+var ipv6Only bool
+
 func newRootCmd() *cobra.Command {
 	var verboseStr string
 	var quiet bool
@@ -32,6 +38,11 @@ All data is end-to-end encrypted and never passes through the signaling server.`
 			}
 			applyVerbosity(level)
 			quietMode = quiet
+
+			// Validate -4 and -6 are mutually exclusive.
+			if ipv4Only && ipv6Only {
+				return fmt.Errorf("flags -4/--ipv4 and -6/--ipv6 are mutually exclusive")
+			}
 			return nil
 		},
 	}
@@ -43,6 +54,14 @@ All data is end-to-end encrypted and never passes through the signaling server.`
 	root.PersistentFlags().BoolVarP(
 		&quiet, "quiet", "q", false,
 		`Suppress status output. Errors are always shown. Compatible with --verbose.`,
+	)
+	root.PersistentFlags().BoolVarP(
+		&ipv4Only, "ipv4", "4", false,
+		`Use IPv4 only for hole punching. Cannot be combined with -6.`,
+	)
+	root.PersistentFlags().BoolVarP(
+		&ipv6Only, "ipv6", "6", false,
+		`Use IPv6 only for hole punching. Cannot be combined with -4.`,
 	)
 
 	// Cobra auto-generates --version from cmd.Version. Add -V as short alias.

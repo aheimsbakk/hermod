@@ -9,15 +9,21 @@ import (
 )
 
 func TestLocalEndpoints(t *testing.T) {
-	eps, err := network.LocalEndpoints(12345)
+	v4, v6, err := network.LocalEndpoints(12345, network.IPFamilyAny)
 	if err != nil {
 		t.Fatalf("local endpoints: %v", err)
 	}
 	// May be empty in some environments, but should not error
-	for _, ep := range eps {
+	for _, ep := range v4 {
 		_, _, err := net.SplitHostPort(ep)
 		if err != nil {
-			t.Fatalf("invalid endpoint %q: %v", ep, err)
+			t.Fatalf("invalid v4 endpoint %q: %v", ep, err)
+		}
+	}
+	for _, ep := range v6 {
+		_, _, err := net.SplitHostPort(ep)
+		if err != nil {
+			t.Fatalf("invalid v6 endpoint %q: %v", ep, err)
 		}
 	}
 }
@@ -39,9 +45,9 @@ func TestEncodeDecodeCPaceMsg(t *testing.T) {
 
 func TestEncodeDecodeEndpointBundle(t *testing.T) {
 	bundle := network.EndpointBundle{
-		LocalEndpoints:  []string{"192.168.1.1:4376", "10.0.0.1:4376"},
-		PublicEndpoint:  "1.2.3.4:4376",
-		CertFingerprint: "aabbccdd",
+		LocalEndpointsV4: []string{"192.168.1.1:4376", "10.0.0.1:4376"},
+		PublicEndpointV4: "1.2.3.4:4376",
+		CertFingerprint:  "aabbccdd",
 	}
 	data, err := network.EncodeEndpointBundle(bundle)
 	if err != nil {
@@ -51,13 +57,13 @@ func TestEncodeDecodeEndpointBundle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if decoded.PublicEndpoint != bundle.PublicEndpoint {
+	if decoded.PublicEndpointV4 != bundle.PublicEndpointV4 {
 		t.Fatalf("public endpoint mismatch")
 	}
 	if decoded.CertFingerprint != bundle.CertFingerprint {
 		t.Fatal("fingerprint mismatch")
 	}
-	if len(decoded.LocalEndpoints) != len(bundle.LocalEndpoints) {
+	if len(decoded.LocalEndpointsV4) != len(bundle.LocalEndpointsV4) {
 		t.Fatal("local endpoints count mismatch")
 	}
 }
@@ -171,10 +177,10 @@ func TestPacketMuxMethods(t *testing.T) {
 // TestEndpointBundleRequireVerify ensures RequireVerify round-trips through JSON.
 func TestEndpointBundleRequireVerify(t *testing.T) {
 	bundle := network.EndpointBundle{
-		LocalEndpoints:  []string{"192.168.1.1:4376"},
-		PublicEndpoint:  "1.2.3.4:4376",
-		CertFingerprint: "aabbccdd",
-		RequireVerify:   true,
+		LocalEndpointsV4: []string{"192.168.1.1:4376"},
+		PublicEndpointV4: "1.2.3.4:4376",
+		CertFingerprint:  "aabbccdd",
+		RequireVerify:    true,
 	}
 	data, err := network.EncodeEndpointBundle(bundle)
 	if err != nil {
@@ -190,9 +196,9 @@ func TestEndpointBundleRequireVerify(t *testing.T) {
 
 	// A bundle without RequireVerify should default to false
 	bundleNoVerify := network.EndpointBundle{
-		LocalEndpoints:  []string{"192.168.1.1:4376"},
-		PublicEndpoint:  "1.2.3.4:4376",
-		CertFingerprint: "aabbccdd",
+		LocalEndpointsV4: []string{"192.168.1.1:4376"},
+		PublicEndpointV4: "1.2.3.4:4376",
+		CertFingerprint:  "aabbccdd",
 	}
 	data2, err := network.EncodeEndpointBundle(bundleNoVerify)
 	if err != nil {
@@ -204,6 +210,80 @@ func TestEndpointBundleRequireVerify(t *testing.T) {
 	}
 	if decoded2.RequireVerify {
 		t.Fatal("RequireVerify should be false when not set")
+	}
+}
+
+// --- Dual-stack endpoint tests ---
+
+func TestEndpointBundle_RoundTripDual(t *testing.T) {
+	bundle := network.EndpointBundle{
+		LocalEndpointsV4: []string{"192.168.1.1:4376", "10.0.0.1:4376"},
+		LocalEndpointsV6: []string{"[2001:db8::1]:4376", "[fe80::1]:4376"},
+		PublicEndpointV4: "1.2.3.4:4376",
+		PublicEndpointV6: "[2001:db8::1]:4376",
+		CertFingerprint:  "aabbccdd",
+		RequireVerify:    true,
+	}
+	data, err := network.EncodeEndpointBundle(bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := network.DecodeEndpointBundle(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decoded.PublicEndpointV4 != "1.2.3.4:4376" {
+		t.Fatalf("PublicEndpointV4: got %q", decoded.PublicEndpointV4)
+	}
+	if decoded.PublicEndpointV6 != "[2001:db8::1]:4376" {
+		t.Fatalf("PublicEndpointV6: got %q", decoded.PublicEndpointV6)
+	}
+	if len(decoded.LocalEndpointsV4) != 2 {
+		t.Fatalf("LocalEndpointsV4 count: got %d", len(decoded.LocalEndpointsV4))
+	}
+	if len(decoded.LocalEndpointsV6) != 2 {
+		t.Fatalf("LocalEndpointsV6 count: got %d", len(decoded.LocalEndpointsV6))
+	}
+	if !decoded.RequireVerify {
+		t.Fatal("RequireVerify should be true")
+	}
+}
+
+func TestSplitPublicIP_V4(t *testing.T) {
+	v4, v6 := network.SplitPublicIP("1.2.3.4", "4376")
+	if v4 != "1.2.3.4:4376" {
+		t.Fatalf("unexpected v4: %q", v4)
+	}
+	if v6 != "" {
+		t.Fatalf("expected empty v6, got %q", v6)
+	}
+}
+
+func TestSplitPublicIP_V6(t *testing.T) {
+	v4, v6 := network.SplitPublicIP("2001:db8::1", "4376")
+	if v4 != "" {
+		t.Fatalf("expected empty v4, got %q", v4)
+	}
+	if v6 != "[2001:db8::1]:4376" {
+		t.Fatalf("unexpected v6: %q", v6)
+	}
+}
+
+func TestSplitPublicIP_Empty(t *testing.T) {
+	v4, v6 := network.SplitPublicIP("", "4376")
+	if v4 != "" || v6 != "" {
+		t.Fatalf("expected both empty, got v4=%q v6=%q", v4, v6)
+	}
+}
+
+func TestSplitPublicIP_Hostname(t *testing.T) {
+	// Hostname is not a valid IP — returned as v4.
+	v4, v6 := network.SplitPublicIP("example.com", "4376")
+	if v4 != "example.com:4376" {
+		t.Fatalf("expected hostname in v4, got %q", v4)
+	}
+	if v6 != "" {
+		t.Fatalf("expected empty v6, got %q", v6)
 	}
 }
 

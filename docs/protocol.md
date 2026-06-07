@@ -53,7 +53,7 @@ All messages are JSON with this envelope:
 | `join` | client → server | Receiver joins an existing channel. Server returns `error` if the channel does not exist. |
 | `blob` | client → server | Relay an encrypted blob to the peer |
 | `ready` | server → client | Sent to sender when receiver joins |
-| `ok` | server → client | Acknowledges `allocate` or `join`; carries `public_ip` |
+| `ok` | server → client | Acknowledges `allocate` or `join`; carries `public_ip` and the address-family-specific key `public_ipv4` or `public_ipv6` |
 | `error` | server → client | Reports a server-side error |
 
 ### Sequence
@@ -101,12 +101,18 @@ The channel ID (2-byte big-endian) is bound as AES-GCM Additional Authenticated 
 Plaintext endpoint bundle (JSON before encryption):
 ```json
 {
-  "local_endpoints": ["192.168.1.5:51234", "10.0.0.2:51234"],
-  "public_endpoint": "203.0.113.7:51234",
+  "local_endpoints_v4": ["192.168.1.5:51234", "10.0.0.2:51234"],
+  "local_endpoints_v6": ["[fe80::1]:51234", "[2001:db8::1]:51234"],
+  "public_endpoint_v4": "203.0.113.7:51234",
+  "public_endpoint_v6": "2001:db8::1:51234",
   "cert_fingerprint": "a3f9...64 hex chars...",
   "require_verify": false
 }
 ```
+
+Addresses are split by IP family. The recipient reads candidates using
+`CandidatesV4()` and `CandidatesV6()` which include the public endpoint
+(if present) followed by the local endpoints.
 
 `require_verify` is `true` when this peer was started with `--verify`. After each side decrypts the peer's bundle, it computes:
 
@@ -118,12 +124,18 @@ If either side requested verification, both sides perform it. The merged value i
 
 ## NAT hole punching
 
-Both peers send UDP probe packets to all candidate addresses of the other peer simultaneously.
+Both peers run a two-phase hole punch: IPv6 candidates first (preferred), then IPv4 (fallback).
+
+The IPv6 phase has a 5-second timeout. If it succeeds, the IPv4 phase is skipped. If it times out or no IPv6 candidates exist, the IPv4 phase runs with the remaining context timeout (default 10 s total).
+
+Use `-4` (`--ipv4`) to skip the IPv6 phase entirely. Use `-6` (`--ipv6`) to skip the IPv4 phase entirely. Both flags are mutually exclusive.
+
+Within each phase, probe packets are sent to all candidate addresses of that family concurrently:
 
 Probe packet format:
 ```
 byte 0:    0x01  (probe marker)
-bytes 1–N: random payload
+bytes 1–2: session-unique nonce (derived from CPace shared key)
 ```
 
 The first probe that receives a reply from the correct peer address wins. That address is used for the QUIC connection.

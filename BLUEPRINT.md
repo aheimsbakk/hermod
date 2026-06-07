@@ -79,16 +79,20 @@ Implementation: `MemoryStore` (default, in-process). SQLite removed.
 
 ### EndpointBundle (JSON, AES-256-GCM encrypted with channel ID as AAD, relayed via signaling)
 ```json
-{"local_endpoints":["192.168.1.5:51234"],"public_endpoint":"1.2.3.4:51234","cert_fingerprint":"hex","require_verify":false}
+{"local_endpoints_v4":["192.168.1.5:51234"],"local_endpoints_v6":["[fe80::1]:51234"],"public_endpoint_v4":"1.2.3.4:51234","public_endpoint_v6":"[2001:db8::1]:51234","cert_fingerprint":"hex","require_verify":false}
 ```
 The channel ID (2-byte big-endian) is used as AES-GCM Additional Authenticated Data to bind the ciphertext to the session.
 
-## Interfaces
+## Interfaces / Key Functions
 
 - `SignalingStore` — storage backend (MemoryStore)
 - `net.PacketConn` — UDP socket abstraction for mux
 - `*quic.Conn` / `*quic.Listener` — QUIC transport (quic-go)
 - `*packetMux` — demultiplexes probe packets and QUIC packets on a single UDP socket
+- `HolePunch` — single-phase NAT hole punching to a list of candidates
+- `HolePunchDual` — two-phase hole punch (IPv6 first, IPv4 fallback) with 5s/10s timeouts
+- `LocalEndpoints(localPort, IPFamily)` — returns local v4/v6 addresses split by family
+- `IPFamily` — `IPFamilyAny` (default), `IPFamilyV4` (`-4`), `IPFamilyV6` (`-6`)
 
 ## Protocol Flow
 
@@ -96,7 +100,7 @@ The channel ID (2-byte big-endian) is used as AES-GCM Additional Authenticated D
 2. Receiver joins channel (server validates channel exists) → sender receives `ready`
 3. CPace handshake over signaling relay (P-256, password = transfer code words)
 4. Endpoint bundles exchanged (AES-256-GCM encrypted with CPace key + channel ID as AAD)
-5. UDP hole punch to peer candidates
+5. UDP hole punch to peer candidates (two-phase: IPv6 preferred, IPv4 fallback; 5s/10s timeouts; `-4`/`-6` flags enforce single family)
 6. QUIC connection (TLS 1.3, ephemeral ECDSA P-256 certs, fingerprint-pinned)
 7. Stream 0 (SAS coordination, only when verify active): 1-byte confirm/reject exchange; Stream 1 (or 0 without verify): 4-byte-prefixed JSON metadata (sha256 = ""); Stream 2 (or 1 without verify): raw payload bytes streamed while sender computes SHA-256 in parallel; Stream 3 (or 2 without verify): 4-byte-prefixed trailing hash (hex SHA-256 computed during send)
 8. Receiver computes SHA-256 in parallel while receiving payload, then verifies against trailing hash stream

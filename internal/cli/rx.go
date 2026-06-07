@@ -107,11 +107,11 @@ func runRx(code, destination, serverURL string, verify bool, listenUDP string, s
 
 	// Join channel
 	logDebug("joining channel on signaling server", "channel_id", channelID)
-	publicIP, err := sig.Join(channelID)
+	publicIPV4, publicIPV6, err := sig.Join(channelID)
 	if err != nil {
 		return fmt.Errorf("join channel: %w", err)
 	}
-	logInfo("Joined channel", "channel_id", channelID, "public_ip", publicIP)
+	logInfo("Joined channel", "channel_id", channelID, "public_ipv4", publicIPV4, "public_ipv6", publicIPV6)
 
 	// Bind UDP socket
 	logDebug("binding UDP socket", "addr", listenUDP)
@@ -179,8 +179,10 @@ func runRx(code, destination, serverURL string, verify bool, listenUDP string, s
 		return fmt.Errorf("decode sender endpoint bundle: %w", err)
 	}
 	logDebug("sender endpoint bundle received",
-		"public", senderBundle.PublicEndpoint,
-		"local_count", len(senderBundle.LocalEndpoints),
+		"public_v4", senderBundle.PublicEndpointV4,
+		"public_v6", senderBundle.PublicEndpointV6,
+		"local_v4_count", len(senderBundle.LocalEndpointsV4),
+		"local_v6_count", len(senderBundle.LocalEndpointsV6),
 		"require_verify", senderBundle.RequireVerify,
 	)
 
@@ -190,20 +192,36 @@ func runRx(code, destination, serverURL string, verify bool, listenUDP string, s
 	}
 	verify = verify || senderBundle.RequireVerify
 
-	// Send our bundle
-	localEPs, err := network.LocalEndpoints(localAddr.Port)
+	// Send our bundle (dual-stack)
+	ipFamily := network.IPFamilyAny
+	switch {
+	case ipv4Only:
+		ipFamily = network.IPFamilyV4
+	case ipv6Only:
+		ipFamily = network.IPFamilyV6
+	}
+	localV4, localV6, err := network.LocalEndpoints(localAddr.Port, ipFamily)
 	if err != nil {
-		localEPs = []string{}
+		localV4, localV6 = nil, nil
 		logWarn("could not enumerate local network interfaces — using public endpoint only", "err", err)
 	}
-	publicEP := net.JoinHostPort(publicIP, fmt.Sprintf("%d", localAddr.Port))
-	logDebug("local endpoints collected", "local", localEPs, "public", publicEP)
+	portStr := fmt.Sprintf("%d", localAddr.Port)
+	var publicEPV4, publicEPV6 string
+	if publicIPV4 != "" {
+		publicEPV4 = net.JoinHostPort(publicIPV4, portStr)
+	}
+	if publicIPV6 != "" {
+		publicEPV6 = net.JoinHostPort(publicIPV6, portStr)
+	}
+	logDebug("local endpoints collected", "local_v4", localV4, "local_v6", localV6, "public_v4", publicEPV4, "public_v6", publicEPV6)
 
 	myBundle := network.EndpointBundle{
-		LocalEndpoints:  localEPs,
-		PublicEndpoint:  publicEP,
-		CertFingerprint: myFP,
-		RequireVerify:   verify,
+		LocalEndpointsV4: localV4,
+		LocalEndpointsV6: localV6,
+		PublicEndpointV4: publicEPV4,
+		PublicEndpointV6: publicEPV6,
+		CertFingerprint:  myFP,
+		RequireVerify:    verify,
 	}
 	myBundleBytes, err := network.EncodeEndpointBundle(myBundle)
 	if err != nil {
@@ -218,18 +236,20 @@ func runRx(code, destination, serverURL string, verify bool, listenUDP string, s
 		return fmt.Errorf("send endpoint bundle: %w", err)
 	}
 
-	// UDP hole punching
-	allCandidates := []string{senderBundle.PublicEndpoint}
-	allCandidates = append(allCandidates, senderBundle.LocalEndpoints...)
-	candidates, err := network.ParseCandidates(allCandidates)
+	// Build candidate lists from sender's bundle, split by address family.
+	candidatesV4, err := network.ParseCandidates(senderBundle.CandidatesV4())
 	if err != nil {
-		return fmt.Errorf("parse candidates: %w", err)
+		return fmt.Errorf("parse IPv4 candidates: %w", err)
 	}
-	logDebug("NAT candidates parsed", "count", len(candidates))
+	candidatesV6, err := network.ParseCandidates(senderBundle.CandidatesV6())
+	if err != nil {
+		return fmt.Errorf("parse IPv6 candidates: %w", err)
+	}
+	logDebug("NAT candidates parsed", "v4_count", len(candidatesV4), "v6_count", len(candidatesV6))
 
-	logInfo("Starting UDP hole punch", "candidates", len(candidates))
+	logInfo("Starting UDP hole punch", "v4_candidates", len(candidatesV4), "v6_candidates", len(candidatesV6))
 	printStatus("Establishing P2P connection...")
-	punchResult, err := network.HolePunch(ctx, mux, candidates, holePunchNonce(kClassical))
+	punchResult, err := network.HolePunchDual(ctx, mux, candidatesV4, candidatesV6, holePunchNonce(kClassical))
 	if err != nil {
 		return fmt.Errorf("UDP hole punch: %w", err)
 	}

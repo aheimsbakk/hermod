@@ -56,11 +56,13 @@ hermod tx [INPUT] [flags]
 - Omitted — reads from stdin
 
 | Flag | Default | Description |
-|---|---|---|
+|---|---|---|---|
 | `-s`, `--server` | `wss://localhost:4376` | Signaling server URL (saved as default when specified) |
 | `-w`, `--words` | `3` | Number of words in the transfer code |
 | `-l`, `--listen` | `:0` | Local UDP bind address |
 | `-v`, `--verify` | off | Require out-of-band SAS verification (symmetric — enforced on both sides) |
+| `-4`, `--ipv4` | off | Use IPv4 only for hole punching. Cannot be combined with `-6`. |
+| `-6`, `--ipv6` | off | Use IPv6 only for hole punching. Cannot be combined with `-4`. |
 | `--verbose` | `none` | Log verbosity: `none`, `error`, `warning`, `info`, `debug` |
 
 **Examples:**
@@ -85,11 +87,13 @@ hermod rx [CODE] [flags]
 ```
 
 | Flag | Default | Description |
-|---|---|---|
+|---|---|---|---|
 | `-s`, `--server` | `wss://localhost:4376` | Signaling server URL (saved as default when specified) |
 | `-d`, `--destination` | current directory | Output path |
 | `-l`, `--listen` | `:0` | Local UDP bind address |
 | `-v`, `--verify` | off | Require out-of-band SAS verification (symmetric — enforced on both sides) |
+| `-4`, `--ipv4` | off | Use IPv4 only for hole punching. Cannot be combined with `-6`. |
+| `-6`, `--ipv6` | off | Use IPv6 only for hole punching. Cannot be combined with `-4`. |
 | `--verbose` | `none` | Log verbosity: `none`, `error`, `warning`, `info`, `debug` |
 
 **Examples:**
@@ -185,7 +189,7 @@ No environment variables are required for normal use. Supported env vars:
 3. The receiver connects to the signaling server using the code and joins the channel.
 4. Both peers run a CPace PAKE handshake over the signaling channel to establish a shared key, authenticated by the passphrase.
 5. Each peer encrypts its UDP endpoints with the shared key and sends them through the signaling relay.
-6. Both peers punch through NAT by sending probes to each other's addresses.
+6. Both peers punch through NAT using a two-phase holepunch: IPv6 first (5 s), then IPv4 (10 s). Use `-4` or `-6` to enforce a single protocol.
 7. A QUIC connection is established directly between the peers, with the server certificate pinned to each side's ephemeral cert.
 8. File metadata and payload stream over QUIC. The receiver verifies the SHA-256 hash on arrival.
 
