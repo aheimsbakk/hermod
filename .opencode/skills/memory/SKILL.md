@@ -1,20 +1,35 @@
 ---
 name: memory
-description: Store and recall persistent context across sessions — user preferences, architectural decisions, recurring patterns, and warnings. Always load this skill and check, if exists, `docs/memory/INDEX.md` for relevance. Load this skill before recommending tools, frameworks, or patterns; when the user says "remember", "recall", "last time", or references a past session; when the user states a rule or preference; or when a decision worth preserving is reached.
+description: Load project context, conventions, preferences, and past decisions for the current session. Save decisions, patterns, warnings, and preferences for future sessions. Use before making architectural choices or when the user references past work.
 compatibility: opencode
 ---
 
-## When to write a memory
+## When this loads
 
-Write an entry when something is worth keeping for next session:
+Read `docs/memory/INDEX.md`. Prune expired entries — delete the archive
+file and remove the row for any entry whose `expires` has passed.
 
-- **preference** — tooling choices, style rules, workflow habits
-- **decision** — why a technology, pattern, or structure was chosen
-- **pattern** — a problem or fix worth preserving
-- **fact** — useful project info not captured elsewhere
-- **warning** — a footgun, deprecated path, or constraint to respect
+Find rows where `topic`, `tags`, or `category` match the current task.
+If nothing matches on obvious keywords, try related terms once.
 
-Skip if it's: single-session debug output, already in `AGENTS.md` / `RULES.md` / `BLUEPRINT.md`, secrets, or prompt text.
+For matches:
+- **high importance** — state the memory to the user before proceeding
+  ("I see you previously decided on X. Is that still current?")
+- **medium / low** — apply as context silently
+
+If nothing matches, proceed without memory.
+
+## When to write
+
+Write a memory entry when:
+- The user states a preference or sets a rule
+- A meaningful architectural decision is reached
+- A non-obvious bug fix or pattern surfaces
+- A footgun or deprecated path is discovered
+- Before the session ends — save unfinished context
+
+Skip if it's: single-session debug output, already captured in
+`AGENTS.md` / `RULES.md` / `BLUEPRINT.md`, secrets, or prompt text.
 
 ---
 
@@ -22,7 +37,13 @@ Skip if it's: single-session debug output, already in `AGENTS.md` / `RULES.md` /
 
 Path: `docs/memory/archive/YYYY-MM-DD-<short-slug>.md`
 
-Required front matter: `topic`, `importance` (high/medium/low), `category` (preference/decision/fact/pattern/warning), `tags` (2–5 lowercase keywords; hyphens for multi-word), `created` (ISO 8601 UTC), `model`. Optional: `expires` (ISO 8601 UTC).
+Required front matter: `topic`, `importance` (high/medium/low),
+`category` (preference/decision/fact/pattern/warning),
+`tags` (2–5 lowercase keywords; hyphens for multi-word),
+`created` (ISO 8601 UTC), `model`. Optional: `expires` (ISO 8601 UTC).
+Set `expires` only when the information has a known shelf life (e.g.
+"this workaround applies until v2 ships"). Leave unset for permanent
+decisions and preferences.
 
 Body: 1–4 concrete, actionable sentences. Don't repeat front matter.
 
@@ -44,12 +65,16 @@ User prefers Vitest for all unit and integration tests. Run with
 
 ## Writing a memory
 
-1. **Check INDEX first.** Read `docs/memory/INDEX.md` (skip if already read this session). Look for an existing row on the same topic or overlapping subject.
-   - Conflicts or supersedes existing → **update** (delete old file, remove its row, then write the new one).
+1. **Check INDEX first.** Read `docs/memory/INDEX.md` (skip if already read
+   this session). Look for an existing row on the same topic or overlapping
+   subject.
+   - Conflicts or supersedes existing → **update** (delete old file, remove
+     its row, then write the new one).
    - Adds distinct context → write a new entry.
    - No match → write a new entry.
 
-2. **Get timestamp:** `date -u +"%Y-%m-%dT%H:%M:%SZ"`. Use the date for the filename, full value for `created`.
+2. **Get timestamp:** `date -u +"%Y-%m-%dT%H:%M:%SZ"`. Use the date for
+   the filename, full value for `created`.
 
 3. **Write the file** to `docs/memory/archive/YYYY-MM-DD-<2–5-word-slug>.md`.
 
@@ -59,21 +84,19 @@ User prefers Vitest for all unit and integration tests. Run with
    ```
    Without the INDEX row, the entry is invisible to future lookups.
 
-Never overwrite in place — `created` must reflect the current version. Never keep both versions of conflicting entries.
+Never overwrite in place — `created` must reflect the current version.
+Never keep both versions of conflicting entries.
 
 ---
 
 ## Reading memory
 
-**Decide whether to look:** check memory before recommending tools, architecture, or design; when the user references a past session; or when the task touches a domain where a preference might exist. Otherwise skip — don't read speculatively.
+When you need to look up a topic mid-session, follow the same steps as
+"When this loads" above — read INDEX.md, prune expired entries, match by
+topic/tags/category.
 
-**Look it up:**
-
-1. Read `docs/memory/INDEX.md`. Before matching, prune expired rows: delete the archive file and remove the row for any entry whose `expires` has passed.
-2. Find rows where `topic`, `tags`, or `category` match the current task. If nothing matches on the obvious keywords, try related terms once before concluding nothing is stored.
-3. Read all matching archive files in a single parallel batch. If a file's `expires` has passed when you read it, delete it and its INDEX row instead of using the content.
-
-**Keyword search fallback** (when the index columns don't capture what you need):
+**Keyword search fallback** (when the index columns don't capture
+what you need):
 
 ```
 Grep pattern="<keyword>" include="docs/memory/archive/*.md"
@@ -83,7 +106,8 @@ Grep pattern="<keyword>" include="docs/memory/archive/*.md"
 
 ## First-time setup
 
-If `docs/memory/INDEX.md` doesn't exist, create the directory and seed the index:
+If `docs/memory/INDEX.md` doesn't exist, create the directory and seed
+the index:
 
 ```bash
 mkdir -p docs/memory/archive

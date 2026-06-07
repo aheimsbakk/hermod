@@ -1,6 +1,6 @@
 ---
 name: todo-txt
-description: Use to track tasks, todos, a work log, or a task list. Manages tasks using todo.txt — a plain-text format with priorities, contexts, tags, and due dates.
+description: Use to track tasks, todos, checklists, plans, a work log, or any task list. Manages tasks using todo.txt — a plain-text format with priorities, contexts, tags, and due dates.
 compatibility: opencode
 ---
 
