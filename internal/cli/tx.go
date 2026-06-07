@@ -549,6 +549,10 @@ func (q *quicSASConn) AcceptStream(ctx context.Context) (io.ReadWriteCloser, err
 	return q.conn.AcceptStream(ctx)
 }
 
+// errSASCancelledByPeer is the context-cause sentinel emitted when the peer
+// drops the QUIC connection during SAS verification.
+var errSASCancelledByPeer = errors.New("the other side cancelled SAS verification")
+
 // performSASCoordinated shows the SAS prompt, then exchanges a 1-byte
 // confirmation with the peer over a dedicated QUIC stream. Both sides must
 // confirm; if either rejects, the transfer is aborted.
@@ -566,17 +570,37 @@ func performSASCoordinated(ctx context.Context, conn *quic.Conn, tlsState tls.Co
 	}
 	defer tty.Close()
 
+	// Derive a cancellable context so we can propagate the peer disconnect
+	// as a context cancellation. This lets promptSASVerificationFrom return
+	// cleanly (with a newline) instead of leaving the prompt text and error
+	// on the same line.
+	ctx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+
 	// Unblock the prompt read if the local operation is cancelled (SIGINT)
 	// or the peer drops the connection.
 	go func() {
 		select {
 		case <-ctx.Done():
+			// local user cancelled (SIGINT) — cancel(nil) from defer
 		case <-conn.Context().Done():
+			// peer dropped the connection — tag the cause so we can
+			// distinguish it from a local SIGINT in the error message.
+			cancel(errSASCancelledByPeer)
 		}
 		tty.Close()
 	}()
 
 	return performSASCoordinatedWith(ctx, &quicSASConn{conn}, tlsState, isSender, tty, sasContext)
+}
+
+// cancelMessage returns the user-facing message for a SAS cancellation
+// based on whether the local user or the remote side cancelled.
+func cancelMessage(ctx context.Context) string {
+	if errors.Is(context.Cause(ctx), errSASCancelledByPeer) {
+		return "SAS verification cancelled by the other side"
+	}
+	return "SAS verification cancelled by user"
 }
 
 // performSASCoordinatedWith is the injectable core used by tests.
@@ -588,7 +612,12 @@ func performSASCoordinatedWith(ctx context.Context, conn sasStreamConn, tlsState
 		if errors.Is(err, context.Canceled) {
 			cancelled = true
 			localOK = false
-			fmt.Fprintln(os.Stderr, "SAS verification cancelled by user, notifying peer...")
+			msg := cancelMessage(ctx)
+			if errors.Is(context.Cause(ctx), errSASCancelledByPeer) {
+				fmt.Fprintln(os.Stderr, msg)
+			} else {
+				fmt.Fprintln(os.Stderr, msg+", notifying peer...")
+			}
 		} else {
 			return err
 		}
@@ -604,17 +633,17 @@ func performSASCoordinatedWith(ctx context.Context, conn sasStreamConn, tlsState
 		stream, err = conn.OpenStreamSync(ctx)
 		if err != nil {
 			if cancelled {
-				return fmt.Errorf("SAS verification cancelled by user")
+				return errors.New(cancelMessage(ctx))
 			}
-			return fmt.Errorf("open SAS stream: %w", err)
+			return fmt.Errorf("Could not complete SAS verification: %w", err)
 		}
 	} else {
 		stream, err = conn.AcceptStream(ctx)
 		if err != nil {
 			if cancelled {
-				return fmt.Errorf("SAS verification cancelled by user")
+				return errors.New(cancelMessage(ctx))
 			}
-			return fmt.Errorf("accept SAS stream: %w", err)
+			return fmt.Errorf("Could not complete SAS verification: %w", err)
 		}
 	}
 	defer stream.Close()
@@ -623,30 +652,30 @@ func performSASCoordinatedWith(ctx context.Context, conn sasStreamConn, tlsState
 	// This avoids deadlock on a bidirectional stream.
 	if _, err := stream.Write([]byte{localByte}); err != nil {
 		if cancelled {
-			return fmt.Errorf("SAS verification cancelled by user")
+			return errors.New(cancelMessage(ctx))
 		}
-		return fmt.Errorf("send SAS result: %w", err)
+		return fmt.Errorf("Could not send SAS result to the other side: %w", err)
 	}
 
 	var peerBuf [1]byte
 	if _, err := io.ReadFull(stream, peerBuf[:]); err != nil {
 		if cancelled {
-			return fmt.Errorf("SAS verification cancelled by user")
+			return errors.New(cancelMessage(ctx))
 		}
-		return fmt.Errorf("receive SAS result from peer: %w", err)
+		return fmt.Errorf("Could not read SAS result from the other side: %w", err)
 	}
 
 	switch {
 	case cancelled && peerBuf[0] != 0x01:
-		return fmt.Errorf("SAS verification cancelled by both sides")
+		return errors.New(cancelMessage(ctx))
 	case cancelled:
-		return fmt.Errorf("SAS verification cancelled by user")
+		return errors.New(cancelMessage(ctx))
 	case !localOK && peerBuf[0] != 0x01:
 		return fmt.Errorf("SAS verification rejected by both sides — connection aborted")
 	case !localOK:
-		return fmt.Errorf("SAS verification rejected by %s — connection aborted", map[bool]string{true: "sender", false: "receiver"}[isSender])
+		return fmt.Errorf("SAS verification rejected by you — connection aborted")
 	case peerBuf[0] != 0x01:
-		return fmt.Errorf("SAS verification rejected by %s — connection aborted", map[bool]string{true: "receiver", false: "sender"}[isSender])
+		return fmt.Errorf("SAS verification rejected by the other side — connection aborted")
 	}
 	return nil
 }
@@ -705,6 +734,11 @@ func promptSASVerificationFrom(ctx context.Context, tlsState tls.ConnectionState
 				fmt.Fprintln(os.Stderr, "")
 				return false, ctx.Err()
 			}
+			// Reader closed without context cancellation (e.g. peer
+			// dropped the connection before our cancellation handled
+			// it). Print a newline so the prompt text is not on the
+			// same line as the error message.
+			fmt.Fprintln(os.Stderr, "")
 			return false, nil
 		}
 		answer := strings.TrimSpace(text)
