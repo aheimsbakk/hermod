@@ -50,7 +50,7 @@ func ParseCandidates(endpoints []string) ([]*net.UDPAddr, error) {
 	for _, ep := range endpoints {
 		addr, err := net.ResolveUDPAddr("udp", ep)
 		if err != nil {
-			return nil, fmt.Errorf("resolve %s: %w", ep, err)
+			return nil, fmt.Errorf("resolve UDP address %s: %w", ep, err)
 		}
 		addrs = append(addrs, addr)
 	}

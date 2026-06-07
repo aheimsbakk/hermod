@@ -161,6 +161,8 @@ After the QUIC handshake, both sides display a short word phrase and an identico
 
 The prompt always reads from the controlling terminal (`/dev/tty` on Unix, `CONIN$` on Windows). This means `--verify` works correctly even when stdin is piped — for example, `echo secret | hermod tx -v -` will still show the prompt and wait for your `y`/`n` answer.
 
+You can cancel SAS verification at any time by pressing Ctrl+C. The cancellation propagates to the other side, and both peers see a cancellation message (`"SAS verification cancelled by user"`). If both sides cancel simultaneously, both see `"SAS verification cancelled by both sides"`.
+
 ## Configuration
 
 Hermod stores its config in:

@@ -42,7 +42,7 @@ func dialSignaling(serverURL string, pinnedFingerprint string) (*SignalingClient
 	case "ws":
 		u.Scheme = "ws"
 	default:
-		return nil, fmt.Errorf("unsupported scheme: %s", u.Scheme)
+		return nil, fmt.Errorf("unsupported URL scheme: %s", u.Scheme)
 	}
 
 	tlsCfg := &tls.Config{
@@ -51,11 +51,11 @@ func dialSignaling(serverURL string, pinnedFingerprint string) (*SignalingClient
 	if pinnedFingerprint != "" {
 		tlsCfg.VerifyPeerCertificate = func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
 			if len(rawCerts) == 0 {
-				return fmt.Errorf("no server certificate")
+				return fmt.Errorf("server did not present a TLS certificate")
 			}
 			got := CertFingerprint(rawCerts[0])
 			if subtle.ConstantTimeCompare([]byte(got), []byte(pinnedFingerprint)) != 1 {
-				return fmt.Errorf("server cert fingerprint mismatch: got %s, want %s", got, pinnedFingerprint)
+				return fmt.Errorf("server certificate fingerprint mismatch: got %s, expected %s", got, pinnedFingerprint)
 			}
 			return nil
 		}
@@ -76,7 +76,7 @@ func dialSignaling(serverURL string, pinnedFingerprint string) (*SignalingClient
 
 	conn, _, err := dialer.Dial(wsURL, nil)
 	if err != nil {
-		return nil, fmt.Errorf("ws dial %s: %w", wsURL, err)
+		return nil, fmt.Errorf("WebSocket dial on %s: %w", wsURL, err)
 	}
 	return &SignalingClient{conn: conn, ctx: context.Background(), done: make(chan struct{})}, nil
 }
@@ -243,7 +243,7 @@ func FetchServerFingerprint(serverURL string) (string, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("cert endpoint returned %s", resp.Status)
+		return "", fmt.Errorf("certificate endpoint returned %s", resp.Status)
 	}
 
 	certPEM, err := io.ReadAll(resp.Body)
@@ -256,7 +256,7 @@ func FetchServerFingerprint(serverURL string) (string, error) {
 
 	block, _ := pem.Decode(certPEM)
 	if block == nil || block.Type != "CERTIFICATE" {
-		return "", fmt.Errorf("cert endpoint did not return a valid PEM certificate")
+		return "", fmt.Errorf("certificate endpoint did not return a valid PEM certificate")
 	}
 
 	return CertFingerprint(block.Bytes), nil

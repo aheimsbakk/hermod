@@ -21,3 +21,4 @@ todo.txt.tmp
 
 # Old worklogs (migrated to CHANGELOG.md)
 docs/worklogs/
+build/

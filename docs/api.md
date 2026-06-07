@@ -8,6 +8,28 @@ Internal package API for contributors and embedders. All packages are under `git
 
 CLI command implementations and shared transfer helpers.
 
+### SAS verification
+
+```go
+func promptSASVerification(ctx context.Context, tlsState tls.ConnectionState, sasContext []byte) (bool, error)
+```
+Opens `/dev/tty` (or `CONIN$` on Windows), reads the user's SAS answer, and returns `true` if the user confirms (`y`/`Y`). The read is interruptible via `ctx`: if the context is cancelled (SIGINT, SIGTERM, or peer disconnect), the prompt exits immediately and returns `context.Canceled`.
+
+```go
+func promptSASVerificationFrom(ctx context.Context, tlsState tls.ConnectionState, r io.Reader, sasContext []byte) (bool, error)
+```
+Testable variant of `promptSASVerification` that reads from the given `io.Reader` instead of opening the TTY. The read is interruptible via `ctx` — it uses an internal goroutine with a channel select so the prompt does not hang on context cancellation.
+
+```go
+func performSASCoordinated(ctx context.Context, conn *quic.Conn, tlsState tls.ConnectionState, isSender bool, sasContext []byte) error
+```
+Runs the full SAS coordination protocol: opens `/dev/tty`, displays the SAS and identicon, reads user input, exchanges a 1-byte confirm/reject (`0x01`/`0x00`) over a dedicated QUIC stream with the peer, and returns `nil` only when both sides confirm. Closes the TTY when either `ctx` is cancelled or the QUIC connection drops, so the prompt does not block on disconnect.
+
+```go
+func performSASCoordinatedWith(ctx context.Context, conn sasStreamConn, tlsState tls.ConnectionState, isSender bool, reader io.Reader, sasContext []byte) error
+```
+Testable core of `performSASCoordinated`. If the prompt returns `context.Canceled`, it prints `"SAS verification cancelled by user, notifying peer..."`, sends `0x00` to the peer, and returns a cancellation error. When both sides cancel simultaneously, the error message reads `"SAS verification cancelled by both sides"`.
+
 ### Cancellation
 
 ```go
@@ -17,7 +39,7 @@ const cancelMsgReceiver = "cancelled:receiver"
 ```
 Error code and messages used when a user cancels a transfer (Ctrl+C / SIGTERM).
 
-Both `tx` and `rx` watch `ctx.Done()` and call `quicConn.CloseWithError(cancelCodeUser, cancelMsg*)` as soon as the context is cancelled. This unblocks the peer's blocked stream read or write immediately.
+Both `tx` and `rx` watch `ctx.Done()` and call `quicConn.CloseWithError(cancelCodeUser, cancelMsg*)` as soon as the context is cancelled. This unblocks the peer's blocked stream read or write immediately. The SAS prompt also responds to context cancellation, so a Ctrl+C during verification shows a cancellation message and sends the signal to the peer.
 
 ```go
 func cancelledByPeer(err error) error

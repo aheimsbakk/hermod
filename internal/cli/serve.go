@@ -45,10 +45,10 @@ func newServeCmd() *cobra.Command {
 }
 
 func runServe(listenAddr string, ttl time.Duration, rateLimit, rateBurst float64, maxBlobsPerChannel, maxCPaceFailures int) error {
-	logDebug("loading config")
+	logDebug("loading configuration")
 	cfg, err := config.Load()
 	if err != nil {
-		return fmt.Errorf("load config: %w", err)
+		return fmt.Errorf("load configuration: %w", err)
 	}
 	logDebug("config loaded", "path", config.Path())
 
@@ -61,7 +61,7 @@ func runServe(listenAddr string, ttl time.Duration, rateLimit, rateBurst float64
 		if err := config.Save(cfg); err != nil {
 			return fmt.Errorf("save config: %w", err)
 		}
-		logInfo("Server certificate saved to config")
+		logInfo("Server certificate saved to configuration file")
 	} else {
 		logDebug("using existing server certificate from config")
 	}
@@ -70,7 +70,7 @@ func runServe(listenAddr string, ttl time.Duration, rateLimit, rateBurst float64
 	if err != nil {
 		return fmt.Errorf("load cert: %w", err)
 	}
-	logDebug("TLS certificate loaded")
+	logDebug("TLS configuration loaded")
 
 	// Warn operators as the certificate approaches expiry. Repeated at startup
 	// so that periodic restarts surface the warning ample time in advance.
@@ -127,7 +127,7 @@ func runServe(listenAddr string, ttl time.Duration, rateLimit, rateBurst float64
 	if err != nil {
 		logError("Server stopped with error", "err", err)
 	} else {
-		logInfo("Server stopped cleanly")
+		logInfo("Server stopped")
 	}
 	return err
 }

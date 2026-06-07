@@ -132,7 +132,7 @@ func (s *Server) ListenAndServe(ctx context.Context, addr string, tlsCfg *tls.Co
 				return
 			case <-ticker.C:
 				s.rl.Cleanup(30 * time.Minute)
-				s.logger.Debug("Rate limiter bucket cleanup ran")
+				s.logger.Debug("Rate limiter bucket cleanup completed")
 			}
 		}
 	}()
@@ -177,11 +177,11 @@ func (s *Server) Addr() string {
 func (s *Server) handleCert(w http.ResponseWriter, r *http.Request) {
 	if !s.rl.Allow(r.RemoteAddr) {
 		s.logger.Warn("cert endpoint rate-limited", "remote_addr", r.RemoteAddr)
-		http.Error(w, "rate limited", http.StatusTooManyRequests)
+		http.Error(w, "Too many requests. Try again later.", http.StatusTooManyRequests)
 		return
 	}
 	if len(s.certDER) == 0 {
-		http.Error(w, "certificate not available", http.StatusNotFound)
+		http.Error(w, "Certificate not available", http.StatusNotFound)
 		return
 	}
 	pemBlock := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: s.certDER})
@@ -198,7 +198,7 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 
 	if !s.rl.Allow(remoteAddr) {
 		s.logger.Warn("Request rate-limited", "remote_addr", remoteAddr)
-		http.Error(w, "rate limited", http.StatusTooManyRequests)
+		http.Error(w, "Too many requests. Try again later.", http.StatusTooManyRequests)
 		return
 	}
 
@@ -231,7 +231,7 @@ func (s *Server) serveClient(conn *websocket.Conn, remoteAddr string) {
 		s.handleJoin(conn, remoteAddr, initMsg.ChannelID, initMsg.Payload)
 	default:
 		s.logger.Warn("Unknown first message type from client", "remote_addr", remoteAddr, "type", initMsg.Type)
-		writeError(conn, "unknown init message type")
+		writeError(conn, "unrecognized message type")
 	}
 }
 
@@ -240,7 +240,7 @@ func (s *Server) handleAllocate(conn *websocket.Conn, remoteAddr string, channel
 	s.logger.Debug("Allocating channel", "channel_id", channelID, "remote_addr", remoteAddr)
 	if err := s.store.AllocateChannel(channelID, s.ttl); err != nil {
 		s.logger.Warn("Channel allocation failed", "channel_id", channelID, "remote_addr", remoteAddr, "err", err)
-		writeError(conn, "channel allocation failed")
+		writeError(conn, "could not allocate channel")
 		return
 	}
 	// Reply with public IP (STUN-like)
@@ -352,10 +352,10 @@ func (s *Server) relay(conn *websocket.Conn, channelID uint16, isSender bool) {
 			if err := s.store.StoreBlob(channelID, isSender, msg.Payload); err != nil {
 				s.logger.Error("Failed to store blob", "channel_id", channelID, "role", role, "err", err)
 				if s.recordFailureAndDrop(channelID) {
-					writeError(conn, "store blob failed: channel terminated")
+					writeError(conn, "handshake data store failed: channel terminated")
 					return
 				}
-				writeError(conn, "store blob failed")
+				writeError(conn, "handshake data store failed")
 				return
 			}
 			// Forward blob to peer
@@ -401,7 +401,7 @@ func (s *Server) dropChannel(channelID uint16) {
 	s.mu.Unlock()
 
 	for _, w := range conns {
-		_ = w.conn.WriteJSON(Message{Type: MsgError, Error: "channel terminated: limit exceeded"})
+		_ = w.conn.WriteJSON(Message{Type: MsgError, Error: "channel terminated: CPace failure limit exceeded"})
 		w.conn.Close()
 	}
 	_ = s.store.DeleteChannel(channelID)

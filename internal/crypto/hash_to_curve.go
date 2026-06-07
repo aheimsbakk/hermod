@@ -43,7 +43,7 @@ var (
 // Returns the uncompressed 65-byte point (0x04 || X || Y).
 func hashToCurveP256(msg []byte, dst []byte) ([]byte, error) {
 	if len(dst) == 0 {
-		return nil, errors.New("hashToCurveP256: empty DST")
+		return nil, errors.New("hash to curve: domain separation tag (DST) must not be empty")
 	}
 	// hash_to_field produces 2 field elements (random-oracle variant hashes twice).
 	u, err := hashToFieldP256(msg, dst, 2)
@@ -93,13 +93,13 @@ func expandMessageXMD(msg, dst []byte, lenInBytes int) ([]byte, error) {
 	// ell = ceil(lenInBytes / b_len)
 	ell := (lenInBytes + bLen - 1) / bLen
 	if ell > 255 {
-		return nil, errors.New("expandMessageXMD: requested length too large")
+		return nil, errors.New("expand message: requested length exceeds maximum")
 	}
 	if lenInBytes > 65535 {
-		return nil, errors.New("expandMessageXMD: lenInBytes exceeds 65535")
+		return nil, errors.New("expand message: requested output exceeds 65535 bytes")
 	}
 	if len(dst) > 255 {
-		return nil, errors.New("expandMessageXMD: DST too long")
+		return nil, errors.New("expand message: domain separation tag (DST) exceeds maximum length")
 	}
 
 	// DST_prime = DST || I2OSP(len(DST), 1)

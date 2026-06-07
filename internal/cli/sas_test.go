@@ -551,7 +551,7 @@ func TestSASCoordinated_BothReject(t *testing.T) {
 	}
 }
 
-// TestSASCoordinated_OpenStreamError covers the "open sas stream" error return.
+// TestSASCoordinated_OpenStreamError covers the "open SAS stream" error return.
 func TestSASCoordinated_OpenStreamError(t *testing.T) {
 	clientConn, _, err := tlsPipe()
 	if err != nil {
@@ -563,12 +563,12 @@ func TestSASCoordinated_OpenStreamError(t *testing.T) {
 	defer cancel()
 
 	err = performSASCoordinatedWith(ctx, conn, clientConn.ConnectionState(), true, strings.NewReader("y\n"), nil)
-	if err == nil || !strings.Contains(err.Error(), "open sas stream") {
-		t.Fatalf("expected 'open sas stream' error, got: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "open SAS stream") {
+		t.Fatalf("expected 'open SAS stream' error, got: %v", err)
 	}
 }
 
-// TestSASCoordinated_AcceptStreamError covers the "accept sas stream" error return.
+// TestSASCoordinated_AcceptStreamError covers the "accept SAS stream" error return.
 func TestSASCoordinated_AcceptStreamError(t *testing.T) {
 	_, serverConn, err := tlsPipe()
 	if err != nil {
@@ -580,12 +580,12 @@ func TestSASCoordinated_AcceptStreamError(t *testing.T) {
 	defer cancel()
 
 	err = performSASCoordinatedWith(ctx, conn, serverConn.ConnectionState(), false, strings.NewReader("y\n"), nil)
-	if err == nil || !strings.Contains(err.Error(), "accept sas stream") {
-		t.Fatalf("expected 'accept sas stream' error, got: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "accept SAS stream") {
+		t.Fatalf("expected 'accept SAS stream' error, got: %v", err)
 	}
 }
 
-// TestSASCoordinated_StreamWriteError covers the "send sas result" error return.
+// TestSASCoordinated_StreamWriteError covers the "send SAS result" error return.
 func TestSASCoordinated_StreamWriteError(t *testing.T) {
 	clientConn, _, err := tlsPipe()
 	if err != nil {
@@ -597,12 +597,12 @@ func TestSASCoordinated_StreamWriteError(t *testing.T) {
 	defer cancel()
 
 	err = performSASCoordinatedWith(ctx, conn, clientConn.ConnectionState(), true, strings.NewReader("y\n"), nil)
-	if err == nil || !strings.Contains(err.Error(), "send sas result") {
-		t.Fatalf("expected 'send sas result' error, got: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "send SAS result") {
+		t.Fatalf("expected 'send SAS result' error, got: %v", err)
 	}
 }
 
-// TestSASCoordinated_StreamReadError covers the "recv peer sas result" error return.
+// TestSASCoordinated_StreamReadError covers the "receive SAS result from peer" error return.
 func TestSASCoordinated_StreamReadError(t *testing.T) {
 	clientConn, _, err := tlsPipe()
 	if err != nil {
@@ -614,7 +614,7 @@ func TestSASCoordinated_StreamReadError(t *testing.T) {
 	defer cancel()
 
 	err = performSASCoordinatedWith(ctx, conn, clientConn.ConnectionState(), true, strings.NewReader("y\n"), nil)
-	if err == nil || !strings.Contains(err.Error(), "recv peer sas result") {
-		t.Fatalf("expected 'recv peer sas result' error, got: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "receive SAS result from peer") {
+		t.Fatalf("expected 'receive SAS result from peer' error, got: %v", err)
 	}
 }

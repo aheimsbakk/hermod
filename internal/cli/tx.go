@@ -96,13 +96,13 @@ func runTx(input, serverURL string, numWords int, verify bool, listenUDP string,
 	logDebug("loading config")
 	cfg, err := config.Load()
 	if err != nil {
-		return fmt.Errorf("load config: %w", err)
+		return fmt.Errorf("load configuration: %w", err)
 	}
 
 	if saveServer && serverURL != cfg.ServerURL {
 		config.SetDefaultServer(cfg, serverURL)
 		if err := config.Save(cfg); err != nil {
-			return fmt.Errorf("save config: %w", err)
+			return fmt.Errorf("save configuration: %w", err)
 		}
 		printStatus("Default server set to %s", serverURL)
 		logInfo("Default server updated", "server", serverURL)
@@ -139,7 +139,7 @@ func runTx(input, serverURL string, numWords int, verify bool, listenUDP string,
 	logInfo("Connecting to signaling server", "server", serverURL)
 	sigRaw, err := network.DialSignaling(serverURL, pinnedFP)
 	if err != nil {
-		return fmt.Errorf("signaling connect: %w", err)
+		return fmt.Errorf("connect to signaling server: %w", err)
 	}
 	defer sigRaw.Close()
 	sig := sigRaw.WithContext(ctx)
@@ -149,7 +149,7 @@ func runTx(input, serverURL string, numWords int, verify bool, listenUDP string,
 	logDebug("allocating channel on signaling server", "channel_id", channelID)
 	publicIP, err := sig.Allocate(channelID)
 	if err != nil {
-		return fmt.Errorf("allocate: %w", err)
+		return fmt.Errorf("allocate channel: %w", err)
 	}
 	logInfo("Channel allocated", "channel_id", channelID, "public_ip", publicIP)
 
@@ -157,7 +157,7 @@ func runTx(input, serverURL string, numWords int, verify bool, listenUDP string,
 	logDebug("generating ephemeral TLS certificate for QUIC")
 	epCert, epKey, epCertDER, err := generateEphemeralCert()
 	if err != nil {
-		return fmt.Errorf("ephemeral cert: %w", err)
+		return fmt.Errorf("generate ephemeral certificate: %w", err)
 	}
 	myFP := network.CertFingerprint(epCertDER)
 	logDebug("ephemeral certificate generated", "fingerprint", myFP)
@@ -166,14 +166,14 @@ func runTx(input, serverURL string, numWords int, verify bool, listenUDP string,
 	logDebug("binding UDP socket", "addr", listenUDP)
 	udpConn, err := network.BindUDP(listenUDP)
 	if err != nil {
-		return fmt.Errorf("bind udp: %w", err)
+		return fmt.Errorf("bind UDP socket: %w", err)
 	}
 	mux := network.NewPacketMux(udpConn)
 	defer mux.Close()
 
 	localAddr, err := network.LocalUDPAddr(udpConn)
 	if err != nil {
-		return fmt.Errorf("local udp addr: %w", err)
+		return fmt.Errorf("get local UDP address: %w", err)
 	}
 	logDebug("UDP socket bound", "local_addr", localAddr.String())
 
@@ -181,13 +181,13 @@ func runTx(input, serverURL string, numWords int, verify bool, listenUDP string,
 	logDebug("initialising CPace PAKE handshake", "role", "sender")
 	cpaceSession, myPubMsg, err := crypto.CPaceInit(password, channelID, "sender")
 	if err != nil {
-		return fmt.Errorf("cpace init: %w", err)
+		return fmt.Errorf("initialize CPace handshake: %w", err)
 	}
 
 	// Wait for receiver to join
 	logInfo("Waiting for receiver to join the channel")
 	if err := sig.WaitReady(); err != nil {
-		return fmt.Errorf("wait ready: %w", err)
+		return fmt.Errorf("wait for receiver: %w", err)
 	}
 	logInfo("Receiver joined the channel")
 
@@ -195,20 +195,20 @@ func runTx(input, serverURL string, numWords int, verify bool, listenUDP string,
 	logDebug("sending CPace public message to peer via relay")
 	cpaceMsgBytes, err := network.EncodeCPaceMsg(network.CPaceMsg{PubMsg: myPubMsg})
 	if err != nil {
-		return fmt.Errorf("encode cpace msg: %w", err)
+		return fmt.Errorf("encode CPace message: %w", err)
 	}
 	if err := sig.SendBlob(channelID, cpaceMsgBytes); err != nil {
-		return fmt.Errorf("send cpace msg: %w", err)
+		return fmt.Errorf("send CPace message: %w", err)
 	}
 
 	logDebug("waiting for peer CPace public message from relay")
 	peerCPaceMsgBytes, err := sig.RecvBlob()
 	if err != nil {
-		return fmt.Errorf("recv peer cpace msg: %w", err)
+		return fmt.Errorf("receive CPace message from peer: %w", err)
 	}
 	peerCPaceMsg, err := network.DecodeCPaceMsg(peerCPaceMsgBytes)
 	if err != nil {
-		return fmt.Errorf("decode peer cpace msg: %w", err)
+		return fmt.Errorf("decode peer CPace message: %w", err)
 	}
 	logDebug("peer CPace message received and decoded")
 
@@ -216,7 +216,7 @@ func runTx(input, serverURL string, numWords int, verify bool, listenUDP string,
 	logDebug("completing CPace handshake to derive shared key")
 	kClassical, err := cpaceSession.CPaceFinish(peerCPaceMsg.PubMsg)
 	if err != nil {
-		return fmt.Errorf("cpace finish: %w", err)
+		return fmt.Errorf("complete CPace handshake: %w", err)
 	}
 	logInfo("PAKE handshake complete — shared key established")
 
@@ -237,30 +237,30 @@ func runTx(input, serverURL string, numWords int, verify bool, listenUDP string,
 	}
 	bundleBytes, err := network.EncodeEndpointBundle(bundle)
 	if err != nil {
-		return fmt.Errorf("encode bundle: %w", err)
+		return fmt.Errorf("encode endpoint bundle: %w", err)
 	}
 	encBundle, err := crypto.SealAAD(kClassical, channelIDAad(channelID), bundleBytes)
 	if err != nil {
-		return fmt.Errorf("encrypt bundle: %w", err)
+		return fmt.Errorf("encrypt endpoint bundle: %w", err)
 	}
 	logDebug("endpoint bundle encrypted and sending to peer via relay")
 	if err := sig.SendBlob(channelID, encBundle); err != nil {
-		return fmt.Errorf("send bundle: %w", err)
+		return fmt.Errorf("send endpoint bundle: %w", err)
 	}
 
 	// Receive peer's bundle
 	logDebug("waiting for receiver endpoint bundle from relay")
 	encPeerBundle, err := sig.RecvBlob()
 	if err != nil {
-		return fmt.Errorf("recv peer bundle: %w", err)
+		return fmt.Errorf("receive endpoint bundle from peer: %w", err)
 	}
 	peerBundleBytes, err := crypto.OpenAAD(kClassical, channelIDAad(channelID), encPeerBundle)
 	if err != nil {
-		return fmt.Errorf("decrypt peer bundle: %w", err)
+		return fmt.Errorf("decrypt peer endpoint bundle: %w", err)
 	}
 	peerBundle, err := network.DecodeEndpointBundle(peerBundleBytes)
 	if err != nil {
-		return fmt.Errorf("decode peer bundle: %w", err)
+		return fmt.Errorf("decode peer endpoint bundle: %w", err)
 	}
 	logDebug("receiver endpoint bundle received",
 		"public", peerBundle.PublicEndpoint,
@@ -288,7 +288,7 @@ func runTx(input, serverURL string, numWords int, verify bool, listenUDP string,
 	printStatus("Establishing P2P connection...")
 	punchResult, err := network.HolePunch(ctx, mux, candidates, holePunchNonce(kClassical))
 	if err != nil {
-		return fmt.Errorf("hole punch: %w", err)
+		return fmt.Errorf("UDP hole punch: %w", err)
 	}
 	logInfo("UDP hole punch succeeded", "peer_addr", punchResult.PeerAddr.String())
 
@@ -302,7 +302,7 @@ func runTx(input, serverURL string, numWords int, verify bool, listenUDP string,
 	}}
 	quicConn, err := network.DialQUIC(ctx, mux, punchResult.PeerAddr, tlsCfg, peerBundle.CertFingerprint)
 	if err != nil {
-		return fmt.Errorf("quic dial: %w", err)
+		return fmt.Errorf("QUIC dial: %w", err)
 	}
 	defer quicConn.CloseWithError(0, "done")
 	logInfo("QUIC connection established", "peer_addr", punchResult.PeerAddr.String())
@@ -342,7 +342,7 @@ func runTx(input, serverURL string, numWords int, verify bool, listenUDP string,
 	logDebug("opening QUIC metadata stream (stream 0)")
 	metaStream, err := quicConn.OpenStreamSync(ctx)
 	if err != nil {
-		return fmt.Errorf("open meta stream: %w", err)
+		return fmt.Errorf("open metadata stream: %w", err)
 	}
 
 	metaBytes, err := transfer.EncodeMetadata(meta)
@@ -464,7 +464,7 @@ func buildPayload(input string, kind transfer.Kind, name string, isStdinPiped bo
 		meta := &transfer.Metadata{Kind: transfer.KindStream, Size: -1}
 		return meta, os.Stdin, -1, nil
 	}
-	return nil, nil, 0, fmt.Errorf("unknown kind: %s", kind)
+	return nil, nil, 0, fmt.Errorf("unknown payload kind: %s", kind)
 }
 
 // channelIDAad returns the 2-byte big-endian encoding of id for use as
@@ -606,7 +606,7 @@ func performSASCoordinatedWith(ctx context.Context, conn sasStreamConn, tlsState
 			if cancelled {
 				return fmt.Errorf("SAS verification cancelled by user")
 			}
-			return fmt.Errorf("open sas stream: %w", err)
+			return fmt.Errorf("open SAS stream: %w", err)
 		}
 	} else {
 		stream, err = conn.AcceptStream(ctx)
@@ -614,7 +614,7 @@ func performSASCoordinatedWith(ctx context.Context, conn sasStreamConn, tlsState
 			if cancelled {
 				return fmt.Errorf("SAS verification cancelled by user")
 			}
-			return fmt.Errorf("accept sas stream: %w", err)
+			return fmt.Errorf("accept SAS stream: %w", err)
 		}
 	}
 	defer stream.Close()
@@ -625,7 +625,7 @@ func performSASCoordinatedWith(ctx context.Context, conn sasStreamConn, tlsState
 		if cancelled {
 			return fmt.Errorf("SAS verification cancelled by user")
 		}
-		return fmt.Errorf("send sas result: %w", err)
+		return fmt.Errorf("send SAS result: %w", err)
 	}
 
 	var peerBuf [1]byte
@@ -633,7 +633,7 @@ func performSASCoordinatedWith(ctx context.Context, conn sasStreamConn, tlsState
 		if cancelled {
 			return fmt.Errorf("SAS verification cancelled by user")
 		}
-		return fmt.Errorf("recv peer sas result: %w", err)
+		return fmt.Errorf("receive SAS result from peer: %w", err)
 	}
 
 	switch {

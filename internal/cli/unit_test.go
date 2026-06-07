@@ -699,7 +699,7 @@ func TestPromptSASVerification_TTYError(t *testing.T) {
 		return nil, fmt.Errorf("no tty in test")
 	}
 
-	_, err := promptSASVerification(tls.ConnectionState{}, nil)
+	_, err := promptSASVerification(context.Background(), tls.ConnectionState{}, nil)
 	if err == nil {
 		t.Fatal("expected error from promptSASVerification when openTTYFunc fails")
 	}
