@@ -5,6 +5,30 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.11.0] - 2026-06-07
+
+- **why:** Apply plain language to all user-facing text, fix SAS prompt and progress bar UX issues, and add port 4376 fallback to `hermod trust`
+- **model:** opencode/deepseek-v4-flash
+- **tags:** cli, ux, sas, progress-bar, clear-language, trust
+
+### Added
+
+- `hermod trust` now defaults to port 4376 when no port is specified in the server URL (`internal/cli/trust.go`)
+
+### Changed
+
+- Progress bar style: file bar from hash/pipes (`|##########.....|`) to equals/brackets (`[==========-----]`), stream bar from dots/hash (`|..###..........|`) to arrows/brackets (`[--<=>----------]`) (`internal/cli/stream_bar.go`, `internal/cli/tx.go`)
+- All user-facing strings rewritten to ISO 24495-1:2023 plain language: expanded abbreviations (cpace → CPace, udp → UDP, quic → QUIC, recv → receive), added specific error causes, and replaced generic errors with clear next steps (20 files across cli, crypto, network, server, transfer)
+
+### Fixed
+
+- SAS verification: add missing newline after identicon output in `tx.go`
+- SAS prompt: detect context cancellation when scanner unblocks before `ctx.Done()` fires, preventing a hung prompt (`internal/cli/tx.go`)
+- SAS error: add newline before error message so receiver cancellation appears on its own line, not appended to prompt text
+- SAS error messages: distinguish "cancelled by you" from "cancelled by the other side" using plain language
+- `rx KindStream` output: remove extra blank line after piped stdin transfers (`internal/cli/rx.go`)
+- SAS test: expand coverage for cancellation race and plain-language error assertions (`internal/cli/sas_test.go`, `internal/cli/unit_test.go`)
+
 ## [v0.10.4] - 2026-06-07
 
 - **why:** Add GitHub Actions release workflow for automated cross-platform builds and publishing
