@@ -582,6 +582,21 @@ func TestRunTrust_URLNormalization(t *testing.T) {
 	}
 }
 
+// TestRunTrust_DefaultPort verifies that trust without a port defaults to 4376.
+func TestRunTrust_DefaultPort(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	t.Setenv("APPDATA", dir)
+
+	err := runTrust("localhost", "")
+	if err == nil {
+		t.Fatal("expected error (no server at localhost)")
+	}
+	if !strings.Contains(err.Error(), ":4376") {
+		t.Errorf("expected default port 4376 in error, got: %v", err)
+	}
+}
+
 // --- runServe ---
 
 // TestRunServe_InvalidAddress verifies runServe returns an error immediately

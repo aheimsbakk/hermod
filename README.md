@@ -129,8 +129,15 @@ hermod trust [SERVER_URL] [--fingerprint FINGERPRINT]
 
 Connects to the server, fetches its certificate fingerprint, saves it to the local config, and sets the server as the default for future `tx` and `rx` calls.
 
+If you omit the port, `trust` defaults to port 4376 — hermod's standard signaling port.
+
 ```bash
+# With explicit port:
 ./hermod trust wss://relay.example.com:4376
+
+# Port 4376 is assumed when omitted:
+./hermod trust relay.example.com
+
 # Prints: Pinned wss://relay.example.com:4376
 #           fingerprint: a3f9...
 #           set as default server
