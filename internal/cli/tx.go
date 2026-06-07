@@ -35,7 +35,7 @@ import (
 	"github.com/hermod/hermod/pkg/transfer"
 )
 
-// newHashBar returns a progress bar styled with '#' fill and '.' padding.
+// newHashBar returns a progress bar styled with '=' fill and '-' padding.
 // Used for transfers with a known size. Stream transfers use streamBar instead.
 func newHashBar(size int64, description string) *progressbar.ProgressBar {
 	return progressbar.NewOptions64(
@@ -51,10 +51,10 @@ func newHashBar(size int64, description string) *progressbar.ProgressBar {
 		progressbar.OptionFullWidth(),
 		progressbar.OptionSetRenderBlankState(true),
 		progressbar.OptionSetTheme(progressbar.Theme{
-			Saucer:        "#",
-			SaucerPadding: ".",
-			BarStart:      "|",
-			BarEnd:        "|",
+			Saucer:        "=",
+			SaucerPadding: "-",
+			BarStart:      "[",
+			BarEnd:        "]",
 		}),
 	)
 }
