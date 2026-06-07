@@ -645,7 +645,7 @@ func promptSASVerificationFrom(tlsState tls.ConnectionState, r io.Reader, sasCon
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: could not render identicon: %v\n", err)
 	} else {
-		fmt.Fprint(os.Stderr, identicon)
+		fmt.Fprintln(os.Stderr, identicon)
 	}
 	fmt.Fprint(os.Stderr, "Compare these values with the other end. Do they match? [y/N]: ")
 
