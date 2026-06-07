@@ -10,6 +10,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"sync"
@@ -30,7 +31,9 @@ type SignalingClient struct {
 
 // dialSignaling opens a WebSocket connection to serverURL, pinning the cert
 // fingerprint if provided (empty = accept any cert for `trust` bootstrapping).
-func dialSignaling(serverURL string, pinnedFingerprint string) (*SignalingClient, error) {
+// When family is not IPFamilyAny, the TCP connection is restricted to addresses
+// from that IP protocol family only.
+func dialSignaling(serverURL string, pinnedFingerprint string, family IPFamily) (*SignalingClient, error) {
 	u, err := url.Parse(serverURL)
 	if err != nil {
 		return nil, fmt.Errorf("parse server url: %w", err)
@@ -64,6 +67,16 @@ func dialSignaling(serverURL string, pinnedFingerprint string) (*SignalingClient
 	dialer := websocket.Dialer{
 		TLSClientConfig: tlsCfg,
 	}
+	// Restrict DNS resolution and TCP connections to the requested IP family.
+	if family == IPFamilyV4 {
+		dialer.NetDial = func(network, addr string) (net.Conn, error) {
+			return net.Dial("tcp4", addr)
+		}
+	} else if family == IPFamilyV6 {
+		dialer.NetDial = func(network, addr string) (net.Conn, error) {
+			return net.Dial("tcp6", addr)
+		}
+	}
 	wsURL := u.String()
 	// Append /ws path if not present
 	if wsURL[len(wsURL)-3:] != "/ws" {
@@ -83,7 +96,13 @@ func dialSignaling(serverURL string, pinnedFingerprint string) (*SignalingClient
 
 // DialSignaling opens a WebSocket to serverURL with optional cert pinning.
 func DialSignaling(serverURL, pinnedFingerprint string) (*SignalingClient, error) {
-	return dialSignaling(serverURL, pinnedFingerprint)
+	return dialSignaling(serverURL, pinnedFingerprint, IPFamilyAny)
+}
+
+// DialSignalingWithFamily opens a WebSocket to serverURL with optional cert pinning
+// and restricts DNS resolution and TCP connections to the given IP family.
+func DialSignalingWithFamily(serverURL, pinnedFingerprint string, family IPFamily) (*SignalingClient, error) {
+	return dialSignaling(serverURL, pinnedFingerprint, family)
 }
 
 // WithContext returns a copy of the client whose blocking reads are cancelled

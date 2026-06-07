@@ -96,8 +96,15 @@ func runRx(code, destination, serverURL string, verify bool, listenUDP string, s
 	}
 
 	// Connect to signaling server
+	sigFamily := network.IPFamilyAny
+	switch {
+	case ipv4Only:
+		sigFamily = network.IPFamilyV4
+	case ipv6Only:
+		sigFamily = network.IPFamilyV6
+	}
 	logInfo("Connecting to signaling server", "server", serverURL)
-	sigRaw, err := network.DialSignaling(serverURL, pinnedFP)
+	sigRaw, err := network.DialSignalingWithFamily(serverURL, pinnedFP, sigFamily)
 	if err != nil {
 		return fmt.Errorf("connect to signaling server: %w", err)
 	}
