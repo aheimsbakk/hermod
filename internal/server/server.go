@@ -49,7 +49,9 @@ type Message struct {
 // Server is the hermod signaling server.
 type Server struct {
 	store              SignalingStore
-	rl                 *RateLimiter
+	certRL             *RateLimiter // /cert HTTP endpoint
+	wsRL               *RateLimiter // WebSocket upgrade
+	joinRL             *RateLimiter // join attempts (per-IP, channel enumeration)
 	ttl                time.Duration
 	maxBlobsPerChannel int
 	maxCPaceFailures   int
@@ -74,13 +76,15 @@ type wsConn struct {
 // DefaultMaxBlobsPerChannel for the spec default.
 // maxCPaceFailures caps CPace protocol violations before the channel is
 // invalidated; use DefaultMaxCPaceFailures for the spec default.
-func NewServer(store SignalingStore, rl *RateLimiter, ttl time.Duration, maxBlobsPerChannel, maxCPaceFailures int, certDER []byte, logger *slog.Logger) *Server {
+func NewServer(store SignalingStore, certRL, wsRL, joinRL *RateLimiter, ttl time.Duration, maxBlobsPerChannel, maxCPaceFailures int, certDER []byte, logger *slog.Logger) *Server {
 	if logger == nil {
 		logger = slog.Default()
 	}
 	return &Server{
 		store:              store,
-		rl:                 rl,
+		certRL:             certRL,
+		wsRL:               wsRL,
+		joinRL:             joinRL,
 		ttl:                ttl,
 		maxBlobsPerChannel: maxBlobsPerChannel,
 		maxCPaceFailures:   maxCPaceFailures,
@@ -131,7 +135,9 @@ func (s *Server) ListenAndServe(ctx context.Context, addr string, tlsCfg *tls.Co
 			case <-cleanupCtx.Done():
 				return
 			case <-ticker.C:
-				s.rl.Cleanup(30 * time.Minute)
+				s.certRL.Cleanup(30 * time.Minute)
+				s.wsRL.Cleanup(30 * time.Minute)
+				s.joinRL.Cleanup(30 * time.Minute)
 				s.logger.Debug("Rate limiter bucket cleanup completed")
 			}
 		}
@@ -175,7 +181,7 @@ func (s *Server) Addr() string {
 // the fingerprint they should store via `hermod trust`.
 // Rate limiting is applied to prevent abuse (M-05).
 func (s *Server) handleCert(w http.ResponseWriter, r *http.Request) {
-	if !s.rl.Allow(r.RemoteAddr) {
+	if !s.certRL.Allow(r.RemoteAddr) {
 		s.logger.Warn("cert endpoint rate-limited", "remote_addr", r.RemoteAddr)
 		http.Error(w, "Too many requests. Try again later.", http.StatusTooManyRequests)
 		return
@@ -196,7 +202,7 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	remoteAddr := r.RemoteAddr
 	s.logger.Debug("WebSocket upgrade request received", "remote_addr", remoteAddr)
 
-	if !s.rl.Allow(remoteAddr) {
+	if !s.wsRL.Allow(remoteAddr) {
 		s.logger.Warn("Request rate-limited", "remote_addr", remoteAddr)
 		http.Error(w, "Too many requests. Try again later.", http.StatusTooManyRequests)
 		return
@@ -262,11 +268,20 @@ func (s *Server) handleAllocate(conn *websocket.Conn, remoteAddr string, channel
 func (s *Server) handleJoin(conn *websocket.Conn, remoteAddr string, channelID uint16, _ []byte) {
 	s.logger.Debug("Receiver joining channel", "channel_id", channelID, "remote_addr", remoteAddr)
 
+	// Rate-limit join attempts per-IP to slow channel enumeration (L-09).
+	if !s.joinRL.Allow(remoteAddr) {
+		s.logger.Warn("Join rate-limited", "channel_id", channelID, "remote_addr", remoteAddr)
+		writeError(conn, "operation failed")
+		return
+	}
+
 	// Reject join for channels that were never allocated (M-05).
+	// Use a generic error message so clients cannot distinguish between
+	// non-existent channels, duplicate receivers, and transient failures (L-09).
 	if !s.store.ChannelExists(channelID) {
 		s.logger.Warn("Receiver attempted to join non-existent channel",
 			"channel_id", channelID, "remote_addr", remoteAddr)
-		writeError(conn, "channel not found")
+		writeError(conn, "operation failed")
 		return
 	}
 
@@ -279,7 +294,7 @@ func (s *Server) handleJoin(conn *websocket.Conn, remoteAddr string, channelID u
 			s.mu.Unlock()
 			s.logger.Warn("Receiver already registered for channel — rejecting duplicate join",
 				"channel_id", channelID, "remote_addr", remoteAddr)
-			writeError(conn, "channel already has a receiver")
+			writeError(conn, "operation failed")
 			return
 		}
 	}

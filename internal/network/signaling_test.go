@@ -29,7 +29,7 @@ func startSignalingServer(t *testing.T) string {
 	store := server.NewMemoryStore()
 	rl := server.NewRateLimiter(100, 1000)
 	// Pass the DER-encoded TLS certificate so the /cert endpoint works.
-	srv := server.NewServer(store, rl, 60*time.Second, server.DefaultMaxBlobsPerChannel, server.DefaultMaxCPaceFailures, tlsCert.Certificate[0], slog.Default())
+	srv := server.NewServer(store, rl, rl, rl, 60*time.Second, server.DefaultMaxBlobsPerChannel, server.DefaultMaxCPaceFailures, tlsCert.Certificate[0], slog.Default())
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -174,12 +174,24 @@ func TestFetchServerFingerprint(t *testing.T) {
 	addr := startSignalingServer(t)
 	serverURL := "wss://" + addr
 
-	fp, err := network.FetchServerFingerprint(serverURL)
+	fp, err := network.FetchServerFingerprint(serverURL, "")
 	if err != nil {
 		t.Fatalf("fetch fingerprint: %v", err)
 	}
 	if len(fp) != 64 {
 		t.Fatalf("expected 64-char fingerprint, got %d", len(fp))
+	}
+}
+
+func TestFetchServerFingerprintWithMismatch(t *testing.T) {
+	addr := startSignalingServer(t)
+	serverURL := "wss://" + addr
+
+	// Pass a wrong fingerprint — the TLS handshake should fail.
+	wrongFP := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	_, err := network.FetchServerFingerprint(serverURL, wrongFP)
+	if err == nil {
+		t.Fatal("expected fingerprint mismatch error during TLS handshake")
 	}
 }
 

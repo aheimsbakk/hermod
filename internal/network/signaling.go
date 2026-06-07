@@ -218,8 +218,13 @@ func (c *SignalingClient) WaitReady() error {
 
 // FetchServerFingerprint fetches the server's TLS certificate via the HTTPS
 // /cert endpoint and returns its SHA-256 fingerprint.
-// This replaces the prior double-WebSocket-connection approach (M-03).
-func FetchServerFingerprint(serverURL string) (string, error) {
+//
+// When pinnedFingerprint is non-empty, the certificate is verified against this
+// value during the TLS handshake. The connection fails if the fingerprint does
+// not match. When pinnedFingerprint is empty, the TLS connection is made
+// without certificate verification (TOFU). Only use this mode over a trusted
+// network (VPN, LAN, or when you can verify the fingerprint out-of-band).
+func FetchServerFingerprint(serverURL string, pinnedFingerprint string) (string, error) {
 	u, err := url.Parse(serverURL)
 	if err != nil {
 		return "", fmt.Errorf("parse server URL: %w", err)
@@ -234,6 +239,21 @@ func FetchServerFingerprint(serverURL string) (string, error) {
 	certURL += "/cert"
 
 	tlsCfg := &tls.Config{InsecureSkipVerify: true}
+	if pinnedFingerprint != "" {
+		tlsCfg.VerifyPeerCertificate = func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
+			if len(rawCerts) == 0 {
+				return fmt.Errorf("server did not present a TLS certificate")
+			}
+			got := CertFingerprint(rawCerts[0])
+			if subtle.ConstantTimeCompare([]byte(got), []byte(pinnedFingerprint)) != 1 {
+				return fmt.Errorf("server certificate fingerprint mismatch: got %s, expected %s", got, pinnedFingerprint)
+			}
+			return nil
+		}
+	}
+	// No VerifyPeerCertificate when pinnedFingerprint is empty — TOFU mode.
+	// The caller is responsible for ensuring they run this over a trusted network.
+
 	client := &http.Client{
 		Transport: &http.Transport{TLSClientConfig: tlsCfg},
 		Timeout:   10 * time.Second,
