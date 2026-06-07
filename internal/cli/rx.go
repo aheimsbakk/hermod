@@ -384,9 +384,13 @@ func receivePayload(ctx context.Context, meta *transfer.Metadata, r io.Reader, d
 			if _, err := io.Copy(os.Stdout, io.TeeReader(r, h)); err != nil {
 				return "", err
 			}
-			// Ensure text output ends with a newline so the shell prompt starts
-			// on a new line. Do not add an extra blank line.
-			fmt.Fprint(os.Stdout, "\n")
+			// Ensure KindText output ends with a newline so the shell prompt
+			// starts on a new line. KindStream (piped stdin) already carries
+			// the sender's trailing newline — adding another would create a
+			// blank line.
+			if meta.Kind == transfer.KindText {
+				fmt.Fprint(os.Stdout, "\n")
+			}
 			logDebug("text payload written to stdout", "size_bytes", meta.Size)
 			return fmt.Sprintf("%x", h.Sum(nil)), nil
 

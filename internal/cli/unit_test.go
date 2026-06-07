@@ -431,6 +431,38 @@ func TestReceivePayload_TTYTextNoSize(t *testing.T) {
 	}
 }
 
+// TestReceivePayload_TTYStream covers the TTY+KindStream branch — the stream
+// already carries the sender's trailing newline, so no extra \n is appended.
+func TestReceivePayload_TTYStream(t *testing.T) {
+	data := []byte("hello stream\n")
+	meta := &transfer.Metadata{
+		Kind: transfer.KindStream,
+		Size: int64(len(data)),
+	}
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	oldStdout := os.Stdout
+	os.Stdout = w
+
+	_, recvErr := receivePayload(context.Background(), meta, bytes.NewReader(data), "", true)
+
+	w.Close()
+	os.Stdout = oldStdout
+
+	if recvErr != nil {
+		t.Fatalf("receivePayload TTY stream: %v", recvErr)
+	}
+	got, _ := io.ReadAll(r)
+	// KindStream should not get an extra newline — output must match input
+	// exactly (including the sender's own trailing newline).
+	if string(got) != string(data) {
+		t.Fatalf("stdout content mismatch: got %q, want %q", got, data)
+	}
+}
+
 // TestReceivePayload_TTYFile covers the TTY+KindFile branch (saves to CWD).
 func TestReceivePayload_TTYFile(t *testing.T) {
 	data := []byte("file via tty")
