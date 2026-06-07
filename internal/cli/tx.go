@@ -13,6 +13,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math/big"
@@ -564,15 +565,33 @@ func performSASCoordinated(ctx context.Context, conn *quic.Conn, tlsState tls.Co
 		return fmt.Errorf("open tty for SAS prompt: %w", err)
 	}
 	defer tty.Close()
+
+	// Unblock the prompt read if the local operation is cancelled (SIGINT)
+	// or the peer drops the connection.
+	go func() {
+		select {
+		case <-ctx.Done():
+		case <-conn.Context().Done():
+		}
+		tty.Close()
+	}()
+
 	return performSASCoordinatedWith(ctx, &quicSASConn{conn}, tlsState, isSender, tty, sasContext)
 }
 
 // performSASCoordinatedWith is the injectable core used by tests.
 func performSASCoordinatedWith(ctx context.Context, conn sasStreamConn, tlsState tls.ConnectionState, isSender bool, reader io.Reader, sasContext []byte) error {
 	// Show prompt and collect local answer first.
-	localOK, err := promptSASVerificationFrom(tlsState, reader, sasContext)
+	localOK, err := promptSASVerificationFrom(ctx, tlsState, reader, sasContext)
+	cancelled := false
 	if err != nil {
-		return err
+		if errors.Is(err, context.Canceled) {
+			cancelled = true
+			localOK = false
+			fmt.Fprintln(os.Stderr, "SAS verification cancelled by user, notifying peer...")
+		} else {
+			return err
+		}
 	}
 
 	var localByte byte
@@ -584,11 +603,17 @@ func performSASCoordinatedWith(ctx context.Context, conn sasStreamConn, tlsState
 	if isSender {
 		stream, err = conn.OpenStreamSync(ctx)
 		if err != nil {
+			if cancelled {
+				return fmt.Errorf("SAS verification cancelled by user")
+			}
 			return fmt.Errorf("open sas stream: %w", err)
 		}
 	} else {
 		stream, err = conn.AcceptStream(ctx)
 		if err != nil {
+			if cancelled {
+				return fmt.Errorf("SAS verification cancelled by user")
+			}
 			return fmt.Errorf("accept sas stream: %w", err)
 		}
 	}
@@ -597,21 +622,30 @@ func performSASCoordinatedWith(ctx context.Context, conn sasStreamConn, tlsState
 	// Both sides write their result first, then read the peer's result.
 	// This avoids deadlock on a bidirectional stream.
 	if _, err := stream.Write([]byte{localByte}); err != nil {
+		if cancelled {
+			return fmt.Errorf("SAS verification cancelled by user")
+		}
 		return fmt.Errorf("send sas result: %w", err)
 	}
 
 	var peerBuf [1]byte
 	if _, err := io.ReadFull(stream, peerBuf[:]); err != nil {
+		if cancelled {
+			return fmt.Errorf("SAS verification cancelled by user")
+		}
 		return fmt.Errorf("recv peer sas result: %w", err)
 	}
 
-	if !localOK && peerBuf[0] != 0x01 {
+	switch {
+	case cancelled && peerBuf[0] != 0x01:
+		return fmt.Errorf("SAS verification cancelled by both sides")
+	case cancelled:
+		return fmt.Errorf("SAS verification cancelled by user")
+	case !localOK && peerBuf[0] != 0x01:
 		return fmt.Errorf("SAS verification rejected by both sides — connection aborted")
-	}
-	if !localOK {
+	case !localOK:
 		return fmt.Errorf("SAS verification rejected by %s — connection aborted", map[bool]string{true: "sender", false: "receiver"}[isSender])
-	}
-	if peerBuf[0] != 0x01 {
+	case peerBuf[0] != 0x01:
 		return fmt.Errorf("SAS verification rejected by %s — connection aborted", map[bool]string{true: "receiver", false: "sender"}[isSender])
 	}
 	return nil
@@ -619,20 +653,20 @@ func performSASCoordinatedWith(ctx context.Context, conn sasStreamConn, tlsState
 
 // promptSASVerification shows the SAS + identicon and returns true if the user confirms.
 // It reads user input from /dev/tty to avoid interference from piped stdin.
-func promptSASVerification(tlsState tls.ConnectionState, sasContext []byte) (bool, error) {
+func promptSASVerification(ctx context.Context, tlsState tls.ConnectionState, sasContext []byte) (bool, error) {
 	tty, err := openTTYFunc()
 	if err != nil {
 		return false, fmt.Errorf("open tty for SAS prompt: %w", err)
 	}
 	defer tty.Close()
-	return promptSASVerificationFrom(tlsState, tty, sasContext)
+	return promptSASVerificationFrom(ctx, tlsState, tty, sasContext)
 }
 
 // promptSASVerificationFrom shows the SAS + identicon and reads the answer from r.
 // sasContext is bound into TLS ExportKeyingMaterial to couple the SAS to the
 // specific session (L-01). Pass the channel ID bytes; nil is accepted.
 // Separating the reader makes this testable without a real terminal.
-func promptSASVerificationFrom(tlsState tls.ConnectionState, r io.Reader, sasContext []byte) (bool, error) {
+func promptSASVerificationFrom(ctx context.Context, tlsState tls.ConnectionState, r io.Reader, sasContext []byte) (bool, error) {
 	material, err := tlsState.ExportKeyingMaterial("hermod-sas-v1", sasContext, 32)
 	if err != nil {
 		return false, fmt.Errorf("export keying material: %w", err)
@@ -645,16 +679,37 @@ func promptSASVerificationFrom(tlsState tls.ConnectionState, r io.Reader, sasCon
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: could not render identicon: %v\n", err)
 	} else {
-		fmt.Fprintln(os.Stderr, identicon)
+		fmt.Fprintf(os.Stderr, "%s\n", identicon)
 	}
 	fmt.Fprint(os.Stderr, "Compare these values with the other end. Do they match? [y/N]: ")
 
-	scanner := bufio.NewScanner(r)
-	var answer string
-	if scanner.Scan() {
-		answer = strings.TrimSpace(scanner.Text())
+	ch := make(chan string, 1)
+	go func() {
+		scanner := bufio.NewScanner(r)
+		if scanner.Scan() {
+			ch <- scanner.Text()
+		}
+		close(ch)
+	}()
+
+	select {
+	case <-ctx.Done():
+		fmt.Fprintln(os.Stderr, "")
+		return false, ctx.Err()
+	case text, ok := <-ch:
+		if !ok {
+			// If the reader closed because the context was cancelled
+			// (e.g. tty.Close() in performSASCoordinated), return the
+			// context error so the caller can set cancelled=true.
+			if errors.Is(ctx.Err(), context.Canceled) {
+				fmt.Fprintln(os.Stderr, "")
+				return false, ctx.Err()
+			}
+			return false, nil
+		}
+		answer := strings.TrimSpace(text)
+		return answer == "y" || answer == "Y", nil
 	}
-	return answer == "y" || answer == "Y", nil
 }
 
 // quicConnectionState is satisfied by *quic.Conn.
