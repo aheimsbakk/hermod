@@ -114,8 +114,15 @@ func runRx(code, destination, serverURL string, verify bool, listenUDP string, s
 	logInfo("Joined channel", "channel_id", channelID, "public_ipv4", publicIPV4, "public_ipv6", publicIPV6)
 
 	// Bind UDP socket
-	logDebug("binding UDP socket", "addr", listenUDP)
-	udpConn, err := network.BindUDP(listenUDP)
+	// Override the listen address to enforce strict IP family when -4/-6 is set.
+	bindAddr := listenUDP
+	if ipv4Only && listenUDP == ":0" {
+		bindAddr = "0.0.0.0:0"
+	} else if ipv6Only && listenUDP == ":0" {
+		bindAddr = "[::]:0"
+	}
+	logDebug("binding UDP socket", "addr", bindAddr)
+	udpConn, err := network.BindUDP(bindAddr)
 	if err != nil {
 		return fmt.Errorf("bind UDP socket: %w", err)
 	}
@@ -207,10 +214,10 @@ func runRx(code, destination, serverURL string, verify bool, listenUDP string, s
 	}
 	portStr := fmt.Sprintf("%d", localAddr.Port)
 	var publicEPV4, publicEPV6 string
-	if publicIPV4 != "" {
+	if publicIPV4 != "" && ipFamily != network.IPFamilyV6 {
 		publicEPV4 = net.JoinHostPort(publicIPV4, portStr)
 	}
-	if publicIPV6 != "" {
+	if publicIPV6 != "" && ipFamily != network.IPFamilyV4 {
 		publicEPV6 = net.JoinHostPort(publicIPV6, portStr)
 	}
 	logDebug("local endpoints collected", "local_v4", localV4, "local_v6", localV6, "public_v4", publicEPV4, "public_v6", publicEPV6)
@@ -244,6 +251,14 @@ func runRx(code, destination, serverURL string, verify bool, listenUDP string, s
 	candidatesV6, err := network.ParseCandidates(senderBundle.CandidatesV6())
 	if err != nil {
 		return fmt.Errorf("parse IPv6 candidates: %w", err)
+	}
+	// Enforce IP family flag: clear candidates from the wrong family so
+	// HolePunchDual only tries addresses matching -4/-6.
+	switch ipFamily {
+	case network.IPFamilyV4:
+		candidatesV6 = nil
+	case network.IPFamilyV6:
+		candidatesV4 = nil
 	}
 	logDebug("NAT candidates parsed", "v4_count", len(candidatesV4), "v6_count", len(candidatesV6))
 
