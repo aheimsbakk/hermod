@@ -1,5 +1,6 @@
 # Build output
 /hermod
+/dist/
 
 # Test coverage artifacts
 *.out

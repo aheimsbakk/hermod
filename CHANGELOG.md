@@ -5,6 +5,23 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.10.4] - 2026-06-07
+
+- **why:** Add GitHub Actions release workflow for automated cross-platform builds and publishing
+- **model:** opencode/deepseek-v4-flash
+- **tags:** ci, release, build, github-actions
+
+### Added
+
+- `.github/workflows/release.yml` — GitHub Actions workflow triggered on patch tag push; builds for linux/amd64, linux/arm64, windows/amd64, windows/arm64, darwin/arm64; creates GitHub Release with changelog body, binaries, and SHA256 checksums
+- `scripts/build-release.sh` — cross-compile helper for a single OS/arch pair with stripped binary output
+- `scripts/extract-changelog-entry.sh` — extracts a version entry from CHANGELOG.md for use as release notes
+
+### Changed
+
+- `CONTEXT.md` — added CI / Release section documenting the pipeline and action versions
+- `.gitignore` — added `/dist/` to ignore build artifacts
+
 ## [v0.10.3] - 2026-06-07
 
 - **why:** Fix all 11 actionable findings from the deepseek-v4-flash-max security audit

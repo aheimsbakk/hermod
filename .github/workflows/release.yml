@@ -1,0 +1,96 @@
+# .github/workflows/release.yml — Build and publish Hermod on patch tag push.
+#
+# Triggered by: push of a semver patch tag (vX.Y.Z where Z > 0, e.g. v0.11.2).
+#              Non-patch tags (vX.Y.0) are rejected by the verify step.
+# Builds:       linux/amd64, linux/arm64, windows/amd64, windows/arm64, darwin/arm64
+# Publishes:    GitHub Release with changelog entry as body + all binaries + checksums
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+jobs:
+  build:
+    name: hermod-${{ matrix.target }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - linux-amd64
+          - linux-arm64
+          - windows-amd64
+          - windows-arm64
+          - darwin-arm64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Verify patch version tag
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          if ! echo "$TAG" | grep -qE '^v[0-9]+\.[0-9]+\.([1-9][0-9]*)$'; then
+            echo "ERROR: $TAG is not a patch version (expected vX.Y.Z where Z > 0)" >&2
+            exit 1
+          fi
+          echo "Patch version confirmed: $TAG"
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Build binary
+        run: |
+          OS="${target%-*}"
+          ARCH="${target#*-}"
+          ./scripts/build-release.sh "$OS" "$ARCH"
+        env:
+          target: ${{ matrix.target }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: hermod-${{ matrix.target }}
+          path: dist/hermod-${{ matrix.target }}*
+
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Write changelog entry to file
+        run: |
+          ./scripts/extract-changelog-entry.sh "${GITHUB_REF_NAME}" > /tmp/release-notes.md
+
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: dist/
+          merge-multiple: true
+
+      - name: Generate checksums
+        run: |
+          VERSION="$(cat VERSION | tr -d '[:space:]')"
+          cd dist
+          sha256sum hermod-* > "SHA256SUMS-${VERSION}"
+          echo "--- Checksums (SHA256SUMS-${VERSION}) ---"
+          cat "SHA256SUMS-${VERSION}"
+
+      - name: Create GitHub Release
+        run: |
+          VERSION="$(cat VERSION | tr -d '[:space:]')"
+          gh release create "${GITHUB_REF_NAME}" \
+            --title "Hermod ${GITHUB_REF_NAME}" \
+            --notes-file /tmp/release-notes.md \
+            dist/hermod-* \
+            "dist/SHA256SUMS-${VERSION}"
+        env:
+          GH_TOKEN: ${{ github.token }}

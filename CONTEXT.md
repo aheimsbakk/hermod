@@ -17,6 +17,12 @@ Go 1.25.0
 | `github.com/gorilla/websocket` | WebSocket signaling |
 | `github.com/rogpeppe/go-internal` | E2E testscript |
 
+## CI / Release
+
+On push of a semver tag (`v*.*.*`), GitHub Actions builds for 5 platforms (linux/amd64, linux/arm64, windows/amd64, windows/arm64, darwin/arm64) and creates a GitHub Release with the changelog entry as body and all binaries + SHA256 checksums attached.
+Uses: `actions/checkout@v6`, `actions/setup-go@v6`, `actions/upload-artifact@v7`, `actions/download-artifact@v8`, and the official `gh` CLI for release creation.
+Scripts: `scripts/build-release.sh`, `scripts/extract-changelog-entry.sh`.
+
 ## Security Model
 - Signaling server untrusted — payloads never routed through it
 - CPace PAKE over WebSocket yields K_classical

@@ -18,8 +18,9 @@ README.md                   — user-facing documentation
 docs/protocol.md            — wire protocol specification
 docs/api.md                 — internal package API reference
 docs/worklogs/              — session worklogs
-scripts/                    — bump-version.sh, check-coverage.sh, validate-worklog.sh
-VERSION                     — current version (0.10.3)
+scripts/                    — bump-version.sh, build-release.sh, check-coverage.sh, extract-changelog-entry.sh, validate-changelog.sh
+.github/workflows/          — release.yml (GitHub Actions: cross-build + publish on tag push)
+VERSION                     — current version (0.10.4)
 ```
 
 ## Logging
