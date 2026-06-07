@@ -113,7 +113,7 @@ hermod serve [flags]
 
 | Flag | Default | Description |
 |---|---|---|
-| `-l`, `--listen` | `0.0.0.0:4376` | Bind address |
+| `-l`, `--listen` | `:4376` | Bind address (default is dual-stack — both IPv4 and IPv6) |
 | `-T`, `--ttl` | `600` | Channel TTL in seconds |
 | `--rate-limit` | `5` | Requests per second per IP prefix (applies to both the WebSocket `/ws` and the `/cert` endpoint) |
 | `--rate-burst` | `15` | Burst capacity per IP prefix (applies to both the WebSocket `/ws` and the `/cert` endpoint) |

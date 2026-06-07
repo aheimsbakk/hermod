@@ -34,7 +34,7 @@ func newServeCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVarP(&listen, "listen", "l", envOrDefault("HERMOD_LISTEN", "0.0.0.0:4376"), "Bind address (host:port)")
+	cmd.Flags().StringVarP(&listen, "listen", "l", envOrDefault("HERMOD_LISTEN", ":4376"), "Bind address (host:port)")
 	cmd.Flags().IntVarP(&ttl, "ttl", "T", 600, "Channel TTL in seconds")
 	cmd.Flags().Float64Var(&rateLimit, "rate-limit", 5, "Token bucket rate (requests/sec per IP prefix)")
 	cmd.Flags().Float64Var(&rateBurst, "rate-burst", 15, "Token bucket burst capacity per IP prefix")

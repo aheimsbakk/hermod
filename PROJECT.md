@@ -19,7 +19,7 @@ The CLI resolves configuration based on a strict hierarchy: CLI Flags > Environm
 
 ```bash
 # Start the signaling and NAT helper service
-hermod serve --listen 0.0.0.0:4376 --db /var/lib/hermod/signaling.db --ttl 600
+hermod serve --listen :4376 --db /var/lib/hermod/signaling.db --ttl 600
 
 # Fetch and pin the public certificate of a specific server
 hermod trust my-relay.local:4376
@@ -196,7 +196,7 @@ hermod-p2p/
 
 **Command: `serve`**
 
-* `--listen` (`-l`): Bind address (`host:port`). Default: `0.0.0.0:4376`. Assigning port `0` triggers automatic ephemeral allocation.
+* `--listen` (`-l`): Bind address (`host:port`). Default: `:4376` (dual-stack — listens on both IPv4 and IPv6). Assigning port `0` triggers automatic ephemeral allocation.
 * `--db` (`-d`): SQLite database path. Default: `~/.config/hermod/signaling.db`.
 * `--ttl` (`-T`): TTL in seconds for channels. Default: `600`.
 * `--rate-limit`: Token bucket permitted requests per second per IP prefix (applies to both `/ws` and `/cert`). Default: `5`.
