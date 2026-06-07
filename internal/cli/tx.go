@@ -13,6 +13,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math/big"
@@ -34,7 +35,7 @@ import (
 	"github.com/hermod/hermod/pkg/transfer"
 )
 
-// newHashBar returns a progress bar styled with '#' fill and '.' padding.
+// newHashBar returns a progress bar styled with '=' fill and '-' padding.
 // Used for transfers with a known size. Stream transfers use streamBar instead.
 func newHashBar(size int64, description string) *progressbar.ProgressBar {
 	return progressbar.NewOptions64(
@@ -50,10 +51,10 @@ func newHashBar(size int64, description string) *progressbar.ProgressBar {
 		progressbar.OptionFullWidth(),
 		progressbar.OptionSetRenderBlankState(true),
 		progressbar.OptionSetTheme(progressbar.Theme{
-			Saucer:        "#",
-			SaucerPadding: ".",
-			BarStart:      "|",
-			BarEnd:        "|",
+			Saucer:        "=",
+			SaucerPadding: "-",
+			BarStart:      "[",
+			BarEnd:        "]",
 		}),
 	)
 }
@@ -95,13 +96,13 @@ func runTx(input, serverURL string, numWords int, verify bool, listenUDP string,
 	logDebug("loading config")
 	cfg, err := config.Load()
 	if err != nil {
-		return fmt.Errorf("load config: %w", err)
+		return fmt.Errorf("load configuration: %w", err)
 	}
 
 	if saveServer && serverURL != cfg.ServerURL {
 		config.SetDefaultServer(cfg, serverURL)
 		if err := config.Save(cfg); err != nil {
-			return fmt.Errorf("save config: %w", err)
+			return fmt.Errorf("save configuration: %w", err)
 		}
 		printStatus("Default server set to %s", serverURL)
 		logInfo("Default server updated", "server", serverURL)
@@ -138,7 +139,7 @@ func runTx(input, serverURL string, numWords int, verify bool, listenUDP string,
 	logInfo("Connecting to signaling server", "server", serverURL)
 	sigRaw, err := network.DialSignaling(serverURL, pinnedFP)
 	if err != nil {
-		return fmt.Errorf("signaling connect: %w", err)
+		return fmt.Errorf("connect to signaling server: %w", err)
 	}
 	defer sigRaw.Close()
 	sig := sigRaw.WithContext(ctx)
@@ -148,7 +149,7 @@ func runTx(input, serverURL string, numWords int, verify bool, listenUDP string,
 	logDebug("allocating channel on signaling server", "channel_id", channelID)
 	publicIP, err := sig.Allocate(channelID)
 	if err != nil {
-		return fmt.Errorf("allocate: %w", err)
+		return fmt.Errorf("allocate channel: %w", err)
 	}
 	logInfo("Channel allocated", "channel_id", channelID, "public_ip", publicIP)
 
@@ -156,7 +157,7 @@ func runTx(input, serverURL string, numWords int, verify bool, listenUDP string,
 	logDebug("generating ephemeral TLS certificate for QUIC")
 	epCert, epKey, epCertDER, err := generateEphemeralCert()
 	if err != nil {
-		return fmt.Errorf("ephemeral cert: %w", err)
+		return fmt.Errorf("generate ephemeral certificate: %w", err)
 	}
 	myFP := network.CertFingerprint(epCertDER)
 	logDebug("ephemeral certificate generated", "fingerprint", myFP)
@@ -165,14 +166,14 @@ func runTx(input, serverURL string, numWords int, verify bool, listenUDP string,
 	logDebug("binding UDP socket", "addr", listenUDP)
 	udpConn, err := network.BindUDP(listenUDP)
 	if err != nil {
-		return fmt.Errorf("bind udp: %w", err)
+		return fmt.Errorf("bind UDP socket: %w", err)
 	}
 	mux := network.NewPacketMux(udpConn)
 	defer mux.Close()
 
 	localAddr, err := network.LocalUDPAddr(udpConn)
 	if err != nil {
-		return fmt.Errorf("local udp addr: %w", err)
+		return fmt.Errorf("get local UDP address: %w", err)
 	}
 	logDebug("UDP socket bound", "local_addr", localAddr.String())
 
@@ -180,13 +181,13 @@ func runTx(input, serverURL string, numWords int, verify bool, listenUDP string,
 	logDebug("initialising CPace PAKE handshake", "role", "sender")
 	cpaceSession, myPubMsg, err := crypto.CPaceInit(password, channelID, "sender")
 	if err != nil {
-		return fmt.Errorf("cpace init: %w", err)
+		return fmt.Errorf("initialize CPace handshake: %w", err)
 	}
 
 	// Wait for receiver to join
 	logInfo("Waiting for receiver to join the channel")
 	if err := sig.WaitReady(); err != nil {
-		return fmt.Errorf("wait ready: %w", err)
+		return fmt.Errorf("wait for receiver: %w", err)
 	}
 	logInfo("Receiver joined the channel")
 
@@ -194,20 +195,20 @@ func runTx(input, serverURL string, numWords int, verify bool, listenUDP string,
 	logDebug("sending CPace public message to peer via relay")
 	cpaceMsgBytes, err := network.EncodeCPaceMsg(network.CPaceMsg{PubMsg: myPubMsg})
 	if err != nil {
-		return fmt.Errorf("encode cpace msg: %w", err)
+		return fmt.Errorf("encode CPace message: %w", err)
 	}
 	if err := sig.SendBlob(channelID, cpaceMsgBytes); err != nil {
-		return fmt.Errorf("send cpace msg: %w", err)
+		return fmt.Errorf("send CPace message: %w", err)
 	}
 
 	logDebug("waiting for peer CPace public message from relay")
 	peerCPaceMsgBytes, err := sig.RecvBlob()
 	if err != nil {
-		return fmt.Errorf("recv peer cpace msg: %w", err)
+		return fmt.Errorf("receive CPace message from peer: %w", err)
 	}
 	peerCPaceMsg, err := network.DecodeCPaceMsg(peerCPaceMsgBytes)
 	if err != nil {
-		return fmt.Errorf("decode peer cpace msg: %w", err)
+		return fmt.Errorf("decode peer CPace message: %w", err)
 	}
 	logDebug("peer CPace message received and decoded")
 
@@ -215,7 +216,7 @@ func runTx(input, serverURL string, numWords int, verify bool, listenUDP string,
 	logDebug("completing CPace handshake to derive shared key")
 	kClassical, err := cpaceSession.CPaceFinish(peerCPaceMsg.PubMsg)
 	if err != nil {
-		return fmt.Errorf("cpace finish: %w", err)
+		return fmt.Errorf("complete CPace handshake: %w", err)
 	}
 	logInfo("PAKE handshake complete — shared key established")
 
@@ -236,30 +237,30 @@ func runTx(input, serverURL string, numWords int, verify bool, listenUDP string,
 	}
 	bundleBytes, err := network.EncodeEndpointBundle(bundle)
 	if err != nil {
-		return fmt.Errorf("encode bundle: %w", err)
+		return fmt.Errorf("encode endpoint bundle: %w", err)
 	}
 	encBundle, err := crypto.SealAAD(kClassical, channelIDAad(channelID), bundleBytes)
 	if err != nil {
-		return fmt.Errorf("encrypt bundle: %w", err)
+		return fmt.Errorf("encrypt endpoint bundle: %w", err)
 	}
 	logDebug("endpoint bundle encrypted and sending to peer via relay")
 	if err := sig.SendBlob(channelID, encBundle); err != nil {
-		return fmt.Errorf("send bundle: %w", err)
+		return fmt.Errorf("send endpoint bundle: %w", err)
 	}
 
 	// Receive peer's bundle
 	logDebug("waiting for receiver endpoint bundle from relay")
 	encPeerBundle, err := sig.RecvBlob()
 	if err != nil {
-		return fmt.Errorf("recv peer bundle: %w", err)
+		return fmt.Errorf("receive endpoint bundle from peer: %w", err)
 	}
 	peerBundleBytes, err := crypto.OpenAAD(kClassical, channelIDAad(channelID), encPeerBundle)
 	if err != nil {
-		return fmt.Errorf("decrypt peer bundle: %w", err)
+		return fmt.Errorf("decrypt peer endpoint bundle: %w", err)
 	}
 	peerBundle, err := network.DecodeEndpointBundle(peerBundleBytes)
 	if err != nil {
-		return fmt.Errorf("decode peer bundle: %w", err)
+		return fmt.Errorf("decode peer endpoint bundle: %w", err)
 	}
 	logDebug("receiver endpoint bundle received",
 		"public", peerBundle.PublicEndpoint,
@@ -287,7 +288,7 @@ func runTx(input, serverURL string, numWords int, verify bool, listenUDP string,
 	printStatus("Establishing P2P connection...")
 	punchResult, err := network.HolePunch(ctx, mux, candidates, holePunchNonce(kClassical))
 	if err != nil {
-		return fmt.Errorf("hole punch: %w", err)
+		return fmt.Errorf("UDP hole punch: %w", err)
 	}
 	logInfo("UDP hole punch succeeded", "peer_addr", punchResult.PeerAddr.String())
 
@@ -301,7 +302,7 @@ func runTx(input, serverURL string, numWords int, verify bool, listenUDP string,
 	}}
 	quicConn, err := network.DialQUIC(ctx, mux, punchResult.PeerAddr, tlsCfg, peerBundle.CertFingerprint)
 	if err != nil {
-		return fmt.Errorf("quic dial: %w", err)
+		return fmt.Errorf("QUIC dial: %w", err)
 	}
 	defer quicConn.CloseWithError(0, "done")
 	logInfo("QUIC connection established", "peer_addr", punchResult.PeerAddr.String())
@@ -341,7 +342,7 @@ func runTx(input, serverURL string, numWords int, verify bool, listenUDP string,
 	logDebug("opening QUIC metadata stream (stream 0)")
 	metaStream, err := quicConn.OpenStreamSync(ctx)
 	if err != nil {
-		return fmt.Errorf("open meta stream: %w", err)
+		return fmt.Errorf("open metadata stream: %w", err)
 	}
 
 	metaBytes, err := transfer.EncodeMetadata(meta)
@@ -463,7 +464,7 @@ func buildPayload(input string, kind transfer.Kind, name string, isStdinPiped bo
 		meta := &transfer.Metadata{Kind: transfer.KindStream, Size: -1}
 		return meta, os.Stdin, -1, nil
 	}
-	return nil, nil, 0, fmt.Errorf("unknown kind: %s", kind)
+	return nil, nil, 0, fmt.Errorf("unknown payload kind: %s", kind)
 }
 
 // channelIDAad returns the 2-byte big-endian encoding of id for use as
@@ -548,6 +549,10 @@ func (q *quicSASConn) AcceptStream(ctx context.Context) (io.ReadWriteCloser, err
 	return q.conn.AcceptStream(ctx)
 }
 
+// errSASCancelledByPeer is the context-cause sentinel emitted when the peer
+// drops the QUIC connection during SAS verification.
+var errSASCancelledByPeer = errors.New("the other side cancelled SAS verification")
+
 // performSASCoordinated shows the SAS prompt, then exchanges a 1-byte
 // confirmation with the peer over a dedicated QUIC stream. Both sides must
 // confirm; if either rejects, the transfer is aborted.
@@ -564,15 +569,58 @@ func performSASCoordinated(ctx context.Context, conn *quic.Conn, tlsState tls.Co
 		return fmt.Errorf("open tty for SAS prompt: %w", err)
 	}
 	defer tty.Close()
+
+	// Derive a cancellable context so we can propagate the peer disconnect
+	// as a context cancellation. This lets promptSASVerificationFrom return
+	// cleanly (with a newline) instead of leaving the prompt text and error
+	// on the same line.
+	ctx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+
+	// Unblock the prompt read if the local operation is cancelled (SIGINT)
+	// or the peer drops the connection.
+	go func() {
+		select {
+		case <-ctx.Done():
+			// local user cancelled (SIGINT) — cancel(nil) from defer
+		case <-conn.Context().Done():
+			// peer dropped the connection — tag the cause so we can
+			// distinguish it from a local SIGINT in the error message.
+			cancel(errSASCancelledByPeer)
+		}
+		tty.Close()
+	}()
+
 	return performSASCoordinatedWith(ctx, &quicSASConn{conn}, tlsState, isSender, tty, sasContext)
+}
+
+// cancelMessage returns the user-facing message for a SAS cancellation
+// based on whether the local user or the remote side cancelled.
+func cancelMessage(ctx context.Context) string {
+	if errors.Is(context.Cause(ctx), errSASCancelledByPeer) {
+		return "SAS verification cancelled by the other side"
+	}
+	return "SAS verification cancelled by user"
 }
 
 // performSASCoordinatedWith is the injectable core used by tests.
 func performSASCoordinatedWith(ctx context.Context, conn sasStreamConn, tlsState tls.ConnectionState, isSender bool, reader io.Reader, sasContext []byte) error {
 	// Show prompt and collect local answer first.
-	localOK, err := promptSASVerificationFrom(tlsState, reader, sasContext)
+	localOK, err := promptSASVerificationFrom(ctx, tlsState, reader, sasContext)
+	cancelled := false
 	if err != nil {
-		return err
+		if errors.Is(err, context.Canceled) {
+			cancelled = true
+			localOK = false
+			msg := cancelMessage(ctx)
+			if errors.Is(context.Cause(ctx), errSASCancelledByPeer) {
+				fmt.Fprintln(os.Stderr, msg)
+			} else {
+				fmt.Fprintln(os.Stderr, msg+", notifying peer...")
+			}
+		} else {
+			return err
+		}
 	}
 
 	var localByte byte
@@ -584,12 +632,18 @@ func performSASCoordinatedWith(ctx context.Context, conn sasStreamConn, tlsState
 	if isSender {
 		stream, err = conn.OpenStreamSync(ctx)
 		if err != nil {
-			return fmt.Errorf("open sas stream: %w", err)
+			if cancelled {
+				return errors.New(cancelMessage(ctx))
+			}
+			return fmt.Errorf("Could not complete SAS verification: %w", err)
 		}
 	} else {
 		stream, err = conn.AcceptStream(ctx)
 		if err != nil {
-			return fmt.Errorf("accept sas stream: %w", err)
+			if cancelled {
+				return errors.New(cancelMessage(ctx))
+			}
+			return fmt.Errorf("Could not complete SAS verification: %w", err)
 		}
 	}
 	defer stream.Close()
@@ -597,42 +651,51 @@ func performSASCoordinatedWith(ctx context.Context, conn sasStreamConn, tlsState
 	// Both sides write their result first, then read the peer's result.
 	// This avoids deadlock on a bidirectional stream.
 	if _, err := stream.Write([]byte{localByte}); err != nil {
-		return fmt.Errorf("send sas result: %w", err)
+		if cancelled {
+			return errors.New(cancelMessage(ctx))
+		}
+		return fmt.Errorf("Could not send SAS result to the other side: %w", err)
 	}
 
 	var peerBuf [1]byte
 	if _, err := io.ReadFull(stream, peerBuf[:]); err != nil {
-		return fmt.Errorf("recv peer sas result: %w", err)
+		if cancelled {
+			return errors.New(cancelMessage(ctx))
+		}
+		return fmt.Errorf("Could not read SAS result from the other side: %w", err)
 	}
 
-	if !localOK && peerBuf[0] != 0x01 {
+	switch {
+	case cancelled && peerBuf[0] != 0x01:
+		return errors.New(cancelMessage(ctx))
+	case cancelled:
+		return errors.New(cancelMessage(ctx))
+	case !localOK && peerBuf[0] != 0x01:
 		return fmt.Errorf("SAS verification rejected by both sides — connection aborted")
-	}
-	if !localOK {
-		return fmt.Errorf("SAS verification rejected by %s — connection aborted", map[bool]string{true: "sender", false: "receiver"}[isSender])
-	}
-	if peerBuf[0] != 0x01 {
-		return fmt.Errorf("SAS verification rejected by %s — connection aborted", map[bool]string{true: "receiver", false: "sender"}[isSender])
+	case !localOK:
+		return fmt.Errorf("SAS verification rejected by you — connection aborted")
+	case peerBuf[0] != 0x01:
+		return fmt.Errorf("SAS verification rejected by the other side — connection aborted")
 	}
 	return nil
 }
 
 // promptSASVerification shows the SAS + identicon and returns true if the user confirms.
 // It reads user input from /dev/tty to avoid interference from piped stdin.
-func promptSASVerification(tlsState tls.ConnectionState, sasContext []byte) (bool, error) {
+func promptSASVerification(ctx context.Context, tlsState tls.ConnectionState, sasContext []byte) (bool, error) {
 	tty, err := openTTYFunc()
 	if err != nil {
 		return false, fmt.Errorf("open tty for SAS prompt: %w", err)
 	}
 	defer tty.Close()
-	return promptSASVerificationFrom(tlsState, tty, sasContext)
+	return promptSASVerificationFrom(ctx, tlsState, tty, sasContext)
 }
 
 // promptSASVerificationFrom shows the SAS + identicon and reads the answer from r.
 // sasContext is bound into TLS ExportKeyingMaterial to couple the SAS to the
 // specific session (L-01). Pass the channel ID bytes; nil is accepted.
 // Separating the reader makes this testable without a real terminal.
-func promptSASVerificationFrom(tlsState tls.ConnectionState, r io.Reader, sasContext []byte) (bool, error) {
+func promptSASVerificationFrom(ctx context.Context, tlsState tls.ConnectionState, r io.Reader, sasContext []byte) (bool, error) {
 	material, err := tlsState.ExportKeyingMaterial("hermod-sas-v1", sasContext, 32)
 	if err != nil {
 		return false, fmt.Errorf("export keying material: %w", err)
@@ -645,16 +708,42 @@ func promptSASVerificationFrom(tlsState tls.ConnectionState, r io.Reader, sasCon
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: could not render identicon: %v\n", err)
 	} else {
-		fmt.Fprint(os.Stderr, identicon)
+		fmt.Fprintf(os.Stderr, "%s\n", identicon)
 	}
 	fmt.Fprint(os.Stderr, "Compare these values with the other end. Do they match? [y/N]: ")
 
-	scanner := bufio.NewScanner(r)
-	var answer string
-	if scanner.Scan() {
-		answer = strings.TrimSpace(scanner.Text())
+	ch := make(chan string, 1)
+	go func() {
+		scanner := bufio.NewScanner(r)
+		if scanner.Scan() {
+			ch <- scanner.Text()
+		}
+		close(ch)
+	}()
+
+	select {
+	case <-ctx.Done():
+		fmt.Fprintln(os.Stderr, "")
+		return false, ctx.Err()
+	case text, ok := <-ch:
+		if !ok {
+			// If the reader closed because the context was cancelled
+			// (e.g. tty.Close() in performSASCoordinated), return the
+			// context error so the caller can set cancelled=true.
+			if errors.Is(ctx.Err(), context.Canceled) {
+				fmt.Fprintln(os.Stderr, "")
+				return false, ctx.Err()
+			}
+			// Reader closed without context cancellation (e.g. peer
+			// dropped the connection before our cancellation handled
+			// it). Print a newline so the prompt text is not on the
+			// same line as the error message.
+			fmt.Fprintln(os.Stderr, "")
+			return false, nil
+		}
+		answer := strings.TrimSpace(text)
+		return answer == "y" || answer == "Y", nil
 	}
-	return answer == "y" || answer == "Y", nil
 }
 
 // quicConnectionState is satisfied by *quic.Conn.

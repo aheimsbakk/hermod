@@ -200,6 +200,8 @@ When `verify` is active (see Endpoint exchange above), after the QUIC handshake 
 
 Both peers display these values simultaneously. The user compares them out-of-band (voice, Signal, etc.) and confirms or rejects. User input is always read from the controlling terminal (`/dev/tty` on Unix, `CONIN$` on Windows) so the prompt works correctly when stdin is piped. The result is then exchanged over the SAS coordination stream (see Payload transfer above). A rejection by either side closes the QUIC connection before any payload is sent.
 
+The prompt listens for OS signals (SIGINT, SIGTERM) and QUIC connection loss while waiting for input. If the user presses Ctrl+C, or if the peer disconnects during the prompt, the read is interrupted immediately. The cancelling side sends `0x00` over the coordination stream and both sides receive a cancellation error message.
+
 ## Transfer cancellation
 
 Either side can cancel a transfer at any time by pressing Ctrl+C (SIGINT) or sending SIGTERM.
@@ -214,6 +216,8 @@ This immediately unblocks the peer's blocked stream read or write. The peer dete
 ```
 Transfer cancelled by sender.
 ```
+
+Cancellation also works during SAS verification. If the user presses Ctrl+C while the SAS prompt is waiting for input, the prompt exits, the peer receives `0x00` on the coordination stream, and both sides see a cancellation message (e.g. `"SAS verification cancelled by user"` or `"SAS verification cancelled by both sides"`). The prompt also unblocks automatically if the peer disconnects during verification.
 
 On the receiving side, any partial `.hermod_tmp` file is deleted before exit. No incomplete file is left on disk.
 

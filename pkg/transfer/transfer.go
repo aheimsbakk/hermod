@@ -46,13 +46,13 @@ func ClassifyInput(arg string, isStdinPiped bool) (Kind, string, error) {
 func HashFile(path string) (string, int64, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return "", 0, fmt.Errorf("open: %w", err)
+		return "", 0, fmt.Errorf("open file: %w", err)
 	}
 	defer f.Close()
 	h := sha256.New()
 	n, err := io.Copy(h, f)
 	if err != nil {
-		return "", 0, fmt.Errorf("hash: %w", err)
+		return "", 0, fmt.Errorf("compute hash: %w", err)
 	}
 	return fmt.Sprintf("%x", h.Sum(nil)), n, nil
 }
@@ -113,7 +113,7 @@ func HashStream(r io.Reader, w io.Writer) (string, error) {
 	h := sha256.New()
 	tr := io.TeeReader(r, h)
 	if _, err := io.Copy(w, tr); err != nil {
-		return "", fmt.Errorf("copy: %w", err)
+		return "", fmt.Errorf("stream copy: %w", err)
 	}
 	return fmt.Sprintf("%x", h.Sum(nil)), nil
 }
@@ -124,11 +124,11 @@ func VerifyStream(r io.Reader, w io.Writer, expected string) error {
 	h := sha256.New()
 	tr := io.TeeReader(r, h)
 	if _, err := io.Copy(w, tr); err != nil {
-		return fmt.Errorf("copy: %w", err)
+		return fmt.Errorf("stream copy: %w", err)
 	}
 	got := fmt.Sprintf("%x", h.Sum(nil))
 	if got != expected {
-		return fmt.Errorf("sha256 mismatch: got %s, expected %s", got, expected)
+		return fmt.Errorf("SHA-256 mismatch: computed %s, expected %s", got, expected)
 	}
 	return nil
 }

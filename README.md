@@ -129,8 +129,15 @@ hermod trust [SERVER_URL] [--fingerprint FINGERPRINT]
 
 Connects to the server, fetches its certificate fingerprint, saves it to the local config, and sets the server as the default for future `tx` and `rx` calls.
 
+If you omit the port, `trust` defaults to port 4376 — hermod's standard signaling port.
+
 ```bash
+# With explicit port:
 ./hermod trust wss://relay.example.com:4376
+
+# Port 4376 is assumed when omitted:
+./hermod trust relay.example.com
+
 # Prints: Pinned wss://relay.example.com:4376
 #           fingerprint: a3f9...
 #           set as default server
@@ -153,6 +160,8 @@ Pass `--verify` (`-v`) on **either** `tx` or `rx` — or both — to enable out-
 After the QUIC handshake, both sides display a short word phrase and an identicon. Compare these out-of-band (voice call, Signal message) with the other person. If they match, type `y` to allow the transfer. This detects active man-in-the-middle attacks.
 
 The prompt always reads from the controlling terminal (`/dev/tty` on Unix, `CONIN$` on Windows). This means `--verify` works correctly even when stdin is piped — for example, `echo secret | hermod tx -v -` will still show the prompt and wait for your `y`/`n` answer.
+
+You can cancel SAS verification at any time by pressing Ctrl+C. The cancellation propagates to the other side, and both peers see a cancellation message (`"SAS verification cancelled by user"`). If both sides cancel simultaneously, both see `"SAS verification cancelled by both sides"`.
 
 ## Configuration
 

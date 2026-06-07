@@ -431,6 +431,38 @@ func TestReceivePayload_TTYTextNoSize(t *testing.T) {
 	}
 }
 
+// TestReceivePayload_TTYStream covers the TTY+KindStream branch — the stream
+// already carries the sender's trailing newline, so no extra \n is appended.
+func TestReceivePayload_TTYStream(t *testing.T) {
+	data := []byte("hello stream\n")
+	meta := &transfer.Metadata{
+		Kind: transfer.KindStream,
+		Size: int64(len(data)),
+	}
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	oldStdout := os.Stdout
+	os.Stdout = w
+
+	_, recvErr := receivePayload(context.Background(), meta, bytes.NewReader(data), "", true)
+
+	w.Close()
+	os.Stdout = oldStdout
+
+	if recvErr != nil {
+		t.Fatalf("receivePayload TTY stream: %v", recvErr)
+	}
+	got, _ := io.ReadAll(r)
+	// KindStream should not get an extra newline — output must match input
+	// exactly (including the sender's own trailing newline).
+	if string(got) != string(data) {
+		t.Fatalf("stdout content mismatch: got %q, want %q", got, data)
+	}
+}
+
 // TestReceivePayload_TTYFile covers the TTY+KindFile branch (saves to CWD).
 func TestReceivePayload_TTYFile(t *testing.T) {
 	data := []byte("file via tty")
@@ -582,6 +614,21 @@ func TestRunTrust_URLNormalization(t *testing.T) {
 	}
 }
 
+// TestRunTrust_DefaultPort verifies that trust without a port defaults to 4376.
+func TestRunTrust_DefaultPort(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	t.Setenv("APPDATA", dir)
+
+	err := runTrust("localhost", "")
+	if err == nil {
+		t.Fatal("expected error (no server at localhost)")
+	}
+	if !strings.Contains(err.Error(), ":4376") {
+		t.Errorf("expected default port 4376 in error, got: %v", err)
+	}
+}
+
 // --- runServe ---
 
 // TestRunServe_InvalidAddress verifies runServe returns an error immediately
@@ -684,7 +731,7 @@ func TestPromptSASVerification_TTYError(t *testing.T) {
 		return nil, fmt.Errorf("no tty in test")
 	}
 
-	_, err := promptSASVerification(tls.ConnectionState{}, nil)
+	_, err := promptSASVerification(context.Background(), tls.ConnectionState{}, nil)
 	if err == nil {
 		t.Fatal("expected error from promptSASVerification when openTTYFunc fails")
 	}

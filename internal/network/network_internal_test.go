@@ -350,14 +350,14 @@ func TestMuxedConnReadFrom_Normal(t *testing.T) {
 
 // --- makeCertPinner ---
 
-// TestMakeCertPinner_NoCerts verifies the "no peer certificate" error path.
+// TestMakeCertPinner_NoCerts verifies the "peer did not present" error path.
 func TestMakeCertPinner_NoCerts(t *testing.T) {
 	pinner := makeCertPinner("anyhexhash")
 	err := pinner(nil, nil)
 	if err == nil {
 		t.Fatal("expected error when no certs presented")
 	}
-	if !strings.Contains(err.Error(), "no peer certificate") {
+	if !strings.Contains(err.Error(), "peer did not present") {
 		t.Errorf("unexpected error message: %v", err)
 	}
 }
@@ -373,7 +373,7 @@ func TestMakeCertPinner_HashMismatch(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected fingerprint mismatch error")
 	}
-	if !strings.Contains(err.Error(), "cert fingerprint mismatch") {
+	if !strings.Contains(err.Error(), "certificate fingerprint mismatch") {
 		t.Errorf("unexpected error message: %v", err)
 	}
 }
@@ -408,7 +408,7 @@ func TestHolePunch_Timeout(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected timeout error from HolePunch")
 	}
-	if !strings.Contains(err.Error(), "hole punch timed out") {
+	if !strings.Contains(err.Error(), "UDP hole punch timed out") {
 		t.Errorf("unexpected error message: %v", err)
 	}
 }

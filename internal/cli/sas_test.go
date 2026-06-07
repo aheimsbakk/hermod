@@ -5,9 +5,11 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"io"
 	"net"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -126,7 +128,8 @@ func TestPromptSASVerification_YesAnswer(t *testing.T) {
 		t.Fatalf("tls pipe: %v", err)
 	}
 
-	ok, err := promptSASVerificationFrom(clientConn.ConnectionState(), strings.NewReader("y\n"), nil)
+	ctx := context.Background()
+	ok, err := promptSASVerificationFrom(ctx, clientConn.ConnectionState(), strings.NewReader("y\n"), nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -142,7 +145,8 @@ func TestPromptSASVerification_UpperYesAnswer(t *testing.T) {
 		t.Fatalf("tls pipe: %v", err)
 	}
 
-	ok, err := promptSASVerificationFrom(clientConn.ConnectionState(), strings.NewReader("Y\n"), nil)
+	ctx := context.Background()
+	ok, err := promptSASVerificationFrom(ctx, clientConn.ConnectionState(), strings.NewReader("Y\n"), nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -163,8 +167,9 @@ func TestPromptSASVerification_NonYesAnswer(t *testing.T) {
 		t.Fatalf("tls pipe: %v", err)
 	}
 
+	ctx := context.Background()
 	// "test" is what echo-piped stdin would produce, simulating the bug scenario.
-	ok, err := promptSASVerificationFrom(clientConn.ConnectionState(), strings.NewReader("test\n"), nil)
+	ok, err := promptSASVerificationFrom(ctx, clientConn.ConnectionState(), strings.NewReader("test\n"), nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -180,12 +185,107 @@ func TestPromptSASVerification_EmptyAnswer(t *testing.T) {
 		t.Fatalf("tls pipe: %v", err)
 	}
 
-	ok, err := promptSASVerificationFrom(clientConn.ConnectionState(), strings.NewReader(""), nil)
+	ctx := context.Background()
+	ok, err := promptSASVerificationFrom(ctx, clientConn.ConnectionState(), strings.NewReader(""), nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if ok {
 		t.Error("expected localOK=false for empty answer")
+	}
+}
+
+// raceReader cancels ctx during the first Read call and returns EOF,
+// simulating the exact race condition where the tty is closed while
+// SIGINT fires: the scanner completes and the context is cancelled
+// simultaneously. Both select paths (ctx.Done() vs scanner-ch close)
+// must return context.Canceled.
+type raceReader struct {
+	cancel context.CancelFunc
+	done   bool
+}
+
+func (r *raceReader) Read(p []byte) (int, error) {
+	if !r.done {
+		r.done = true
+		// Cancel the context and return EOF in the same call —
+		// this mirrors the real race: tty.Close() unblocks the
+		// scanner at the instant SIGINT cancels the context.
+		r.cancel()
+	}
+	return 0, io.EOF
+}
+
+// TestPromptSASVerification_CancelledContext_Race verifies that when the
+// context is cancelled at the same time the reader EOFs (simulating the
+// race between SIGINT and tty.Close()), promptSASVerificationFrom returns
+// context.Canceled regardless of which select case fires first.
+func TestPromptSASVerification_CancelledContext_Race(t *testing.T) {
+	clientConn, _, err := tlsPipe()
+	if err != nil {
+		t.Fatalf("tls pipe: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	r := &raceReader{cancel: cancel}
+
+	ok, err := promptSASVerificationFrom(ctx, clientConn.ConnectionState(), r, nil)
+	if err == nil {
+		t.Fatal("expected context.Canceled error, got nil")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled, got: %v", err)
+	}
+	if ok {
+		t.Error("expected localOK=false on cancellation")
+	}
+}
+
+// TestPromptSASVerification_CancelledContext verifies that when the context is
+// cancelled while waiting for input (e.g. user presses Ctrl+C), the function
+// returns context.Canceled, not a nil error. Uses a pipe for the reader so the
+// scanner can block and be unblocked by closing the write end.
+func TestPromptSASVerification_CancelledContext(t *testing.T) {
+	clientConn, _, err := tlsPipe()
+	if err != nil {
+		t.Fatalf("tls pipe: %v", err)
+	}
+
+	// Use a pipe so the scanner blocks on Read until we close the write end.
+	pr, pw, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	defer pr.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	resultCh := make(chan struct {
+		ok  bool
+		err error
+	}, 1)
+	go func() {
+		ok, err := promptSASVerificationFrom(ctx, clientConn.ConnectionState(), pr, nil)
+		resultCh <- struct {
+			ok  bool
+			err error
+		}{ok, err}
+	}()
+
+	// Cancel the context first, then close the reader. Both channels become
+	// ready. Go's select pseudo-randomly picks one — the fix handles either.
+	cancel()
+	pw.Close()
+
+	result := <-resultCh
+	if result.err == nil {
+		t.Fatal("expected context.Canceled error, got nil")
+	}
+	if !errors.Is(result.err, context.Canceled) {
+		t.Fatalf("expected context.Canceled, got: %v", result.err)
+	}
+	if result.ok {
+		t.Error("expected localOK=false on cancellation")
 	}
 }
 
@@ -451,7 +551,7 @@ func TestSASCoordinated_BothReject(t *testing.T) {
 	}
 }
 
-// TestSASCoordinated_OpenStreamError covers the "open sas stream" error return.
+// TestSASCoordinated_OpenStreamError covers the "Could not complete SAS verification" error return.
 func TestSASCoordinated_OpenStreamError(t *testing.T) {
 	clientConn, _, err := tlsPipe()
 	if err != nil {
@@ -463,12 +563,12 @@ func TestSASCoordinated_OpenStreamError(t *testing.T) {
 	defer cancel()
 
 	err = performSASCoordinatedWith(ctx, conn, clientConn.ConnectionState(), true, strings.NewReader("y\n"), nil)
-	if err == nil || !strings.Contains(err.Error(), "open sas stream") {
-		t.Fatalf("expected 'open sas stream' error, got: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "Could not complete SAS verification") {
+		t.Fatalf("expected 'Could not complete SAS verification' error, got: %v", err)
 	}
 }
 
-// TestSASCoordinated_AcceptStreamError covers the "accept sas stream" error return.
+// TestSASCoordinated_AcceptStreamError covers the "Could not complete SAS verification" error return.
 func TestSASCoordinated_AcceptStreamError(t *testing.T) {
 	_, serverConn, err := tlsPipe()
 	if err != nil {
@@ -480,12 +580,12 @@ func TestSASCoordinated_AcceptStreamError(t *testing.T) {
 	defer cancel()
 
 	err = performSASCoordinatedWith(ctx, conn, serverConn.ConnectionState(), false, strings.NewReader("y\n"), nil)
-	if err == nil || !strings.Contains(err.Error(), "accept sas stream") {
-		t.Fatalf("expected 'accept sas stream' error, got: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "Could not complete SAS verification") {
+		t.Fatalf("expected 'Could not complete SAS verification' error, got: %v", err)
 	}
 }
 
-// TestSASCoordinated_StreamWriteError covers the "send sas result" error return.
+// TestSASCoordinated_StreamWriteError covers the "Could not send SAS result" error return.
 func TestSASCoordinated_StreamWriteError(t *testing.T) {
 	clientConn, _, err := tlsPipe()
 	if err != nil {
@@ -497,12 +597,12 @@ func TestSASCoordinated_StreamWriteError(t *testing.T) {
 	defer cancel()
 
 	err = performSASCoordinatedWith(ctx, conn, clientConn.ConnectionState(), true, strings.NewReader("y\n"), nil)
-	if err == nil || !strings.Contains(err.Error(), "send sas result") {
-		t.Fatalf("expected 'send sas result' error, got: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "Could not send SAS result") {
+		t.Fatalf("expected 'Could not send SAS result' error, got: %v", err)
 	}
 }
 
-// TestSASCoordinated_StreamReadError covers the "recv peer sas result" error return.
+// TestSASCoordinated_StreamReadError covers the "Could not read SAS result" error return.
 func TestSASCoordinated_StreamReadError(t *testing.T) {
 	clientConn, _, err := tlsPipe()
 	if err != nil {
@@ -514,7 +614,7 @@ func TestSASCoordinated_StreamReadError(t *testing.T) {
 	defer cancel()
 
 	err = performSASCoordinatedWith(ctx, conn, clientConn.ConnectionState(), true, strings.NewReader("y\n"), nil)
-	if err == nil || !strings.Contains(err.Error(), "recv peer sas result") {
-		t.Fatalf("expected 'recv peer sas result' error, got: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "Could not read SAS result") {
+		t.Fatalf("expected 'Could not read SAS result' error, got: %v", err)
 	}
 }

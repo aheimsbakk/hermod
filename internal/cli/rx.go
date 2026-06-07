@@ -57,13 +57,13 @@ func runRx(code, destination, serverURL string, verify bool, listenUDP string, s
 	logDebug("loading config")
 	cfg, err := config.Load()
 	if err != nil {
-		return fmt.Errorf("load config: %w", err)
+		return fmt.Errorf("load configuration: %w", err)
 	}
 
 	if saveServer && serverURL != cfg.ServerURL {
 		config.SetDefaultServer(cfg, serverURL)
 		if err := config.Save(cfg); err != nil {
-			return fmt.Errorf("save config: %w", err)
+			return fmt.Errorf("save configuration: %w", err)
 		}
 		printStatus("Default server set to %s", serverURL)
 		logInfo("Default server updated", "server", serverURL)
@@ -82,7 +82,7 @@ func runRx(code, destination, serverURL string, verify bool, listenUDP string, s
 	logDebug("generating ephemeral TLS certificate for QUIC")
 	epCert, epKey, epCertDER, err := generateEphemeralCert()
 	if err != nil {
-		return fmt.Errorf("ephemeral cert: %w", err)
+		return fmt.Errorf("generate ephemeral certificate: %w", err)
 	}
 	myFP := network.CertFingerprint(epCertDER)
 	logDebug("ephemeral certificate generated", "fingerprint", myFP)
@@ -99,7 +99,7 @@ func runRx(code, destination, serverURL string, verify bool, listenUDP string, s
 	logInfo("Connecting to signaling server", "server", serverURL)
 	sigRaw, err := network.DialSignaling(serverURL, pinnedFP)
 	if err != nil {
-		return fmt.Errorf("signaling connect: %w", err)
+		return fmt.Errorf("connect to signaling server: %w", err)
 	}
 	defer sigRaw.Close()
 	sig := sigRaw.WithContext(ctx)
@@ -109,7 +109,7 @@ func runRx(code, destination, serverURL string, verify bool, listenUDP string, s
 	logDebug("joining channel on signaling server", "channel_id", channelID)
 	publicIP, err := sig.Join(channelID)
 	if err != nil {
-		return fmt.Errorf("join: %w", err)
+		return fmt.Errorf("join channel: %w", err)
 	}
 	logInfo("Joined channel", "channel_id", channelID, "public_ip", publicIP)
 
@@ -117,14 +117,14 @@ func runRx(code, destination, serverURL string, verify bool, listenUDP string, s
 	logDebug("binding UDP socket", "addr", listenUDP)
 	udpConn, err := network.BindUDP(listenUDP)
 	if err != nil {
-		return fmt.Errorf("bind udp: %w", err)
+		return fmt.Errorf("bind UDP socket: %w", err)
 	}
 	mux := network.NewPacketMux(udpConn)
 	defer mux.Close()
 
 	localAddr, err := network.LocalUDPAddr(udpConn)
 	if err != nil {
-		return fmt.Errorf("local udp addr: %w", err)
+		return fmt.Errorf("get local UDP address: %w", err)
 	}
 	logDebug("UDP socket bound", "local_addr", localAddr.String())
 
@@ -132,14 +132,14 @@ func runRx(code, destination, serverURL string, verify bool, listenUDP string, s
 	logDebug("initialising CPace PAKE handshake", "role", "receiver")
 	cpaceSession, myPubMsg, err := crypto.CPaceInit(password, channelID, "receiver")
 	if err != nil {
-		return fmt.Errorf("cpace init: %w", err)
+		return fmt.Errorf("initialize CPace handshake: %w", err)
 	}
 
 	// Exchange CPace messages
 	logDebug("waiting for sender CPace public message from relay")
 	peerCPaceMsgBytes, err := sig.RecvBlob()
 	if err != nil {
-		return fmt.Errorf("recv peer cpace msg: %w", err)
+		return fmt.Errorf("receive CPace message from peer: %w", err)
 	}
 	peerCPaceMsg, err := network.DecodeCPaceMsg(peerCPaceMsgBytes)
 	if err != nil {
@@ -150,17 +150,17 @@ func runRx(code, destination, serverURL string, verify bool, listenUDP string, s
 	logDebug("sending CPace public message to peer via relay")
 	cpaceMsgBytes, err := network.EncodeCPaceMsg(network.CPaceMsg{PubMsg: myPubMsg})
 	if err != nil {
-		return fmt.Errorf("encode cpace msg: %w", err)
+		return fmt.Errorf("encode CPace message: %w", err)
 	}
 	if err := sig.SendBlob(channelID, cpaceMsgBytes); err != nil {
-		return fmt.Errorf("send cpace msg: %w", err)
+		return fmt.Errorf("send CPace message: %w", err)
 	}
 
 	// Finish CPace
 	logDebug("completing CPace handshake to derive shared key")
 	kClassical, err := cpaceSession.CPaceFinish(peerCPaceMsg.PubMsg)
 	if err != nil {
-		return fmt.Errorf("cpace finish: %w", err)
+		return fmt.Errorf("complete CPace handshake: %w", err)
 	}
 	logInfo("PAKE handshake complete — shared key established")
 
@@ -168,15 +168,15 @@ func runRx(code, destination, serverURL string, verify bool, listenUDP string, s
 	logDebug("waiting for sender endpoint bundle from relay")
 	encSenderBundle, err := sig.RecvBlob()
 	if err != nil {
-		return fmt.Errorf("recv sender bundle: %w", err)
+		return fmt.Errorf("receive endpoint bundle from sender: %w", err)
 	}
 	senderBundleBytes, err := crypto.OpenAAD(kClassical, channelIDAad(channelID), encSenderBundle)
 	if err != nil {
-		return fmt.Errorf("decrypt sender bundle: %w", err)
+		return fmt.Errorf("decrypt sender endpoint bundle: %w", err)
 	}
 	senderBundle, err := network.DecodeEndpointBundle(senderBundleBytes)
 	if err != nil {
-		return fmt.Errorf("decode sender bundle: %w", err)
+		return fmt.Errorf("decode sender endpoint bundle: %w", err)
 	}
 	logDebug("sender endpoint bundle received",
 		"public", senderBundle.PublicEndpoint,
@@ -207,15 +207,15 @@ func runRx(code, destination, serverURL string, verify bool, listenUDP string, s
 	}
 	myBundleBytes, err := network.EncodeEndpointBundle(myBundle)
 	if err != nil {
-		return fmt.Errorf("encode bundle: %w", err)
+		return fmt.Errorf("encode endpoint bundle: %w", err)
 	}
 	encMyBundle, err := crypto.SealAAD(kClassical, channelIDAad(channelID), myBundleBytes)
 	if err != nil {
-		return fmt.Errorf("encrypt bundle: %w", err)
+		return fmt.Errorf("encrypt endpoint bundle: %w", err)
 	}
 	logDebug("endpoint bundle encrypted and sending to sender via relay")
 	if err := sig.SendBlob(channelID, encMyBundle); err != nil {
-		return fmt.Errorf("send bundle: %w", err)
+		return fmt.Errorf("send endpoint bundle: %w", err)
 	}
 
 	// UDP hole punching
@@ -231,7 +231,7 @@ func runRx(code, destination, serverURL string, verify bool, listenUDP string, s
 	printStatus("Establishing P2P connection...")
 	punchResult, err := network.HolePunch(ctx, mux, candidates, holePunchNonce(kClassical))
 	if err != nil {
-		return fmt.Errorf("hole punch: %w", err)
+		return fmt.Errorf("UDP hole punch: %w", err)
 	}
 	logInfo("UDP hole punch succeeded", "peer_addr", punchResult.PeerAddr.String())
 
@@ -241,7 +241,7 @@ func runRx(code, destination, serverURL string, verify bool, listenUDP string, s
 	baseTLS := config.BuildTLSConfig(cfg)
 	ln, err := network.ListenQUIC(mux, tlsCert, baseTLS, senderBundle.CertFingerprint)
 	if err != nil {
-		return fmt.Errorf("quic listen: %w", err)
+		return fmt.Errorf("QUIC listen: %w", err)
 	}
 	defer ln.Close()
 
@@ -251,7 +251,7 @@ func runRx(code, destination, serverURL string, verify bool, listenUDP string, s
 	logDebug("waiting for sender to establish QUIC connection")
 	quicConn, err := ln.Accept(ctx)
 	if err != nil {
-		return fmt.Errorf("quic accept: %w", err)
+		return fmt.Errorf("QUIC accept: %w", err)
 	}
 	defer quicConn.CloseWithError(0, "done")
 	logInfo("QUIC connection accepted from sender")
@@ -276,7 +276,7 @@ func runRx(code, destination, serverURL string, verify bool, listenUDP string, s
 	logDebug("waiting for metadata stream from sender (stream 0)")
 	metaStream, err := quicConn.AcceptStream(ctx)
 	if err != nil {
-		return fmt.Errorf("accept meta stream: %w", err)
+		return fmt.Errorf("accept metadata stream: %w", err)
 	}
 	metaBytes, err := readLenPrefixed(metaStream)
 	if err != nil {
@@ -334,7 +334,7 @@ func runRx(code, destination, serverURL string, verify bool, listenUDP string, s
 				logError("Integrity check failed — sender hash does not match received data",
 					"sender_sha256", senderHash, "computed_sha256", computedHash)
 				fmt.Fprintf(os.Stderr, "Verification failed: received data does not match sender hash.\n")
-				return fmt.Errorf("integrity check failed: hash mismatch (sender=%s receiver=%s)",
+				return fmt.Errorf("integrity check failed: received data hash (%s) does not match sender hash (%s)",
 					senderHash, computedHash)
 			}
 			logDebug("integrity check passed via trailing hash", "sha256", computedHash)
@@ -384,9 +384,13 @@ func receivePayload(ctx context.Context, meta *transfer.Metadata, r io.Reader, d
 			if _, err := io.Copy(os.Stdout, io.TeeReader(r, h)); err != nil {
 				return "", err
 			}
-			// Ensure text output ends with a newline so the shell prompt starts
-			// on a new line. Do not add an extra blank line.
-			fmt.Fprint(os.Stdout, "\n")
+			// Ensure KindText output ends with a newline so the shell prompt
+			// starts on a new line. KindStream (piped stdin) already carries
+			// the sender's trailing newline — adding another would create a
+			// blank line.
+			if meta.Kind == transfer.KindText {
+				fmt.Fprint(os.Stdout, "\n")
+			}
 			logDebug("text payload written to stdout", "size_bytes", meta.Size)
 			return fmt.Sprintf("%x", h.Sum(nil)), nil
 

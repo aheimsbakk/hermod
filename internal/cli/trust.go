@@ -3,6 +3,7 @@ package cli
 
 import (
 	"fmt"
+	"net/url"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -44,6 +45,20 @@ func runTrust(serverArg, knownFingerprint string) error {
 	serverURL := serverArg
 	if len(serverURL) < 4 || serverURL[:4] != "wss:" && serverURL[:3] != "ws:" {
 		serverURL = "wss://" + serverURL
+	}
+
+	// Default to port 4376 when no port is specified
+	u, err := url.Parse(serverURL)
+	if err != nil {
+		return fmt.Errorf("parse server URL: %w", err)
+	}
+	if u.Port() == "" {
+		switch u.Scheme {
+		case "wss":
+			serverURL = "wss://" + u.Host + ":4376" + u.Path
+		case "ws":
+			serverURL = "ws://" + u.Host + ":4376" + u.Path
+		}
 	}
 
 	printStatus("Connecting to %s to fetch certificate...", serverURL)

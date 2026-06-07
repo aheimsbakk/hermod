@@ -165,7 +165,7 @@ func BindUDP(addr string) (net.PacketConn, error) {
 	}
 	conn, err := lc.ListenPacket(context.Background(), "udp", addr)
 	if err != nil {
-		return nil, fmt.Errorf("bind udp %s: %w", addr, err)
+		return nil, fmt.Errorf("bind UDP socket on %s: %w", addr, err)
 	}
 	return conn, nil
 }
@@ -174,7 +174,7 @@ func BindUDP(addr string) (net.PacketConn, error) {
 func LocalUDPAddr(conn net.PacketConn) (*net.UDPAddr, error) {
 	addr, ok := conn.LocalAddr().(*net.UDPAddr)
 	if !ok {
-		return nil, fmt.Errorf("not a UDP connection")
+		return nil, fmt.Errorf("local address is not a UDP socket")
 	}
 	return addr, nil
 }
@@ -218,7 +218,7 @@ func HolePunch(ctx context.Context, mux *packetMux, candidates []*net.UDPAddr, p
 	for {
 		select {
 		case <-ctx.Done():
-			return nil, fmt.Errorf("hole punch timed out: %w", ctx.Err())
+			return nil, fmt.Errorf("UDP hole punch timed out: %w", ctx.Err())
 		case pkt := <-mux.probeCh:
 			if len(pkt.data) < 3 {
 				continue
@@ -254,7 +254,7 @@ func DialQUIC(ctx context.Context, mux *packetMux, peerAddr *net.UDPAddr, baseTL
 		KeepAlivePeriod: 5 * time.Second,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("quic dial: %w", err)
+		return nil, fmt.Errorf("QUIC dial: %w", err)
 	}
 	return conn, nil
 }
@@ -276,7 +276,7 @@ func ListenQUIC(mux *packetMux, cert tls.Certificate, baseTLS *tls.Config, peerC
 		KeepAlivePeriod: 5 * time.Second,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("quic listen: %w", err)
+		return nil, fmt.Errorf("QUIC listen: %w", err)
 	}
 	return ln, nil
 }
@@ -287,12 +287,12 @@ func ListenQUIC(mux *packetMux, cert tls.Certificate, baseTLS *tls.Config, peerC
 func makeCertPinner(expectedHex string) func(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error {
 	return func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
 		if len(rawCerts) == 0 {
-			return fmt.Errorf("no peer certificate presented")
+			return fmt.Errorf("peer did not present a TLS certificate")
 		}
 		sum := sha256.Sum256(rawCerts[0])
 		got := hex.EncodeToString(sum[:])
 		if subtle.ConstantTimeCompare([]byte(got), []byte(expectedHex)) != 1 {
-			return fmt.Errorf("cert fingerprint mismatch: got %s, want %s", got, expectedHex)
+			return fmt.Errorf("certificate fingerprint mismatch: got %s, expected %s", got, expectedHex)
 		}
 		return nil
 	}

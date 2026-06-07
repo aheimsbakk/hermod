@@ -12,14 +12,14 @@ import (
 )
 
 const (
-	streamShuttle  = "###"
+	streamShuttle  = "<=>"
 	streamDesc     = "sending "
 	streamMinInner = 10                           // minimum inner bar width
-	streamOverhead = len(streamDesc) + 1 + 1 + 26 // desc + | + | + stats reserve
+	streamOverhead = len(streamDesc) + 1 + 1 + 26 // desc + [ + ] + stats reserve
 	streamThrottle = 65 * time.Millisecond
 )
 
-// streamBar renders a bouncing "###" shuttle on "." padding that dynamically
+// streamBar renders a bouncing "<=>" shuttle on "-" padding that dynamically
 // resizes with the terminal on every tick, matching the style of newHashBar.
 // It implements io.Writer so it can be used in an io.MultiWriter.
 // Not goroutine-safe — intended for single-goroutine io.Copy loops.
@@ -96,8 +96,8 @@ func (b *streamBar) renderLine(now time.Time) {
 		b.pos = 0
 	}
 
-	bar := "|" + strings.Repeat(".", b.pos) + streamShuttle +
-		strings.Repeat(".", travel-b.pos) + "|"
+	bar := "[" + strings.Repeat("-", b.pos) + streamShuttle +
+		strings.Repeat("-", travel-b.pos) + "]"
 
 	// Advance shuttle and bounce.
 	b.pos += b.dir

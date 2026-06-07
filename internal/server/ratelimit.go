@@ -37,7 +37,7 @@ func NewRateLimiter(rate, burst float64) *RateLimiter {
 	salt := make([]byte, 32)
 	if _, err := rand.Read(salt); err != nil {
 		// crypto/rand failure is catastrophic; the process cannot function safely.
-		panic("ratelimit: failed to generate initial salt: " + err.Error())
+		panic("rate limiter: failed to generate initial salt: " + err.Error())
 	}
 	now := time.Now().UTC()
 	today := now.Truncate(24 * time.Hour)
@@ -92,7 +92,7 @@ func (r *RateLimiter) rotateSaltIfNeeded(now time.Time) {
 		if _, err := rand.Read(newSalt); err != nil {
 			// Log the failure (M-04). The existing salt continues to be used;
 			// rotation is retried on the next Allow call.
-			slog.Warn("Rate limiter salt rotation failed — keeping existing salt", "err", err)
+			slog.Warn("Rate limiter key rotation failed — keeping existing key", "err", err)
 			return
 		}
 		r.salt = newSalt

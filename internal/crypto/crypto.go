@@ -79,7 +79,7 @@ func CPaceInit(password string, channelID uint16, role string) (*CPaceSession, [
 // prevents cross-role composition attacks.
 func (s *CPaceSession) CPaceFinish(peerPub []byte) ([]byte, error) {
 	if len(peerPub) != cpacePointSize || peerPub[0] != 0x04 {
-		return nil, errors.New("cpace: invalid peer public message (must be 65-byte uncompressed P-256 point)")
+		return nil, errors.New("invalid peer public message: must be a 65-byte uncompressed P-256 point")
 	}
 	curve := elliptic.P256()
 	peerX, peerY, err := unmarshalPoint(curve, peerPub)
@@ -155,12 +155,12 @@ func marshalPoint(x, y *big.Int) []byte {
 
 func unmarshalPoint(curve elliptic.Curve, data []byte) (*big.Int, *big.Int, error) {
 	if len(data) != 65 || data[0] != 0x04 {
-		return nil, nil, errors.New("invalid uncompressed point format")
+		return nil, nil, errors.New("invalid uncompressed point format in peer message")
 	}
 	x := new(big.Int).SetBytes(data[1:33])
 	y := new(big.Int).SetBytes(data[33:65])
 	if !curve.IsOnCurve(x, y) {
-		return nil, nil, errors.New("point not on curve")
+		return nil, nil, errors.New("peer point is not on the P-256 curve")
 	}
 	return x, y, nil
 }
@@ -233,7 +233,7 @@ func OpenAAD(key, aad, blob []byte) ([]byte, error) {
 	}
 	ns := gcm.NonceSize()
 	if len(blob) < ns {
-		return nil, errors.New("open: blob too short")
+		return nil, errors.New("decrypt: blob too short")
 	}
 	return gcm.Open(nil, blob[:ns], blob[ns:], aad)
 }
@@ -350,7 +350,7 @@ const (
 // Returns an error if keyMaterial is shorter than 16 bytes (H-03).
 func Identicon(keyMaterial []byte) (string, error) {
 	if len(keyMaterial) < 16 {
-		return "", fmt.Errorf("identicon: need at least 16 bytes, got %d", len(keyMaterial))
+		return "", fmt.Errorf("identicon: need at least 16 bytes of key material, got %d", len(keyMaterial))
 	}
 	grid := [8][8]rune{}
 	byteIdx := 0
@@ -695,7 +695,7 @@ func ParseTransferCode(code string) (uint16, []string, error) {
 	var id uint16
 	_, err := fmt.Sscanf(parts[0], "%d", &id)
 	if err != nil {
-		return 0, nil, fmt.Errorf("invalid channel id: %w", err)
+		return 0, nil, fmt.Errorf("invalid channel ID in transfer code: %w", err)
 	}
 	words := strings.Split(parts[1], "-")
 	if len(words) < 3 {

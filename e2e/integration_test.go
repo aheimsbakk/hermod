@@ -192,7 +192,7 @@ func runSender(serverURL string, channelID uint16, password string, kind transfe
 
 	udpConn, err := network.BindUDP(":0")
 	if err != nil {
-		return fmt.Errorf("bind udp: %w", err)
+		return fmt.Errorf("bind UDP socket: %w", err)
 	}
 	mux := network.NewPacketMux(udpConn)
 	defer mux.Close()
@@ -201,7 +201,7 @@ func runSender(serverURL string, channelID uint16, password string, kind transfe
 
 	cpaceSession, myPubMsg, err := crypto.CPaceInit(password, channelID, "sender")
 	if err != nil {
-		return fmt.Errorf("cpace init: %w", err)
+		return fmt.Errorf("initialize CPace handshake: %w", err)
 	}
 
 	// Wait for receiver
@@ -220,7 +220,7 @@ func runSender(serverURL string, channelID uint16, password string, kind transfe
 	peerCPaceMsg, _ := network.DecodeCPaceMsg(peerCPaceMsgBytes)
 	kClassical, err := cpaceSession.CPaceFinish(peerCPaceMsg.PubMsg)
 	if err != nil {
-		return fmt.Errorf("cpace finish: %w", err)
+		return fmt.Errorf("complete CPace handshake: %w", err)
 	}
 
 	// Endpoint exchange
@@ -237,7 +237,7 @@ func runSender(serverURL string, channelID uint16, password string, kind transfe
 
 	encPeerBundle, err := sig.RecvBlob()
 	if err != nil {
-		return fmt.Errorf("recv peer bundle: %w", err)
+		return fmt.Errorf("receive endpoint bundle from peer: %w", err)
 	}
 	peerBundleBytes, err := crypto.Open(kClassical, encPeerBundle)
 	if err != nil {
@@ -245,7 +245,7 @@ func runSender(serverURL string, channelID uint16, password string, kind transfe
 	}
 	peerBundle, err := network.DecodeEndpointBundle(peerBundleBytes)
 	if err != nil {
-		return fmt.Errorf("decode peer bundle: %w", err)
+		return fmt.Errorf("decode peer endpoint bundle: %w", err)
 	}
 
 	allCandidates := []string{peerBundle.PublicEndpoint}
@@ -254,7 +254,7 @@ func runSender(serverURL string, channelID uint16, password string, kind transfe
 
 	punchResult, err := network.HolePunch(ctx, mux, candidates, [4]byte{})
 	if err != nil {
-		return fmt.Errorf("hole punch: %w", err)
+		return fmt.Errorf("UDP hole punch: %w", err)
 	}
 
 	// Give receiver time to set up QUIC listener after hole punch.
@@ -267,7 +267,7 @@ func runSender(serverURL string, channelID uint16, password string, kind transfe
 
 	quicConn, err := network.DialQUIC(ctx, mux, punchResult.PeerAddr, tlsCfg, peerBundle.CertFingerprint)
 	if err != nil {
-		return fmt.Errorf("quic dial: %w", err)
+		return fmt.Errorf("QUIC dial: %w", err)
 	}
 
 	// Build metadata
@@ -285,7 +285,7 @@ func runSender(serverURL string, channelID uint16, password string, kind transfe
 	metaStream, err := quicConn.OpenStreamSync(ctx)
 	if err != nil {
 		quicConn.CloseWithError(1, "stream error")
-		return fmt.Errorf("open meta stream: %w", err)
+		return fmt.Errorf("open metadata stream: %w", err)
 	}
 	metaBytes, _ := transfer.EncodeMetadata(meta)
 	metaStream.Write(appendLenPrefixE2E(metaBytes))
@@ -378,7 +378,7 @@ func runReceiver(serverURL, code string) ([]byte, error) {
 
 	_, err = network.HolePunch(ctx, mux, candidates, [4]byte{})
 	if err != nil {
-		return nil, fmt.Errorf("hole punch: %w", err)
+		return nil, fmt.Errorf("UDP hole punch: %w", err)
 	}
 
 	// QUIC listen
@@ -386,7 +386,7 @@ func runReceiver(serverURL, code string) ([]byte, error) {
 	baseTLS := config.BuildTLSConfig(cfg)
 	ln, err := network.ListenQUIC(mux, tlsCert, baseTLS, senderBundle.CertFingerprint)
 	if err != nil {
-		return nil, fmt.Errorf("quic listen: %w", err)
+		return nil, fmt.Errorf("QUIC listen: %w", err)
 	}
 	defer ln.Close()
 

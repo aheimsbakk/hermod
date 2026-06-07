@@ -76,7 +76,9 @@ for the full format rules.
    version entry.
 6. Write 1-4 bullet points under each category heading. Be specific: mention
    file paths, function names, or endpoints when relevant.
-7. **Safety:** No secrets, API keys, or prompt text.
+7. Use the clear-language skill to write changelog bullet points: active voice,
+   short sentences, no filler.
+8. **Safety:** No secrets, API keys, or prompt text.
 
 ---
 
@@ -131,13 +133,18 @@ Before committing, ensure the repository is clean:
 
 ### Commit message
 
-Use Conventional Commits format and reference the new version:
+Use the clear-language skill for commit messages. Follow Conventional Commits
+format with a plain-language description that fits 50 characters or fewer and
+uses imperative mood:
 
 ```
-<type>(<scope>): <short summary>
+<type>(<scope>): <short summary in present tense, imperative>
 ```
 
 Types: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`, `perf`
+
+See the clear-language skill's "Commit messages" section for detailed rules on
+summary line length, tense, and body format.
 
 ---
 

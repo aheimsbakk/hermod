@@ -62,7 +62,7 @@ func runSenderVerify(serverURL string, channelID uint16, password string, payloa
 
 	udpConn, err := network.BindUDP(":0")
 	if err != nil {
-		return verifyResult{err: fmt.Errorf("bind udp: %w", err)}
+		return verifyResult{err: fmt.Errorf("bind UDP socket: %w", err)}
 	}
 	mux := network.NewPacketMux(udpConn)
 	defer mux.Close()
@@ -71,7 +71,7 @@ func runSenderVerify(serverURL string, channelID uint16, password string, payloa
 
 	cpaceSession, myPubMsg, err := crypto.CPaceInit(password, channelID, "sender")
 	if err != nil {
-		return verifyResult{err: fmt.Errorf("cpace init: %w", err)}
+		return verifyResult{err: fmt.Errorf("initialize CPace handshake: %w", err)}
 	}
 
 	if err := sig.WaitReady(); err != nil {
@@ -88,7 +88,7 @@ func runSenderVerify(serverURL string, channelID uint16, password string, payloa
 	peerCPaceMsg, _ := network.DecodeCPaceMsg(peerCPaceMsgBytes)
 	kClassical, err := cpaceSession.CPaceFinish(peerCPaceMsg.PubMsg)
 	if err != nil {
-		return verifyResult{err: fmt.Errorf("cpace finish: %w", err)}
+		return verifyResult{err: fmt.Errorf("complete CPace handshake: %w", err)}
 	}
 
 	localEPs, _ := network.LocalEndpoints(localAddr.Port)
@@ -104,7 +104,7 @@ func runSenderVerify(serverURL string, channelID uint16, password string, payloa
 
 	encPeerBundle, err := sig.RecvBlob()
 	if err != nil {
-		return verifyResult{err: fmt.Errorf("recv peer bundle: %w", err)}
+		return verifyResult{err: fmt.Errorf("receive endpoint bundle from peer: %w", err)}
 	}
 	peerBundleBytes, err := crypto.Open(kClassical, encPeerBundle)
 	if err != nil {
@@ -112,7 +112,7 @@ func runSenderVerify(serverURL string, channelID uint16, password string, payloa
 	}
 	peerBundle, err := network.DecodeEndpointBundle(peerBundleBytes)
 	if err != nil {
-		return verifyResult{err: fmt.Errorf("decode peer bundle: %w", err)}
+		return verifyResult{err: fmt.Errorf("decode peer endpoint bundle: %w", err)}
 	}
 
 	// Symmetric merge — same logic as cli/tx.go.
@@ -124,7 +124,7 @@ func runSenderVerify(serverURL string, channelID uint16, password string, payloa
 
 	punchResult, err := network.HolePunch(ctx, mux, candidates, [4]byte{})
 	if err != nil {
-		return verifyResult{err: fmt.Errorf("hole punch: %w", err)}
+		return verifyResult{err: fmt.Errorf("UDP hole punch: %w", err)}
 	}
 
 	time.Sleep(200 * time.Millisecond)
@@ -135,7 +135,7 @@ func runSenderVerify(serverURL string, channelID uint16, password string, payloa
 
 	quicConn, err := network.DialQUIC(ctx, mux, punchResult.PeerAddr, tlsCfg, peerBundle.CertFingerprint)
 	if err != nil {
-		return verifyResult{err: fmt.Errorf("quic dial: %w", err)}
+		return verifyResult{err: fmt.Errorf("QUIC dial: %w", err)}
 	}
 
 	payloadHash := transfer.HashBytes(payload)
@@ -145,7 +145,7 @@ func runSenderVerify(serverURL string, channelID uint16, password string, payloa
 	metaStream, err := quicConn.OpenStreamSync(ctx)
 	if err != nil {
 		quicConn.CloseWithError(1, "stream error")
-		return verifyResult{err: fmt.Errorf("open meta stream: %w", err)}
+		return verifyResult{err: fmt.Errorf("open metadata stream: %w", err)}
 	}
 	metaStream.Write(appendLenPrefixE2E(metaBytes))
 	metaStream.Close()
@@ -239,7 +239,7 @@ func runReceiverVerify(serverURL, code string, requireVerify bool) verifyResult 
 
 	_, err = network.HolePunch(ctx, mux, candidates, [4]byte{})
 	if err != nil {
-		return verifyResult{err: fmt.Errorf("hole punch: %w", err)}
+		return verifyResult{err: fmt.Errorf("UDP hole punch: %w", err)}
 	}
 
 	tlsCert := buildTLSCertFromDER(epCertDER, epKey, epLeaf)
