@@ -4,7 +4,6 @@ package cli
 import (
 	"fmt"
 	"net/url"
-	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -25,9 +24,9 @@ Security note: the initial connection is made without certificate verification
 (TOFU — trust on first use). Run this command over a trusted network (VPN,
 physical LAN, or a channel where the fingerprint can be verified out-of-band).
 
-Use --fingerprint to supply a pre-known fingerprint. The fetched fingerprint
-is then verified against the supplied value before pinning, preventing TOFU
-attacks when the fingerprint is already known.`,
+Use --fingerprint to supply a pre-known fingerprint. The server's TLS
+certificate is verified against this value during the TLS handshake,
+preventing TOFU attacks when the fingerprint is already known.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runTrust(args[0], knownFingerprint)
@@ -63,18 +62,9 @@ func runTrust(serverArg, knownFingerprint string) error {
 
 	printStatus("Connecting to %s to fetch certificate...", serverURL)
 
-	fp, err := network.FetchServerFingerprint(serverURL)
+	fp, err := network.FetchServerFingerprint(serverURL, knownFingerprint)
 	if err != nil {
 		return fmt.Errorf("fetch fingerprint: %w", err)
-	}
-
-	// If the caller supplied an expected fingerprint, verify before pinning.
-	// This avoids blind TOFU when the fingerprint is already known out-of-band (L-05).
-	if knownFingerprint != "" {
-		expected := strings.ToLower(strings.TrimSpace(knownFingerprint))
-		if fp != expected {
-			return fmt.Errorf("fingerprint mismatch: server presented %s, expected %s", fp, expected)
-		}
 	}
 
 	cfg, err := config.Load()

@@ -246,9 +246,9 @@ func (c *SignalingClient) WaitReady() error
 ```
 
 ```go
-func FetchServerFingerprint(serverURL string) (string, error)
+func FetchServerFingerprint(serverURL string, pinnedFingerprint string) (string, error)
 ```
-Fetches the server's TLS certificate (PEM) via the HTTPS `/cert` endpoint (no cert pinning), decodes the PEM block, and returns the SHA-256 fingerprint of the DER certificate. Used by `hermod trust`. Replaces the prior double-WebSocket approach (M-03).
+Fetches the server's TLS certificate via the HTTPS `/cert` endpoint, decodes the PEM block, and returns the SHA-256 fingerprint of the DER certificate. When `pinnedFingerprint` is non-empty, the certificate is verified against this value during the TLS handshake. When empty (TOFU mode), only use over a trusted network (VPN, LAN, or out-of-band fingerprint verification). Used by `hermod trust`.
 
 ---
 
