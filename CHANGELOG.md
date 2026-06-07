@@ -5,6 +5,24 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.12.1] - 2026-06-07
+
+- **why:** Consolidate three audit reports into one self-contained summary; fix TLS fingerprint verification and rate limiter isolation
+- **model:** opencode/deepseek-v4-flash
+- **tags:** audit, security, trust, ratelimit
+
+### Fixed
+
+- TLS fingerprint now verified during handshake (not after) when `--fingerprint` is supplied to `hermod trust` (`internal/network/signaling.go`, `internal/cli/trust.go`)
+- Rate limiter split into per-endpoint instances (`certRL`, `wsRL`, `joinRL`) so `/cert` abuse cannot starve WebSocket connections (`internal/server/server.go`, `internal/server/ratelimit.go`)
+- Channel enumeration closed: all join failures now return generic `"operation failed"` error instead of revealing whether the channel exists (`internal/server/server.go`)
+- Authored by deepseek-v4-flash, deepseek-v4, and claude-sonnet-4-6
+
+### Changed
+
+- Consolidated three audit reports (`docs/audits/`) into a single self-contained summary with deduplicated findings, proposed mitigations, and a new `SUM-NN` numbering scheme
+- Removed obsolete audit files
+
 ## [v0.12.0] - 2026-06-07
 
 - **why:** Add dual-stack IPv4/IPv6 support to NAT hole punching with IPv6 preference, IPv4 fallback, and `-4`/`-6` enforcement flags
