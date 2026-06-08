@@ -5,6 +5,19 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.14.1] - 2026-06-08
+
+- **why:** Increase hole-punch probe packet size from 3 to 8 bytes for 64-bit entropy and firewall/DDPI resilience
+- **model:** opencode/deepseek-v4-flash-free
+- **tags:** network, holepunch, security, crypto
+
+### Changed
+
+- `holePunchNonce()` now returns the full 32-byte SHA-256 hash instead of only 4 bytes (`internal/cli/tx.go`)
+- `HolePunch()` and `HolePunchDual()` accept `[32]byte` nonce; probe/ack payloads are now 8 bytes each (marker + 7 hash bytes) instead of 3 bytes (`internal/network/network.go`)
+- Probe and ack verification uses `subtle.ConstantTimeCompare` for timing-safe comparison of all 7 hash bytes (`internal/network/network.go`)
+- Minimum probe packet length for acceptance raised from 3 to 8 bytes (`internal/network/network.go`)
+
 ## [v0.14.0] - 2026-06-08
 
 - **why:** Add -4/-6 IP family enforcement to serve and trust commands, completing the feature across all subcommands

@@ -525,15 +525,13 @@ func channelIDAad(id uint16) []byte {
 	return aad
 }
 
-// holePunchNonce derives a 4-byte session-unique nonce from the CPace shared
-// key for use as hole-punch probe and ack discriminators (L-07).
-// Both peers derive identical bytes, making probe packets unguessable to an
-// off-path attacker.
-func holePunchNonce(kClassical []byte) [4]byte {
-	h := sha256.Sum256(append(kClassical, []byte("hermod-holepunch-v1")...))
-	var nonce [4]byte
-	copy(nonce[:], h[:4])
-	return nonce
+// holePunchNonce derives a 32-byte session-unique hash from the CPace shared
+// key for use as hole-punch probe and ack discriminators.
+// The caller uses hash[0:7] for the probe payload and hash[8:15] for the ack
+// payload, giving 64 bits of entropy per packet — practically unguessable
+// by an off-path attacker.
+func holePunchNonce(kClassical []byte) [32]byte {
+	return sha256.Sum256(append(kClassical, []byte("hermod-holepunch-v1")...))
 }
 
 // appendLenPrefix prepends a 4-byte big-endian length to data.

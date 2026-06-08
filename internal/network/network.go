@@ -185,10 +185,10 @@ type HolePunchResult struct {
 }
 
 // HolePunch performs simultaneous UDP hole punching to each candidate address.
-// probeNonce is a 4-byte session-unique value derived by the caller (e.g.
-// SHA-256(kClassical)[:4]). The probe and ack payloads are derived from it,
-// making them unguessable to an off-path attacker and preventing spoofed
-// ack injection (L-07).
+// probeNonce is a 32-byte SHA-256 hash derived from the CPace shared key.
+// The probe payload uses bytes [0:7] and the ack payload uses bytes [8:15],
+// giving 64 bits of entropy per packet — practically unguessable by an
+// off-path attacker and resistant to spoofed ack injection.
 // Returns as soon as a probe/ack exchange succeeds or ctx is cancelled.
 //
 // probeCtx controls the probe-sending goroutine's lifetime separately from
@@ -196,7 +196,7 @@ type HolePunchResult struct {
 // probing continues after HolePunch returns, keeping NAT mappings alive
 // until the caller signals completion (D-02). Pass ctx to use the same
 // lifetime for both.
-func HolePunch(ctx context.Context, probeCtx context.Context, mux *packetMux, candidates []*net.UDPAddr, probeNonce [4]byte) (*HolePunchResult, error) {
+func HolePunch(ctx context.Context, probeCtx context.Context, mux *packetMux, candidates []*net.UDPAddr, probeNonce [32]byte) (*HolePunchResult, error) {
 	if probeCtx == nil {
 		probeCtx = ctx
 	}
@@ -204,10 +204,10 @@ func HolePunch(ctx context.Context, probeCtx context.Context, mux *packetMux, ca
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
-	// probe = [probeMarker, nonce[0], nonce[1]]
-	// ack   = [probeMarker, nonce[2], nonce[3]]
-	probe := []byte{probeMarker, probeNonce[0], probeNonce[1]}
-	ack := []byte{probeMarker, probeNonce[2], probeNonce[3]}
+	// probe = [probeMarker, nonce[0:7]]  — 8 bytes
+	// ack   = [probeMarker, nonce[8:15]] — 8 bytes
+	probe := []byte{probeMarker, probeNonce[0], probeNonce[1], probeNonce[2], probeNonce[3], probeNonce[4], probeNonce[5], probeNonce[6]}
+	ack := []byte{probeMarker, probeNonce[8], probeNonce[9], probeNonce[10], probeNonce[11], probeNonce[12], probeNonce[13], probeNonce[14]}
 
 	// Send probes to all candidates periodically.
 	// Uses probeCtx so probing continues even after HolePunch returns,
@@ -232,16 +232,16 @@ func HolePunch(ctx context.Context, probeCtx context.Context, mux *packetMux, ca
 		case <-ctx.Done():
 			return nil, fmt.Errorf("UDP hole punch timed out: %w", ctx.Err())
 		case pkt := <-mux.probeCh:
-			if len(pkt.data) < 3 {
+			if len(pkt.data) < 8 {
 				continue
 			}
 			switch {
-			case pkt.data[1] == probeNonce[0] && pkt.data[2] == probeNonce[1]: // received probe — send ack
+			case subtle.ConstantTimeCompare(pkt.data[1:8], probeNonce[:7]) == 1: // received probe — send ack
 				mux.conn.WriteTo(ack, pkt.addr) //nolint:errcheck
 				if udpAddr, ok := pkt.addr.(*net.UDPAddr); ok {
 					return &HolePunchResult{PeerAddr: udpAddr}, nil
 				}
-			case pkt.data[1] == probeNonce[2] && pkt.data[2] == probeNonce[3]: // received ack
+			case subtle.ConstantTimeCompare(pkt.data[1:8], probeNonce[8:15]) == 1: // received ack
 				if udpAddr, ok := pkt.addr.(*net.UDPAddr); ok {
 					return &HolePunchResult{PeerAddr: udpAddr}, nil
 				}
@@ -305,7 +305,7 @@ func ListenQUIC(mux *packetMux, cert tls.Certificate, baseTLS *tls.Config, peerC
 //
 // probeCtx controls the probe-sending goroutine's lifetime. See HolePunch
 // for details. Pass ctx to use the same lifetime for both.
-func HolePunchDual(ctx context.Context, probeCtx context.Context, mux *packetMux, candidatesV4, candidatesV6 []*net.UDPAddr, probeNonce [4]byte) (*HolePunchResult, error) {
+func HolePunchDual(ctx context.Context, probeCtx context.Context, mux *packetMux, candidatesV4, candidatesV6 []*net.UDPAddr, probeNonce [32]byte) (*HolePunchResult, error) {
 	if probeCtx == nil {
 		probeCtx = ctx
 	}
