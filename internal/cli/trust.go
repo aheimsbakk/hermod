@@ -62,7 +62,14 @@ func runTrust(serverArg, knownFingerprint string) error {
 
 	printStatus("Connecting to %s to fetch certificate...", serverURL)
 
-	fp, err := network.FetchServerFingerprint(serverURL, knownFingerprint)
+	sigFamily := network.IPFamilyAny
+	switch {
+	case ipv4Only:
+		sigFamily = network.IPFamilyV4
+	case ipv6Only:
+		sigFamily = network.IPFamilyV6
+	}
+	fp, err := network.FetchServerFingerprint(serverURL, knownFingerprint, sigFamily)
 	if err != nil {
 		return fmt.Errorf("fetch fingerprint: %w", err)
 	}

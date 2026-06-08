@@ -243,7 +243,10 @@ func (c *SignalingClient) WaitReady() error {
 // not match. When pinnedFingerprint is empty, the TLS connection is made
 // without certificate verification (TOFU). Only use this mode over a trusted
 // network (VPN, LAN, or when you can verify the fingerprint out-of-band).
-func FetchServerFingerprint(serverURL string, pinnedFingerprint string) (string, error) {
+//
+// When family is not IPFamilyAny, DNS resolution and TCP connections are
+// restricted to that IP protocol family.
+func FetchServerFingerprint(serverURL string, pinnedFingerprint string, family IPFamily) (string, error) {
 	u, err := url.Parse(serverURL)
 	if err != nil {
 		return "", fmt.Errorf("parse server URL: %w", err)
@@ -273,8 +276,19 @@ func FetchServerFingerprint(serverURL string, pinnedFingerprint string) (string,
 	// No VerifyPeerCertificate when pinnedFingerprint is empty — TOFU mode.
 	// The caller is responsible for ensuring they run this over a trusted network.
 
+	transport := &http.Transport{TLSClientConfig: tlsCfg}
+	// Restrict DNS resolution and TCP connections to the requested IP family.
+	if family == IPFamilyV4 {
+		transport.DialContext = func(_ context.Context, network, addr string) (net.Conn, error) {
+			return net.Dial("tcp4", addr)
+		}
+	} else if family == IPFamilyV6 {
+		transport.DialContext = func(_ context.Context, network, addr string) (net.Conn, error) {
+			return net.Dial("tcp6", addr)
+		}
+	}
 	client := &http.Client{
-		Transport: &http.Transport{TLSClientConfig: tlsCfg},
+		Transport: transport,
 		Timeout:   10 * time.Second,
 	}
 	resp, err := client.Get(certURL)

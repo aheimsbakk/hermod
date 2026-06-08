@@ -174,7 +174,7 @@ func TestFetchServerFingerprint(t *testing.T) {
 	addr := startSignalingServer(t)
 	serverURL := "wss://" + addr
 
-	fp, err := network.FetchServerFingerprint(serverURL, "")
+	fp, err := network.FetchServerFingerprint(serverURL, "", network.IPFamilyAny)
 	if err != nil {
 		t.Fatalf("fetch fingerprint: %v", err)
 	}
@@ -189,7 +189,7 @@ func TestFetchServerFingerprintWithMismatch(t *testing.T) {
 
 	// Pass a wrong fingerprint — the TLS handshake should fail.
 	wrongFP := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-	_, err := network.FetchServerFingerprint(serverURL, wrongFP)
+	_, err := network.FetchServerFingerprint(serverURL, wrongFP, network.IPFamilyAny)
 	if err == nil {
 		t.Fatal("expected fingerprint mismatch error during TLS handshake")
 	}

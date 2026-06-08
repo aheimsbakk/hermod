@@ -246,9 +246,9 @@ func (c *SignalingClient) WaitReady() error
 ```
 
 ```go
-func FetchServerFingerprint(serverURL string, pinnedFingerprint string) (string, error)
+func FetchServerFingerprint(serverURL string, pinnedFingerprint string, family IPFamily) (string, error)
 ```
-Fetches the server's TLS certificate via the HTTPS `/cert` endpoint, decodes the PEM block, and returns the SHA-256 fingerprint of the DER certificate. When `pinnedFingerprint` is non-empty, the certificate is verified against this value during the TLS handshake. When empty (TOFU mode), only use over a trusted network (VPN, LAN, or out-of-band fingerprint verification). Used by `hermod trust`.
+Fetches the server's TLS certificate via the HTTPS `/cert` endpoint, decodes the PEM block, and returns the SHA-256 fingerprint of the DER certificate. When `pinnedFingerprint` is non-empty, the certificate is verified against this value during the TLS handshake. When empty (TOFU mode), only use over a trusted network (VPN, LAN, or out-of-band fingerprint verification). `family` restricts DNS and TCP to the given IP family (`IPFamilyAny`, `IPFamilyV4`, `IPFamilyV6`). Used by `hermod trust`.
 
 ---
 
