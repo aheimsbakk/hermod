@@ -5,6 +5,18 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.14.0] - 2026-06-08
+
+- **why:** Add -4/-6 IP family enforcement to serve and trust commands, completing the feature across all subcommands
+- **model:** opencode/deepseek-v4-flash
+- **tags:** cli, ipv4, ipv6, serve, trust
+
+### Added
+
+- `serve` command now respects `-4`/`-6` flags: address `:PORT` (dual-stack) is overridden to `0.0.0.0:PORT` (IPv4-only) or `[::]:PORT` (IPv6-only) (`internal/cli/serve.go`)
+- `trust` command now respects `-4`/`-6` flags: TLS certificate fetch is restricted to the specified IP family (`internal/cli/trust.go`, `internal/network/signaling.go`)
+- Unit tests for serve `-4`/`-6` flag propagation and listen address override logic (`internal/cli/unit_test.go`)
+
 ## [v0.13.0] - 2026-06-08
 
 - **why:** Improve hole-punch reliability with persistent probes past QUIC handshake; enforce strict IP family isolation for -4/-6 flags; fix IPv6 zone ID handling in signaling

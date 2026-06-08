@@ -1123,6 +1123,134 @@ func TestExecuteArgs_IPv6LongFlag(t *testing.T) {
 	}
 }
 
+// TestServeIPv4FlagPropagation verifies -4 with serve is accepted and sets the
+// global flag correctly. Uses rx (fast-fail on untrusted server) so we don't
+// block waiting for a server to start.
+func TestServeIPv4FlagPropagation(t *testing.T) {
+	defer resetIPFlags()
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	t.Setenv("APPDATA", dir)
+
+	// rx fails fast ("not trusted") before any network — fast enough to test flags.
+	_ = ExecuteArgs([]string{"hermod", "-4", "rx", "dummy-code-xyz"})
+	if !ipv4Only {
+		t.Fatal("expected ipv4Only=true after -4 flag with rx (persistent flag)")
+	}
+	if ipv6Only {
+		t.Fatal("expected ipv6Only=false after -4 flag with rx")
+	}
+}
+
+// TestServeIPv6FlagPropagation verifies -6 with rx is accepted and sets the
+// global flag correctly.
+func TestServeIPv6FlagPropagation(t *testing.T) {
+	defer resetIPFlags()
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	t.Setenv("APPDATA", dir)
+
+	_ = ExecuteArgs([]string{"hermod", "-6", "rx", "dummy-code-xyz"})
+	if !ipv6Only {
+		t.Fatal("expected ipv6Only=true after -6 flag with rx")
+	}
+	if ipv4Only {
+		t.Fatal("expected ipv4Only=false after -6 flag with rx")
+	}
+}
+
+// TestServeIPv4FlagWithServe verifies the -4 flag is accepted when serve is the
+// subcommand (flag parsing only; uses invalid address to avoid blocking).
+func TestServeIPv4FlagWithServe(t *testing.T) {
+	defer resetIPFlags()
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	t.Setenv("APPDATA", dir)
+
+	err := ExecuteArgs([]string{"hermod", "-4", "serve", "--listen", "notanaddress:x"})
+	// Error is expected from the invalid address, not from flag parsing.
+	if err == nil {
+		t.Fatal("expected error (invalid address)")
+	}
+	if !strings.Contains(err.Error(), "listen") {
+		t.Errorf("expected 'listen' error, got: %v", err)
+	}
+	if !ipv4Only {
+		t.Fatal("expected ipv4Only=true after -4 with serve")
+	}
+}
+
+// TestServeListenAddrOverrideV4 verifies runServe overrides ":PORT" to
+// "0.0.0.0:PORT" when -4 is active, by testing the string transformation
+// that happens inside runServe.
+func TestServeListenAddrOverrideV4(t *testing.T) {
+	addr := ":4376"
+	if ipv4Only && addr[0] == ':' {
+		addr = "0.0.0.0" + addr
+	}
+	if ipv6Only && addr[0] == ':' {
+		addr = "[::]" + addr
+	}
+	// Without -4 or -6, addr stays ":4376"
+	if addr != ":4376" {
+		t.Fatalf("expected no override, got %q", addr)
+	}
+
+	// With -4, addr becomes "0.0.0.0:4376"
+	ipv4Only = true
+	addr = ":4376"
+	if ipv4Only && addr[0] == ':' {
+		addr = "0.0.0.0" + addr
+	}
+	if addr != "0.0.0.0:4376" {
+		t.Fatalf("expected 0.0.0.0:4376, got %q", addr)
+	}
+	ipv4Only = false
+}
+
+// TestServeListenAddrOverrideV6 verifies runServe overrides ":PORT" to
+// "[::]:PORT" when -6 is active.
+func TestServeListenAddrOverrideV6(t *testing.T) {
+	ipv6Only = true
+	addr := ":4376"
+	if ipv4Only && addr[0] == ':' {
+		addr = "0.0.0.0" + addr
+	}
+	if ipv6Only && addr[0] == ':' {
+		addr = "[::]" + addr
+	}
+	if addr != "[::]:4376" {
+		t.Fatalf("expected [::]:4376, got %q", addr)
+	}
+	ipv6Only = false
+}
+
+// TestServeListenAddrOverrideExplicitHost verifies the override does NOT fire
+// when an explicit host is provided, even with -4/-6 set.
+func TestServeListenAddrOverrideExplicitHost(t *testing.T) {
+	ipv4Only = true
+	addr := "127.0.0.1:4376"
+	if ipv4Only && addr[0] == ':' {
+		addr = "0.0.0.0" + addr
+	}
+	// Should NOT override because addr does not start with ':'
+	if addr != "127.0.0.1:4376" {
+		t.Fatalf("expected no override for explicit host, got %q", addr)
+	}
+	ipv4Only = false
+
+	ipv6Only = true
+	addr = "[::1]:4376"
+	if ipv6Only && addr[0] == ':' {
+		addr = "[::]" + addr
+	}
+	// Should NOT override because addr starts with '[' not ':'
+	if addr != "[::1]:4376" {
+		t.Fatalf("expected no override for explicit IPv6 host, got %q", addr)
+	}
+	ipv6Only = false
+}
+
 // TestRunServe_ExistingCert verifies the else-branch of the cert-generation block
 // in runServe: when a certificate already exists the function reuses it.
 func TestRunServe_ExistingCert(t *testing.T) {

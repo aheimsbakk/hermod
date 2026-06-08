@@ -56,8 +56,8 @@ These flags apply to every command.
 |---|---|---|---|
 | `--verbose` | | `none` | Log verbosity: `none`, `error`, `warning`, `info`, `debug` |
 | `--quiet` | `-q` | off | Suppress status output. Errors are always shown. |
-| `--ipv4` | `-4` | off | Use IPv4 only for hole punching. Cannot be combined with `--ipv6`. |
-| `--ipv6` | `-6` | off | Use IPv6 only for hole punching. Cannot be combined with `--ipv4`. |
+| `--ipv4` | `-4` | off | Use IPv4 only for all network operations (listen, signaling, hole punching). Cannot be combined with `--ipv6`. |
+| `--ipv6` | `-6` | off | Use IPv6 only for all network operations (listen, signaling, hole punching). Cannot be combined with `--ipv4`. |
 | `--version` | `-V` | | Print the version and exit. |
 
 ### tx — send
@@ -134,7 +134,7 @@ hermod serve [flags]
 | `--max-blobs-per-channel` | | `10` | Hard cap on relayed blobs per channel |
 | `--max-cpace-failures` | | `3` | Max CPace failures before a channel is dropped |
 
-Global flags `--verbose` and `--quiet` also apply.
+Global flags `--verbose`, `--quiet`, `--ipv4`, and `--ipv6` also apply.
 
 The server generates a self-signed TLS certificate on first run and saves it to the config directory (`~/.config/hermod/` on Linux).
 
@@ -154,7 +154,7 @@ If you omit the port, `trust` defaults to port 4376 — hermod's standard signal
 |---|---|---|---|
 | `--fingerprint` | | `""` | Expected SHA-256 fingerprint (hex). When set, the server's TLS certificate is verified against this value during the handshake. |
 
-Global flags `--verbose` and `--quiet` also apply.
+Global flags `--verbose`, `--quiet`, `--ipv4`, and `--ipv6` also apply.
 
 ```bash
 # With explicit port:

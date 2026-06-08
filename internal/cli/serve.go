@@ -45,6 +45,16 @@ func newServeCmd() *cobra.Command {
 }
 
 func runServe(listenAddr string, ttl time.Duration, rateLimit, rateBurst float64, maxBlobsPerChannel, maxCPaceFailures int) error {
+	// Override the listen address to enforce strict IP family when -4/-6 is set.
+	// Only override when bind addr has no explicit IP (e.g. ":4376"), which means
+	// net.Listen would bind dual-stack. Explicit addresses like "10.0.0.1:4376" are
+	// left alone — the user knows what they want.
+	if ipv4Only && listenAddr[0] == ':' {
+		listenAddr = "0.0.0.0" + listenAddr
+	} else if ipv6Only && listenAddr[0] == ':' {
+		listenAddr = "[::]" + listenAddr
+	}
+
 	logDebug("loading configuration")
 	cfg, err := config.Load()
 	if err != nil {
