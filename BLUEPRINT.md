@@ -20,7 +20,7 @@ docs/api.md                 — internal package API reference
 docs/worklogs/              — session worklogs
 scripts/                    — bump-version.sh, build-release.sh, check-coverage.sh, extract-changelog-entry.sh, validate-changelog.sh
 .github/workflows/          — release.yml (GitHub Actions: cross-build + publish on tag push)
-VERSION                     — current version (0.12.1)
+VERSION                     — current version (0.13.0)
 ```
 
 ## Logging
