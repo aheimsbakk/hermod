@@ -190,7 +190,17 @@ type HolePunchResult struct {
 // making them unguessable to an off-path attacker and preventing spoofed
 // ack injection (L-07).
 // Returns as soon as a probe/ack exchange succeeds or ctx is cancelled.
-func HolePunch(ctx context.Context, mux *packetMux, candidates []*net.UDPAddr, probeNonce [4]byte) (*HolePunchResult, error) {
+//
+// probeCtx controls the probe-sending goroutine's lifetime separately from
+// the hole-punch timeout. Pass a context that outlives the main ctx so
+// probing continues after HolePunch returns, keeping NAT mappings alive
+// until the caller signals completion (D-02). Pass ctx to use the same
+// lifetime for both.
+func HolePunch(ctx context.Context, probeCtx context.Context, mux *packetMux, candidates []*net.UDPAddr, probeNonce [4]byte) (*HolePunchResult, error) {
+	if probeCtx == nil {
+		probeCtx = ctx
+	}
+
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
@@ -199,13 +209,15 @@ func HolePunch(ctx context.Context, mux *packetMux, candidates []*net.UDPAddr, p
 	probe := []byte{probeMarker, probeNonce[0], probeNonce[1]}
 	ack := []byte{probeMarker, probeNonce[2], probeNonce[3]}
 
-	// Send probes to all candidates periodically
+	// Send probes to all candidates periodically.
+	// Uses probeCtx so probing continues even after HolePunch returns,
+	// preventing NAT mappings from expiring before the QUIC handshake.
 	go func() {
 		ticker := time.NewTicker(200 * time.Millisecond)
 		defer ticker.Stop()
 		for {
 			select {
-			case <-ctx.Done():
+			case <-probeCtx.Done():
 				return
 			case <-ticker.C:
 				for _, addr := range candidates {
@@ -290,12 +302,19 @@ func ListenQUIC(mux *packetMux, cert tls.Certificate, baseTLS *tls.Config, peerC
 //
 // Pass an empty candidatesV4 or candidatesV6 slice to skip that phase entirely
 // (used when -4 or -6 flag enforces a single protocol).
-func HolePunchDual(ctx context.Context, mux *packetMux, candidatesV4, candidatesV6 []*net.UDPAddr, probeNonce [4]byte) (*HolePunchResult, error) {
+//
+// probeCtx controls the probe-sending goroutine's lifetime. See HolePunch
+// for details. Pass ctx to use the same lifetime for both.
+func HolePunchDual(ctx context.Context, probeCtx context.Context, mux *packetMux, candidatesV4, candidatesV6 []*net.UDPAddr, probeNonce [4]byte) (*HolePunchResult, error) {
+	if probeCtx == nil {
+		probeCtx = ctx
+	}
+
 	// Phase 1: IPv6 (preferred) — 5-second timeout.
 	if len(candidatesV6) > 0 {
 		v6Ctx, v6Cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer v6Cancel()
-		result, err := HolePunch(v6Ctx, mux, candidatesV6, probeNonce)
+		result, err := HolePunch(v6Ctx, probeCtx, mux, candidatesV6, probeNonce)
 		if err == nil {
 			return result, nil
 		}
@@ -303,7 +322,7 @@ func HolePunchDual(ctx context.Context, mux *packetMux, candidatesV4, candidates
 
 	// Phase 2: IPv4 (fallback) — use remaining context timeout.
 	if len(candidatesV4) > 0 {
-		result, err := HolePunch(ctx, mux, candidatesV4, probeNonce)
+		result, err := HolePunch(ctx, probeCtx, mux, candidatesV4, probeNonce)
 		if err != nil {
 			return nil, fmt.Errorf("UDP hole punch failed for all candidates: %w", err)
 		}

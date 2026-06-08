@@ -269,9 +269,15 @@ func runRx(code, destination, serverURL string, verify bool, listenUDP string, s
 	}
 	logDebug("NAT candidates parsed", "v4_count", len(candidatesV4), "v6_count", len(candidatesV6))
 
+	// Create a probe context that outlives HolePunch so probing continues
+	// until the QUIC connection is established, preventing NAT mappings from
+	// expiring in the gap between hole-punch return and QUIC handshake.
+	probeCtx, probeCancel := context.WithCancel(ctx)
+	defer probeCancel()
+
 	logInfo("Starting UDP hole punch", "v4_candidates", len(candidatesV4), "v6_candidates", len(candidatesV6))
 	printStatus("Establishing P2P connection...")
-	punchResult, err := network.HolePunchDual(ctx, mux, candidatesV4, candidatesV6, holePunchNonce(kClassical))
+	punchResult, err := network.HolePunchDual(ctx, probeCtx, mux, candidatesV4, candidatesV6, holePunchNonce(kClassical))
 	if err != nil {
 		return fmt.Errorf("UDP hole punch: %w", err)
 	}
@@ -287,15 +293,14 @@ func runRx(code, destination, serverURL string, verify bool, listenUDP string, s
 	}
 	defer ln.Close()
 
-	// Trigger sender to dial by sending one more probe
-	_ = punchResult // already punched
-
 	logDebug("waiting for sender to establish QUIC connection")
 	quicConn, err := ln.Accept(ctx)
 	if err != nil {
 		return fmt.Errorf("QUIC accept: %w", err)
 	}
 	defer quicConn.CloseWithError(0, "done")
+	// Stop probing — QUIC keepalive will maintain the NAT mapping from now on.
+	probeCancel()
 	logInfo("QUIC connection accepted from sender")
 
 	// Watch for Ctrl+C: close the connection so the sender is notified immediately.

@@ -259,7 +259,7 @@ func runSender(serverURL string, channelID uint16, password string, kind transfe
 
 	candidatesV4, _ := network.ParseCandidates(peerBundle.CandidatesV4())
 	candidatesV6, _ := network.ParseCandidates(peerBundle.CandidatesV6())
-	punchResult, err := network.HolePunchDual(ctx, mux, candidatesV4, candidatesV6, [4]byte{})
+	punchResult, err := network.HolePunchDual(ctx, ctx, mux, candidatesV4, candidatesV6, [4]byte{})
 	if err != nil {
 		return fmt.Errorf("UDP hole punch: %w", err)
 	}
@@ -391,7 +391,7 @@ func runReceiver(serverURL, code string) ([]byte, error) {
 
 	candidatesV4, _ := network.ParseCandidates(senderBundle.CandidatesV4())
 	candidatesV6, _ := network.ParseCandidates(senderBundle.CandidatesV6())
-	_, err = network.HolePunchDual(ctx, mux, candidatesV4, candidatesV6, [4]byte{})
+	_, err = network.HolePunchDual(ctx, ctx, mux, candidatesV4, candidatesV6, [4]byte{})
 	if err != nil {
 		return nil, fmt.Errorf("UDP hole punch: %w", err)
 	}
