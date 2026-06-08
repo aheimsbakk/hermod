@@ -131,7 +131,7 @@ func runSenderVerify(serverURL string, channelID uint16, password string, payloa
 
 	candidatesV4, _ := network.ParseCandidates(peerBundle.CandidatesV4())
 	candidatesV6, _ := network.ParseCandidates(peerBundle.CandidatesV6())
-	punchResult, err := network.HolePunchDual(ctx, ctx, mux, candidatesV4, candidatesV6, [4]byte{})
+	punchResult, err := network.HolePunchDual(ctx, ctx, mux, candidatesV4, candidatesV6, [32]byte{})
 	if err != nil {
 		return verifyResult{err: fmt.Errorf("UDP hole punch: %w", err)}
 	}
@@ -254,7 +254,7 @@ func runReceiverVerify(serverURL, code string, requireVerify bool) verifyResult 
 
 	candidatesV4, _ := network.ParseCandidates(senderBundle.CandidatesV4())
 	candidatesV6, _ := network.ParseCandidates(senderBundle.CandidatesV6())
-	_, err = network.HolePunchDual(ctx, ctx, mux, candidatesV4, candidatesV6, [4]byte{})
+	_, err = network.HolePunchDual(ctx, ctx, mux, candidatesV4, candidatesV6, [32]byte{})
 	if err != nil {
 		return verifyResult{err: fmt.Errorf("UDP hole punch: %w", err)}
 	}

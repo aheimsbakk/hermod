@@ -142,12 +142,12 @@ type HolePunchResult struct {
     PeerAddr *net.UDPAddr
 }
 
-func HolePunch(ctx context.Context, mux *packetMux, candidates []*net.UDPAddr, probeNonce [4]byte) (*HolePunchResult, error)
+func HolePunch(ctx context.Context, mux *packetMux, candidates []*net.UDPAddr, probeNonce [32]byte) (*HolePunchResult, error)
 ```
-Sends probe packets to all candidate addresses concurrently until one replies. `probeNonce` is a 4-byte session-unique value derived from the CPace shared key. Returns the first address that responds. Cancelled by `ctx` timeout (default 10 s).
+Sends 8-byte probe packets (marker byte + 7 hash bytes) to all candidate addresses concurrently until one replies. `probeNonce` is a 32-byte SHA-256 hash derived from the CPace shared key; bytes [0:7] form the probe payload and bytes [8:15] form the ack payload, giving 64 bits of entropy per packet. Returns the first address that responds. Cancelled by `ctx` timeout (default 10 s).
 
 ```go
-func HolePunchDual(ctx context.Context, mux *packetMux, candidatesV4, candidatesV6 []*net.UDPAddr, probeNonce [4]byte) (*HolePunchResult, error)
+func HolePunchDual(ctx context.Context, mux *packetMux, candidatesV4, candidatesV6 []*net.UDPAddr, probeNonce [32]byte) (*HolePunchResult, error)
 ```
 Two-phase NAT hole punching: IPv6 first (5 s timeout), then IPv4 fallback (remaining ctx timeout). Pass an empty slice for a phase to skip it entirely (used when `-4` or `-6` flag enforces a single protocol).
 

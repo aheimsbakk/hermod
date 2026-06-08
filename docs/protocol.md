@@ -132,11 +132,13 @@ Use `-4` (`--ipv4`) to skip the IPv6 phase entirely. Use `-6` (`--ipv6`) to skip
 
 Within each phase, probe packets are sent to all candidate addresses of that family concurrently:
 
-Probe packet format:
+Probe and ack packet format (8 bytes each):
 ```
-byte 0:    0x01  (probe marker)
-bytes 1–2: session-unique nonce (derived from CPace shared key)
+byte 0:    0x01        (probe/ack marker)
+bytes 1–7: hash[0:7]  (probe) or hash[8:14]  (ack) — 7 bytes of SHA-256(kClassical + "hermod-holepunch-v1")
 ```
+
+The hash is session-specific (derived from the CPace PAKE shared key). Each side uses bytes [0:7] of the hash as the probe identifier and bytes [8:15] as the ack identifier, giving 64 bits of entropy per packet — practically unguessable by an off-path attacker.
 
 The first probe that receives a reply from the correct peer address wins. That address is used for the QUIC connection.
 

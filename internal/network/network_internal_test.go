@@ -390,9 +390,13 @@ func TestMakeCertPinner_Match(t *testing.T) {
 
 // --- HolePunch ---
 
-// testProbeNonce is a fixed nonce used in HolePunch unit tests (L-07).
-// probe = [probeMarker, 0xAA, 0xBB], ack = [probeMarker, 0xCC, 0xDD].
-var testProbeNonce = [4]byte{0xAA, 0xBB, 0xCC, 0xDD}
+// testProbeNonce is a fixed nonce used in HolePunch unit tests.
+// probe = [probeMarker, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 0x11]
+// ack   = [probeMarker, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99]
+var testProbeNonce = [32]byte{
+	0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 0x11, 0x22, // bytes 0-7 — probe
+	0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0x00, // bytes 8-15 — ack
+}
 
 // TestHolePunch_Timeout verifies HolePunch returns a descriptive error when the
 // context deadline is exceeded before a peer is found.
@@ -426,7 +430,7 @@ func TestHolePunch_ProbeReceived(t *testing.T) {
 	go func() {
 		time.Sleep(30 * time.Millisecond)
 		stub.readCh <- udpDatagram{
-			data: []byte{probeMarker, testProbeNonce[0], testProbeNonce[1]},
+			data: []byte{probeMarker, testProbeNonce[0], testProbeNonce[1], testProbeNonce[2], testProbeNonce[3], testProbeNonce[4], testProbeNonce[5], testProbeNonce[6]},
 			addr: peerAddr,
 		}
 	}()
@@ -455,7 +459,7 @@ func TestHolePunch_AckReceived(t *testing.T) {
 	go func() {
 		time.Sleep(30 * time.Millisecond)
 		stub.readCh <- udpDatagram{
-			data: []byte{probeMarker, testProbeNonce[2], testProbeNonce[3]},
+			data: []byte{probeMarker, testProbeNonce[8], testProbeNonce[9], testProbeNonce[10], testProbeNonce[11], testProbeNonce[12], testProbeNonce[13], testProbeNonce[14]},
 			addr: peerAddr,
 		}
 	}()
@@ -472,7 +476,7 @@ func TestHolePunch_AckReceived(t *testing.T) {
 	}
 }
 
-// TestHolePunch_ShortProbeIgnored verifies that a probe packet shorter than 3 bytes
+// TestHolePunch_ShortProbeIgnored verifies that a probe packet shorter than 8 bytes
 // is ignored (the `continue` branch) and HolePunch keeps waiting.
 func TestHolePunch_ShortProbeIgnored(t *testing.T) {
 	stub := newStubPacketConn()
@@ -491,7 +495,7 @@ func TestHolePunch_ShortProbeIgnored(t *testing.T) {
 		// Then: inject a valid probe so HolePunch can return.
 		time.Sleep(20 * time.Millisecond)
 		stub.readCh <- udpDatagram{
-			data: []byte{probeMarker, testProbeNonce[0], testProbeNonce[1]},
+			data: []byte{probeMarker, testProbeNonce[0], testProbeNonce[1], testProbeNonce[2], testProbeNonce[3], testProbeNonce[4], testProbeNonce[5], testProbeNonce[6]},
 			addr: peerAddr,
 		}
 	}()
@@ -522,7 +526,7 @@ func TestHolePunch_ProbesSentToCandidates(t *testing.T) {
 		// Wait at least 200ms so the ticker fires at least once.
 		time.Sleep(250 * time.Millisecond)
 		stub.readCh <- udpDatagram{
-			data: []byte{probeMarker, testProbeNonce[0], testProbeNonce[1]},
+			data: []byte{probeMarker, testProbeNonce[0], testProbeNonce[1], testProbeNonce[2], testProbeNonce[3], testProbeNonce[4], testProbeNonce[5], testProbeNonce[6]},
 			addr: candidate,
 		}
 	}()
@@ -558,7 +562,7 @@ func TestHolePunchDual_V6Preferred(t *testing.T) {
 	go func() {
 		time.Sleep(30 * time.Millisecond)
 		stub.readCh <- udpDatagram{
-			data: []byte{probeMarker, testProbeNonce[0], testProbeNonce[1]},
+			data: []byte{probeMarker, testProbeNonce[0], testProbeNonce[1], testProbeNonce[2], testProbeNonce[3], testProbeNonce[4], testProbeNonce[5], testProbeNonce[6]},
 			addr: v6Addr,
 		}
 	}()
@@ -589,7 +593,7 @@ func TestHolePunchDual_V4Fallback(t *testing.T) {
 	go func() {
 		time.Sleep(5100 * time.Millisecond) // just after v6 timeout
 		stub.readCh <- udpDatagram{
-			data: []byte{probeMarker, testProbeNonce[0], testProbeNonce[1]},
+			data: []byte{probeMarker, testProbeNonce[0], testProbeNonce[1], testProbeNonce[2], testProbeNonce[3], testProbeNonce[4], testProbeNonce[5], testProbeNonce[6]},
 			addr: v4Addr,
 		}
 	}()
@@ -618,7 +622,7 @@ func TestHolePunchDual_OnlyV4(t *testing.T) {
 	go func() {
 		time.Sleep(30 * time.Millisecond)
 		stub.readCh <- udpDatagram{
-			data: []byte{probeMarker, testProbeNonce[0], testProbeNonce[1]},
+			data: []byte{probeMarker, testProbeNonce[0], testProbeNonce[1], testProbeNonce[2], testProbeNonce[3], testProbeNonce[4], testProbeNonce[5], testProbeNonce[6]},
 			addr: v4Addr,
 		}
 	}()
