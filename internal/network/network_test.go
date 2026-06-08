@@ -287,6 +287,28 @@ func TestSplitPublicIP_Hostname(t *testing.T) {
 	}
 }
 
+func TestSplitPublicIP_V6_ZoneID(t *testing.T) {
+	// IPv6 with zone/scope ID — net.ParseIP alone would fail,
+	// but SplitPublicIP strips the zone before classifying.
+	v4, v6 := network.SplitPublicIP("fe80::1%eth0", "4376")
+	if v4 != "" {
+		t.Fatalf("expected empty v4, got %q", v4)
+	}
+	if v6 != "[fe80::1%eth0]:4376" {
+		t.Fatalf("unexpected v6: %q", v6)
+	}
+}
+
+func TestSplitPublicIP_V6_ZoneIDWithPort(t *testing.T) {
+	v4, v6 := network.SplitPublicIP("fe80::aabb:ccff:fe01:2345%wlan0", "9000")
+	if v4 != "" {
+		t.Fatalf("expected empty v4, got %q", v4)
+	}
+	if v6 != "[fe80::aabb:ccff:fe01:2345%wlan0]:9000" {
+		t.Fatalf("unexpected v6: %q", v6)
+	}
+}
+
 // Ensure json round-trip of message type constants.
 func TestMessageTypeSerialization(t *testing.T) {
 	type msgTest struct {

@@ -404,7 +404,7 @@ func TestHolePunch_Timeout(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 80*time.Millisecond)
 	defer cancel()
 
-	_, err := HolePunch(ctx, mux, []*net.UDPAddr{}, testProbeNonce)
+	_, err := HolePunch(ctx, ctx, mux, []*net.UDPAddr{}, testProbeNonce)
 	if err == nil {
 		t.Fatal("expected timeout error from HolePunch")
 	}
@@ -434,7 +434,7 @@ func TestHolePunch_ProbeReceived(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	result, err := HolePunch(ctx, mux, []*net.UDPAddr{}, testProbeNonce)
+	result, err := HolePunch(ctx, ctx, mux, []*net.UDPAddr{}, testProbeNonce)
 	if err != nil {
 		t.Fatalf("HolePunch: unexpected error: %v", err)
 	}
@@ -463,7 +463,7 @@ func TestHolePunch_AckReceived(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	result, err := HolePunch(ctx, mux, []*net.UDPAddr{}, testProbeNonce)
+	result, err := HolePunch(ctx, ctx, mux, []*net.UDPAddr{}, testProbeNonce)
 	if err != nil {
 		t.Fatalf("HolePunch (ack path): unexpected error: %v", err)
 	}
@@ -499,7 +499,7 @@ func TestHolePunch_ShortProbeIgnored(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	result, err := HolePunch(ctx, mux, []*net.UDPAddr{}, testProbeNonce)
+	result, err := HolePunch(ctx, ctx, mux, []*net.UDPAddr{}, testProbeNonce)
 	if err != nil {
 		t.Fatalf("HolePunch (short probe ignored): %v", err)
 	}
@@ -530,7 +530,7 @@ func TestHolePunch_ProbesSentToCandidates(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	if _, err := HolePunch(ctx, mux, []*net.UDPAddr{candidate}, testProbeNonce); err != nil {
+	if _, err := HolePunch(ctx, ctx, mux, []*net.UDPAddr{candidate}, testProbeNonce); err != nil {
 		t.Fatalf("HolePunch with candidate: %v", err)
 	}
 
@@ -566,7 +566,7 @@ func TestHolePunchDual_V6Preferred(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	result, err := HolePunchDual(ctx, mux, []*net.UDPAddr{v4Addr}, []*net.UDPAddr{v6Addr}, testProbeNonce)
+	result, err := HolePunchDual(ctx, ctx, mux, []*net.UDPAddr{v4Addr}, []*net.UDPAddr{v6Addr}, testProbeNonce)
 	if err != nil {
 		t.Fatalf("HolePunchDual: %v", err)
 	}
@@ -597,7 +597,7 @@ func TestHolePunchDual_V4Fallback(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()
 
-	result, err := HolePunchDual(ctx, mux, []*net.UDPAddr{v4Addr}, []*net.UDPAddr{}, testProbeNonce)
+	result, err := HolePunchDual(ctx, ctx, mux, []*net.UDPAddr{v4Addr}, []*net.UDPAddr{}, testProbeNonce)
 	if err != nil {
 		t.Fatalf("HolePunchDual (v4 fallback): %v", err)
 	}
@@ -626,7 +626,7 @@ func TestHolePunchDual_OnlyV4(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	result, err := HolePunchDual(ctx, mux, []*net.UDPAddr{v4Addr}, nil, testProbeNonce)
+	result, err := HolePunchDual(ctx, ctx, mux, []*net.UDPAddr{v4Addr}, nil, testProbeNonce)
 	if err != nil {
 		t.Fatalf("HolePunchDual (only v4): %v", err)
 	}
@@ -645,7 +645,7 @@ func TestHolePunchDual_NoCandidates(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	_, err := HolePunchDual(ctx, mux, nil, nil, testProbeNonce)
+	_, err := HolePunchDual(ctx, ctx, mux, nil, nil, testProbeNonce)
 	if err == nil {
 		t.Fatal("expected error for no candidates")
 	}

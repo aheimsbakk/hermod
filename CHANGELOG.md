@@ -5,6 +5,27 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.13.0] - 2026-06-08
+
+- **why:** Improve hole-punch reliability with persistent probes past QUIC handshake; enforce strict IP family isolation for -4/-6 flags; fix IPv6 zone ID handling in signaling
+- **model:** opencode/deepseek-v4-flash
+- **tags:** network, holepunch, ipv6, cli, signaling, reliability
+
+### Added
+
+- Signaling server WebSocket connection now respects `-4`/`-6` flags, using `tcp4` or `tcp6` at the transport level (`internal/cli/tx.go`, `internal/cli/rx.go`, `internal/network/signaling.go`)
+- Strict IP family isolation: `-4` filters IPv6 peer candidates and binds `0.0.0.0:0`; `-6` filters IPv4 candidates and binds `[::]:0` (`internal/cli/tx.go`, `internal/cli/rx.go`)
+
+### Fixed
+
+- Hole-punch probes now stay alive until QUIC handshake completes, preventing connection failures from short-lived NAT mappings when one side stops probing before the other receives a probe (`internal/network/network.go`, `internal/cli/tx.go`, `internal/cli/rx.go`)
+- Signaling server now populates both `public_ipv4` and `public_ipv6` in responses and strips IPv6 zone IDs (e.g. `%eth0`) before parsing; JSON unmarshal errors are now returned instead of silently dropped (`internal/server/server.go`, `internal/network/handshake.go`, `internal/network/signaling.go`)
+
+### Changed
+
+- README updated with global flags section, missing `--quiet`/`--version` flags, trust subcommand reference, Norse mythology name origin, and Magic Wormhole inspiration (`README.md`)
+- `tasks/` directory cleaned up — completed task files moved to `tasks/done/`
+
 ## [v0.12.1] - 2026-06-07
 
 - **why:** Consolidate three audit reports into one self-contained summary; fix TLS fingerprint verification and rate limiter isolation
