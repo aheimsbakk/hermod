@@ -13,7 +13,7 @@ import (
 	"github.com/hermod/hermod/internal/server"
 )
 
-func startSignalingServer(t *testing.T) string {
+func startSignalingServer(t *testing.T) (string, func()) {
 	t.Helper()
 	cfg := config.Default()
 	if err := config.GenerateServerCert(cfg); err != nil {
@@ -28,7 +28,6 @@ func startSignalingServer(t *testing.T) string {
 
 	store := server.NewMemoryStore()
 	rl := server.NewRateLimiter(100, 1000)
-	// Pass the DER-encoded TLS certificate so the /cert endpoint works.
 	srv := server.NewServer(store, rl, rl, rl, 60*time.Second, server.DefaultMaxBlobsPerChannel, server.DefaultMaxCPaceFailures, tlsCert.Certificate[0], slog.Default())
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -36,27 +35,26 @@ func startSignalingServer(t *testing.T) string {
 		t.Fatalf("find port: %v", err)
 	}
 	addr := ln.Addr().String()
-	ln.Close()
 
 	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
 
-	go srv.ListenAndServe(ctx, addr, tlsCfg)
+	go srv.Serve(ctx, ln, tlsCfg) //nolint:errcheck
 	// Wait for server to be ready
 	for i := 0; i < 20; i++ {
 		time.Sleep(50 * time.Millisecond)
 		c, err := net.Dial("tcp", addr)
 		if err == nil {
 			c.Close()
-			return addr
+			return addr, cancel
 		}
 	}
 	t.Fatal("server did not start")
-	return ""
+	return "", nil
 }
 
 func TestSignalingClientAllocateJoin(t *testing.T) {
-	addr := startSignalingServer(t)
+	addr, cancel := startSignalingServer(t)
+	defer cancel()
 	serverURL := "wss://" + addr
 
 	// Sender allocates
@@ -95,7 +93,8 @@ func TestSignalingClientAllocateJoin(t *testing.T) {
 }
 
 func TestSignalingClientBlobExchange(t *testing.T) {
-	addr := startSignalingServer(t)
+	addr, cancel := startSignalingServer(t)
+	defer cancel()
 	serverURL := "wss://" + addr
 
 	sender, err := network.DialSignaling(serverURL, "")
@@ -171,7 +170,8 @@ func TestMakeCertPinnerValid(t *testing.T) {
 }
 
 func TestFetchServerFingerprint(t *testing.T) {
-	addr := startSignalingServer(t)
+	addr, cancel := startSignalingServer(t)
+	defer cancel()
 	serverURL := "wss://" + addr
 
 	fp, err := network.FetchServerFingerprint(serverURL, "", network.IPFamilyAny)
@@ -184,7 +184,8 @@ func TestFetchServerFingerprint(t *testing.T) {
 }
 
 func TestFetchServerFingerprintWithMismatch(t *testing.T) {
-	addr := startSignalingServer(t)
+	addr, cancel := startSignalingServer(t)
+	defer cancel()
 	serverURL := "wss://" + addr
 
 	// Pass a wrong fingerprint — the TLS handshake should fail.
@@ -210,7 +211,8 @@ func TestDialSignalingBadURL2(t *testing.T) {
 }
 
 func TestDialSignalingWithPinnedFingerprintMismatch(t *testing.T) {
-	addr := startSignalingServer(t)
+	addr, cancel := startSignalingServer(t)
+	defer cancel()
 	serverURL := "wss://" + addr
 	// Pass wrong fingerprint — should fail TLS verification
 	_, err := network.DialSignaling(serverURL, "0000000000000000000000000000000000000000000000000000000000000000")
@@ -220,7 +222,8 @@ func TestDialSignalingWithPinnedFingerprintMismatch(t *testing.T) {
 }
 
 func TestAllocateTwiceSameChannelErrors(t *testing.T) {
-	addr := startSignalingServer(t)
+	addr, cancel := startSignalingServer(t)
+	defer cancel()
 	serverURL := "wss://" + addr
 
 	c1, _ := network.DialSignaling(serverURL, "")
@@ -237,7 +240,8 @@ func TestAllocateTwiceSameChannelErrors(t *testing.T) {
 }
 
 func TestDialSignalingAllocateJoinErrorBranch(t *testing.T) {
-	addr := startSignalingServer(t)
+	addr, cancel := startSignalingServer(t)
+	defer cancel()
 	serverURL := "wss://" + addr
 
 	// Allocate channel
@@ -255,7 +259,8 @@ func TestDialSignalingAllocateJoinErrorBranch(t *testing.T) {
 }
 
 func TestJoinDuplicateReceiverRejected(t *testing.T) {
-	addr := startSignalingServer(t)
+	addr, cancel := startSignalingServer(t)
+	defer cancel()
 	serverURL := "wss://" + addr
 
 	// Sender allocates channel
@@ -291,7 +296,8 @@ func TestJoinDuplicateReceiverRejected(t *testing.T) {
 }
 
 func TestSignalingWithContextCancellation(t *testing.T) {
-	addr := startSignalingServer(t)
+	addr, cancel := startSignalingServer(t)
+	defer cancel()
 	serverURL := "wss://" + addr
 
 	client, err := network.DialSignaling(serverURL, "")

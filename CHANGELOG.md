@@ -5,6 +5,33 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.14.2] - 2026-06-10
+
+- **why:** Fix flaky integration tests by eliminating WebSocket relay race conditions; reach ≥80% coverage across all packages
+- **model:** opencode/deepseek-v4-flash-free
+- **tags:** server, signaling, race-condition, websocket, tests, coverage
+
+### Fixed
+
+- `handleJoin` wrote `MsgOK` to the receiver after adding it to `waiters`, letting the sender's relay forward a `MsgBlob` before `MsgOK` — receiver's `Join()` failed, receiver disconnected, relay closed sender's connection with WebSocket close 1006 (`internal/server/server.go`)
+- `handleAllocate` and `handleJoin` wrote `WriteJSON` after releasing `s.mu`, causing gorilla websocket concurrent-write panics (`internal/server/server.go`)
+- Relay defer did not close the peer's WebSocket on disconnect, leaving the peer's `ReadJSON` stuck forever (`internal/server/server.go`)
+- Port-reuse TOCTOU race in test helpers: `Listen(":0")` → `Close()` → `Serve(port)` could reuse a freed port (`internal/server/server.go`, `internal/network/signaling_test.go`)
+- Transfer code printed before `Allocate()` completed, allowing the receiver to join a non-existent channel (`internal/cli/tx.go`)
+- Package-level globals (`quietMode`, `ipv4Only`, `ipv6Only`) leaked between tests via `testscript` subprocesses and `ExecuteArgs` (`internal/cli/transfer_integration_test.go`)
+- Debug logging calls (`logf`, `logBlob`) left in `server.go` and `signaling.go` from earlier diagnosis
+
+### Added
+
+- `join-rate` and `join-burst` server flags for independent join rate limiting
+- Tests for `newStreamBar`, `barHumanizeBytes`, `cancelMessage`, `newHashBar`, `openTTY` (`internal/cli/stream_bar_test.go`, `internal/cli/tx_unit_test.go`, `internal/cli/tty_unix_test.go`)
+- Tests for `CertExpiryInfo` and `LogCertExpiry` (`internal/config/cert_expiry_test.go`)
+- `internal/cli` now at 80.0%, `internal/config` at 88.2% coverage
+
+### Removed
+
+- File-based debug logging (`/tmp/hermod_*.log`) from `server.go` and `signaling.go`
+
 ## [v0.14.1] - 2026-06-08
 
 - **why:** Increase hole-punch probe packet size from 3 to 8 bytes for 64-bit entropy and firewall/DDPI resilience

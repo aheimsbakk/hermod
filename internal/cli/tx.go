@@ -125,8 +125,6 @@ func runTx(input, serverURL string, numWords int, verify bool, listenUDP string,
 	password = strings.ReplaceAll(password, "-", "-")
 	logDebug("transfer code generated", "channel_id", channelID, "words", numWords)
 
-	fmt.Fprintf(os.Stderr, "Transfer code: %s\n", code)
-
 	// Enforce server trust — abort before any network call if the server
 	// certificate has not been pinned via 'hermod trust'.
 	logDebug("checking pinned fingerprint for server", "server", serverURL)
@@ -159,6 +157,11 @@ func runTx(input, serverURL string, numWords int, verify bool, listenUDP string,
 		return fmt.Errorf("allocate channel: %w", err)
 	}
 	logInfo("Channel allocated", "channel_id", channelID, "public_ipv4", publicIPV4, "public_ipv6", publicIPV6)
+
+	// Print transfer code after the channel has been allocated on the server.
+	// If printed earlier, a receiver who reads the code and joins immediately
+	// may beat the Allocate call, causing a "channel does not exist" rejection.
+	fmt.Fprintf(os.Stderr, "Transfer code: %s\n", code)
 
 	// Generate ephemeral TLS cert
 	logDebug("generating ephemeral TLS certificate for QUIC")

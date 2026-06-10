@@ -48,18 +48,16 @@ func startTestServerWithRL(t *testing.T, certRL, wsRL, joinRL *server.RateLimite
 	}
 	srv := server.NewServer(store, certRL, wsRL, joinRL, 60*time.Second, maxBlobs, maxCPaceFailures, certDER, logger)
 
-	// Find a free port
+	// Find a free port and keep the listener open to prevent port reuse.
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("find port: %v", err)
 	}
 	addr := ln.Addr().String()
-	ln.Close()
 
 	ctx, cancel := context.WithCancel(context.Background())
-	errCh := make(chan error, 1)
 	go func() {
-		errCh <- srv.ListenAndServe(ctx, addr, tlsCfg)
+		srv.Serve(ctx, ln, tlsCfg) //nolint:errcheck
 	}()
 	// Wait for the server to start listening
 	for i := 0; i < 20; i++ {
