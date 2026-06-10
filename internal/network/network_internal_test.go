@@ -15,6 +15,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/quic-go/quic-go"
 )
 
 // --- stubPacketConn: controllable net.PacketConn for deterministic readLoop tests ---
@@ -703,68 +705,68 @@ func TestLocalEndpoints_Formatting(t *testing.T) {
 	}
 }
 
-// --- DialQUIC / ListenQUIC ---
+// --- RaceQUIC ---
 
-// TestDialAndListenQUIC verifies a full QUIC handshake between two muxes on
-// loopback, covering DialQUIC, ListenQUIC, and the makeCertPinner match path.
-func TestDialAndListenQUIC(t *testing.T) {
-	dialerCert, dialerDER := generateTestCert(t)
-	listenerCert, listenerDER := generateTestCert(t)
+// TestRaceQUIC verifies a full bidirectional QUIC handshake between two muxes
+// on loopback, covering RaceQUIC and the makeCertPinner match path.
+func TestRaceQUIC(t *testing.T) {
+	cert1, der1 := generateTestCert(t)
+	cert2, der2 := generateTestCert(t)
 
-	dialerFP := CertFingerprint(dialerDER)
-	listenerFP := CertFingerprint(listenerDER)
+	fp1 := CertFingerprint(der1)
+	fp2 := CertFingerprint(der2)
 
-	// Bind two real UDP sockets on loopback.
 	inner1, err := BindUDP(":0")
 	if err != nil {
-		t.Fatalf("BindUDP (listener): %v", err)
+		t.Fatalf("BindUDP (side 1): %v", err)
 	}
 	inner2, err := BindUDP(":0")
 	if err != nil {
-		t.Fatalf("BindUDP (dialer): %v", err)
+		t.Fatalf("BindUDP (side 2): %v", err)
 	}
 
-	mux1 := NewPacketMux(inner1) // listener side
+	mux1 := NewPacketMux(inner1)
 	defer mux1.Close()
-	mux2 := NewPacketMux(inner2) // dialer side
+	mux2 := NewPacketMux(inner2)
 	defer mux2.Close()
 
 	addr1, err := LocalUDPAddr(inner1)
 	if err != nil {
 		t.Fatalf("LocalUDPAddr: %v", err)
 	}
+	addr2, err := LocalUDPAddr(inner2)
+	if err != nil {
+		t.Fatalf("LocalUDPAddr: %v", err)
+	}
 
 	baseTLS := &tls.Config{MinVersion: tls.VersionTLS13}
-
-	// Start QUIC listener on mux1: expects the dialer's fingerprint.
-	ln, err := ListenQUIC(mux1, listenerCert, baseTLS.Clone(), dialerFP)
-	if err != nil {
-		t.Fatalf("ListenQUIC: %v", err)
-	}
-	defer ln.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	acceptErrCh := make(chan error, 1)
+	type quicResult struct {
+		conn *quic.Conn
+		err  error
+	}
+	ch := make(chan quicResult, 2)
+
+	// Side 1: RaceQUIC pointing at side 2.
 	go func() {
-		conn, err := ln.Accept(ctx)
-		if err == nil {
-			conn.CloseWithError(0, "done") //nolint:errcheck
-		}
-		acceptErrCh <- err
+		conn, err := RaceQUIC(ctx, mux1, addr2, baseTLS.Clone(), cert1, fp2)
+		ch <- quicResult{conn, err}
 	}()
 
-	// Dial from mux2 to mux1: expects the listener's fingerprint.
-	dialerBaseTLS := baseTLS.Clone()
-	dialerBaseTLS.Certificates = []tls.Certificate{dialerCert}
-	dialConn, err := DialQUIC(ctx, mux2, addr1, dialerBaseTLS, listenerFP)
-	if err != nil {
-		t.Fatalf("DialQUIC: %v", err)
-	}
-	defer dialConn.CloseWithError(0, "done") //nolint:errcheck
+	// Side 2: RaceQUIC pointing at side 1.
+	go func() {
+		conn, err := RaceQUIC(ctx, mux2, addr1, baseTLS.Clone(), cert2, fp1)
+		ch <- quicResult{conn, err}
+	}()
 
-	if err := <-acceptErrCh; err != nil {
-		t.Fatalf("listener Accept: %v", err)
+	for i := 0; i < 2; i++ {
+		r := <-ch
+		if r.err != nil {
+			t.Fatalf("RaceQUIC: %v", r.err)
+		}
+		r.conn.CloseWithError(0, "done") //nolint:errcheck
 	}
 }

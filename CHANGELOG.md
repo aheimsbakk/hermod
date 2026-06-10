@@ -20,7 +20,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `tx` and `rx` both call `RaceQUIC` after hole punch, replacing the previous sender-always-dials / receiver-always-listens design (`internal/cli/tx.go`, `internal/cli/rx.go`)
 - `docs/protocol.md` QUIC connection section updated to document bidirectional race and mutual TLS (`RequireAnyClientCert`)
-- `docs/api.md` — added `RaceQUIC` entry; marked `DialQUIC` / `ListenQUIC` as legacy
+- `docs/api.md` — added `RaceQUIC` entry; removed `DialQUIC` / `ListenQUIC` entries
+
+### Removed
+
+- `DialQUIC` and `ListenQUIC` functions from `internal/network/network.go` — all callers now use `RaceQUIC`
+- `TestDialAndListenQUIC` replaced with `TestRaceQUIC` (`internal/network/network_internal_test.go`)
+- All e2e test references to `DialQUIC`/`ListenQUIC` migrated to `RaceQUIC` (`e2e/integration_test.go`, `e2e/verify_negotiation_test.go`)
 
 ### Fixed
 

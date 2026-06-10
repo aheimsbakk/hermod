@@ -338,49 +338,6 @@ func RaceQUIC(ctx context.Context, mux *packetMux, peerAddr *net.UDPAddr, baseTL
 	return result.conn, nil
 }
 
-// DialQUIC establishes a QUIC connection to peerAddr using the muxed conn.
-// peerCertHash is the expected SHA-256 fingerprint (hex) of the peer's TLS certificate.
-func DialQUIC(ctx context.Context, mux *packetMux, peerAddr *net.UDPAddr, baseTLS *tls.Config, peerCertHash string) (*quic.Conn, error) {
-	tlsCfg := baseTLS.Clone()
-	tlsCfg.InsecureSkipVerify = true
-	tlsCfg.VerifyPeerCertificate = makeCertPinner(peerCertHash)
-	tlsCfg.NextProtos = []string{"hermod-p2p"}
-
-	transport := &quic.Transport{
-		Conn: &muxedConn{mux: mux},
-	}
-	conn, err := transport.Dial(ctx, peerAddr, tlsCfg, &quic.Config{
-		MaxIdleTimeout:  30 * time.Second,
-		KeepAlivePeriod: 5 * time.Second,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("QUIC dial: %w", err)
-	}
-	return conn, nil
-}
-
-// ListenQUIC starts a QUIC listener on the muxed conn.
-func ListenQUIC(mux *packetMux, cert tls.Certificate, baseTLS *tls.Config, peerCertHash string) (*quic.Listener, error) {
-	tlsCfg := baseTLS.Clone()
-	tlsCfg.Certificates = []tls.Certificate{cert}
-	tlsCfg.ClientAuth = tls.RequireAnyClientCert
-	tlsCfg.InsecureSkipVerify = true
-	tlsCfg.VerifyPeerCertificate = makeCertPinner(peerCertHash)
-	tlsCfg.NextProtos = []string{"hermod-p2p"}
-
-	transport := &quic.Transport{
-		Conn: &muxedConn{mux: mux},
-	}
-	ln, err := transport.Listen(tlsCfg, &quic.Config{
-		MaxIdleTimeout:  30 * time.Second,
-		KeepAlivePeriod: 5 * time.Second,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("QUIC listen: %w", err)
-	}
-	return ln, nil
-}
-
 // HolePunchDual performs two-phase NAT hole punching: IPv6 first (preferred),
 // then IPv4 (fallback). Each phase uses the existing HolePunch function.
 //
