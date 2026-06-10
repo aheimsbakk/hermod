@@ -12,10 +12,7 @@ file and remove the row for any entry whose `expires` has passed.
 Find rows where `topic`, `tags`, or `category` match the current task.
 If nothing matches on obvious keywords, try related terms once.
 
-For matches:
-- **high importance** — state the memory to the user before proceeding
-  ("I see you previously decided on X. Is that still current?")
-- **medium / low** — apply as context silently
+For any match, apply as context silently.
 
 If nothing matches, proceed without memory.
 
