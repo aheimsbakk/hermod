@@ -18,7 +18,7 @@ func TestCancelledByPeer_SenderCancel(t *testing.T) {
 	if got == nil {
 		t.Fatal("expected non-nil error for sender cancellation")
 	}
-	if got.Error() != "transfer cancelled by sender" {
+	if got.Error() != "The sender cancelled the transfer." {
 		t.Fatalf("unexpected message: %q", got.Error())
 	}
 }
@@ -33,7 +33,7 @@ func TestCancelledByPeer_ReceiverCancel(t *testing.T) {
 	if got == nil {
 		t.Fatal("expected non-nil error for receiver cancellation")
 	}
-	if got.Error() != "transfer cancelled by receiver" {
+	if got.Error() != "The receiver cancelled the transfer." {
 		t.Fatalf("unexpected message: %q", got.Error())
 	}
 }

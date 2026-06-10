@@ -35,10 +35,10 @@ func cancelledByPeer(err error) error {
 	msg := appErr.ErrorMessage
 	switch {
 	case strings.HasPrefix(msg, "cancelled:sender"):
-		return fmt.Errorf("transfer cancelled by sender")
+		return fmt.Errorf("The sender cancelled the transfer.")
 	case strings.HasPrefix(msg, "cancelled:receiver"):
-		return fmt.Errorf("transfer cancelled by receiver")
+		return fmt.Errorf("The receiver cancelled the transfer.")
 	default:
-		return fmt.Errorf("transfer cancelled by peer")
+		return fmt.Errorf("The other side cancelled the transfer.")
 	}
 }

@@ -9,7 +9,7 @@ import (
 func TestCancelMessage_Default(t *testing.T) {
 	ctx := context.Background()
 	msg := cancelMessage(ctx)
-	if msg != "SAS verification cancelled by user" {
+	if msg != "You cancelled SAS verification." {
 		t.Fatalf("expected default cancel message, got %q", msg)
 	}
 }
@@ -18,7 +18,7 @@ func TestCancelMessage_CancelledByPeer(t *testing.T) {
 	ctx, cancel := context.WithCancelCause(context.Background())
 	cancel(errSASCancelledByPeer)
 	msg := cancelMessage(ctx)
-	if msg != "SAS verification cancelled by the other side" {
+	if msg != "The other side cancelled SAS verification." {
 		t.Fatalf("expected peer-cancel message, got %q", msg)
 	}
 }
@@ -27,7 +27,7 @@ func TestCancelMessage_OtherCause(t *testing.T) {
 	ctx, cancel := context.WithCancelCause(context.Background())
 	cancel(errors.New("some other reason"))
 	msg := cancelMessage(ctx)
-	if msg != "SAS verification cancelled by user" {
+	if msg != "You cancelled SAS verification." {
 		t.Fatalf("expected default cancel message for other cause, got %q", msg)
 	}
 }
