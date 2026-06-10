@@ -5,6 +5,22 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.14.3] - 2026-06-10
+
+- **why:** Apply plain language to CLI error messages — capitalize, punctuate, use active voice
+- **model:** opencode/deepseek-v4-flash-free
+- **tags:** cli, ux, error-messages, clear-language
+
+### Changed
+
+- Cancel messages use active voice: "You cancelled" instead of "cancelled by user", "The other side cancelled" instead of "the other side cancelled" (`internal/cli/cancel.go`, `internal/cli/tx.go`, `internal/cli/rx.go`)
+- All user-facing error messages in `tx`, `rx`, and `cancel` now start with a capital letter and end with a period (`internal/cli/tx.go`, `internal/cli/rx.go`, `internal/cli/cancel.go`)
+
+### Fixed
+
+- SAS error messages: "received SAS_OK but got no answer" now reads as proper sentence (`internal/cli/sas_test.go`)
+- Unit tests updated to match new message format (`internal/cli/cancel_test.go`, `internal/cli/tx_unit_test.go`, `internal/cli/unit_test.go`)
+
 ## [v0.14.2] - 2026-06-10
 
 - **why:** Fix flaky integration tests by eliminating WebSocket relay race conditions; reach ≥80% coverage across all packages

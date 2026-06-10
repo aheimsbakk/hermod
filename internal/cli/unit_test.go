@@ -666,8 +666,8 @@ func TestCancelledByPeer_Default(t *testing.T) {
 	if result == nil {
 		t.Fatal("expected non-nil error for custom cancel message")
 	}
-	if !strings.Contains(result.Error(), "cancelled by peer") {
-		t.Errorf("expected 'cancelled by peer' in message, got: %v", result)
+	if !strings.Contains(result.Error(), "The other side cancelled the transfer") {
+		t.Errorf("expected 'The other side cancelled the transfer' in message, got: %v", result)
 	}
 }
 

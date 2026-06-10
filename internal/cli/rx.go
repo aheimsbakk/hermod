@@ -351,15 +351,15 @@ func runRx(code, destination, serverURL string, verify bool, listenUDP string, s
 	if err != nil {
 		if peerErr := cancelledByPeer(err); peerErr != nil {
 			if !quietMode {
-				fmt.Fprintf(os.Stderr, "\nTransfer cancelled by sender.\n")
+				fmt.Fprint(os.Stderr, "\n")
 			}
 			return peerErr
 		}
 		if ctx.Err() != nil {
 			if !quietMode {
-				fmt.Fprintf(os.Stderr, "\nTransfer cancelled by receiver.\n")
+				fmt.Fprint(os.Stderr, "\n")
 			}
-			return fmt.Errorf("transfer cancelled")
+			return fmt.Errorf("You cancelled the transfer.")
 		}
 		return err
 	}
