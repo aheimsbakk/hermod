@@ -5,6 +5,27 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.16.0] - 2026-06-10
+
+- **why:** Enable bidirectional QUIC initiation so the P2P connection succeeds even when only one direction traverses the NAT
+- **model:** opencode/deepseek-v4-flash
+- **tags:** network, quic, bidirectional, holepunch, nat
+
+### Added
+
+- `RaceQUIC()` — races a QUIC dial and accept simultaneously on the same muxed UDP socket; returns whichever handshake completes first. Adds random jitter (0-100ms via `crypto/rand`) to the dial to break symmetry on loopback (`internal/network/network.go`)
+- ASCII art connection flow diagram in protocol doc covering all 6 phases from signaling through payload transfer (`docs/protocol.md`)
+
+### Changed
+
+- `tx` and `rx` both call `RaceQUIC` after hole punch, replacing the previous sender-always-dials / receiver-always-listens design (`internal/cli/tx.go`, `internal/cli/rx.go`)
+- `docs/protocol.md` QUIC connection section updated to document bidirectional race and mutual TLS (`RequireAnyClientCert`)
+- `docs/api.md` — added `RaceQUIC` entry; marked `DialQUIC` / `ListenQUIC` as legacy
+
+### Fixed
+
+- All doc references to "RSA-2048 ephemeral certificates" corrected to ECDSA P-256, matching the production code (`docs/protocol.md`, `docs/api.md`)
+
 ## [v0.15.0] - 2026-06-10
 
 - **why:** Replace PGP word lists with EFF Short Wordlist 1 for SAS generation; fix modulo bias; add e2e SAS cross-check

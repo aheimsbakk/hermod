@@ -343,17 +343,14 @@ func runTx(input, serverURL string, numWords int, verify bool, listenUDP string,
 	}
 	logInfo("UDP hole punch succeeded", "peer_addr", punchResult.PeerAddr.String())
 
-	// QUIC dial (sender = QUIC client)
-	logDebug("dialling QUIC connection to peer", "peer_addr", punchResult.PeerAddr.String())
-	tlsCfg := config.BuildTLSConfig(cfg)
-	tlsCfg.Certificates = []tls.Certificate{{
-		Certificate: [][]byte{epCertDER},
-		PrivateKey:  epKey,
-		Leaf:        epCert,
-	}}
-	quicConn, err := network.DialQUIC(ctx, mux, punchResult.PeerAddr, tlsCfg, peerBundle.CertFingerprint)
+	// Bidirectional QUIC initiation — both sides race dial and accept so the
+	// connection succeeds even if only one direction traverses the NAT.
+	logDebug("establishing QUIC connection to peer (bidirectional race)", "peer_addr", punchResult.PeerAddr.String())
+	tlsCert := buildTLSCert(epCertDER, epKey, epCert)
+	baseTLS := config.BuildTLSConfig(cfg)
+	quicConn, err := network.RaceQUIC(ctx, mux, punchResult.PeerAddr, baseTLS, tlsCert, peerBundle.CertFingerprint)
 	if err != nil {
-		return fmt.Errorf("QUIC dial: %w", err)
+		return fmt.Errorf("QUIC connection: %w", err)
 	}
 	defer quicConn.CloseWithError(0, "done")
 	// Stop probing — QUIC keepalive will maintain the NAT mapping from now on.

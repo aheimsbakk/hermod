@@ -8,6 +8,95 @@ This document describes the Hermod wire protocol: how two peers establish a shar
 - **Receiver (rx)** — joins the channel using the transfer code
 - **Signaling server** — relays handshake messages only; never sees payload data
 
+## Connection flow overview
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         Hermod — Connection Flow                            │
+│                                                                             │
+│  ┌──────────┐                  ┌──────────┐                  ┌──────────┐   │
+│  │  Sender  │                  │Signaling │                  │ Receiver │   │
+│  │  (tx)    │                  │  Server  │                  │  (rx)    │   │
+│  └────┬─────┘                  └────┬─────┘                  └────┬─────┘   │
+│       │                             │                             │         │
+│       │  ══════ Phase 1: Signaling ══════                        │          │
+│       │                             │                             │         │
+│       │──── allocate(channelID) ───→│                             │         │
+│       │←───── ok + public IP ──────│                             │          │
+│       │                             │←───── join(channelID) ─────│          │
+│       │←──────── ready ────────────│                             │          │
+│       │                             │────── ok + public IP ─────→│          │
+│       │                             │                             │         │
+│       │  ══════ Phase 2: CPace PAKE ══════                       │          │
+│       │                             │                             │         │
+│       │──── blob(cpace_pub_msg) ───→│──── blob(cpace_pub_msg) ──→│          │
+│       │←─── blob(cpace_pub_msg) ────│←─── blob(cpace_pub_msg) ───│          │
+│       │                             │                             │         │
+│       │  ══════ Phase 3: Endpoint Exchange ══════                 │         │
+│       │                             │                             │         │
+│       │──── blob(encrypted_bundle)─→│──── blob(encrypted_bundle)─→│         │
+│       │←── blob(encrypted_bundle)───│←── blob(encrypted_bundle)───│         │
+│       │                             │                             │         │
+│       │                   (signaling done)                        │         │
+│       │                                                           │         │
+│       │  ══════ Phase 4: NAT Hole Punch ══════                    │         │
+│       │                                                           │         │
+│       │   ╔══════════════════════════════════════════════════════╗│         │
+│       │   ║                   UDP Hole Punch                     ║│         │
+│       │   ║  ┌──────┐   probes/acks   ┌──────┐                  ║│          │
+│       │   ║  │ NAT  │◄══════════════► │ NAT  │                  ║│          │
+│       │   ║  │  v4  │   (Internet)    │  v4  │                  ║│          │
+│       │   ║  └──────┘                  └──────┘                  ║│         │
+│       │   ║  ┌──────┐   probes/acks   ┌──────┐   (v6 preferred) ║│          │
+│       │   ║  │ NAT  │◄══════════════► │ NAT  │                  ║│          │
+│       │   ║  │  v6  │   (Internet)    │  v6  │                  ║│          │
+│       │   ║  └──────┘                  └──────┘                  ║│         │
+│       │   ╚══════════════════════════════════════════════════════╝│         │
+│       │                                                           │         │
+│       │  ══════ Phase 5: Bidirectional QUIC ══════                │         │
+│       │                                                           │         │
+│       │   ╔══════════════════════════════════════════════════════╗│         │
+│       │   ║  ┌─────────┐                ┌─────────┐             ║│          │
+│       │   ║  │  QUIC   │◄══ dial ═════►│  QUIC   │             ║│           │
+│       │   ║  │ Listen  │                │ Listen  │             ║│          │
+│       │   ║  │  + Dial │◄══ accept ═══►│  + Dial │             ║│           │
+│       │   ║  └─────────┘                └─────────┘             ║│          │
+│       │   ║   Both race — first handshake wins                  ║│          │
+│       │   ╚══════════════════════════════════════════════════════╝│         │
+│       │                                                           │         │
+│       │  ══════ Phase 6: Payload Transfer ══════                  │         │
+│       │                                                           │         │
+│       │   ┌──────────────────────────────────────────────────┐    │         │
+│       │   │ Stream 0: SAS coordination (only if --verify)    │    │         │
+│       │   │    1-byte confirm/reject each way                │    │         │
+│       │   ├──────────────────────────────────────────────────┤    │         │
+│       │   │ Stream 1: Metadata (JSON, 4-byte length prefix)  │    │         │
+│       │   │    {"kind":"file","name":"doc.pdf","size":1234}  │    │         │
+│       │   ├──────────────────────────────────────────────────┤    │         │
+│       │   │ Stream 2: Payload (raw bytes, no framing)        │    │         │
+│       │   │    SHA-256 computed in parallel during transfer  │    │         │
+│       │   ├──────────────────────────────────────────────────┤    │         │
+│       │   │ Stream 3: Trailing hash (4-byte length + hex)    │    │         │
+│       │   │    Receiver verifies integrity                   │    │         │
+│       │   ├──────────────────────────────────────────────────┤    │         │
+│       │   │ Stream 4: Completion ack (empty stream)          │    │         │
+│       │   │    Sender waits before closing QUIC              │    │         │
+│       │   └──────────────────────────────────────────────────┘    │         │
+│       │                                                           │         │
+│       │  ══════ Security Properties ══════                        │         │
+│       │                                                           │         │
+│       │  • Signaling server sees only encrypted blobs             │         │
+│       │  • Transfer code → CPace PAKE key exchange                │         │
+│       │  • AES-256-GCM endpoint bundles (channel ID as AAD)       │         │
+│       │  • TLS 1.3 with ephemeral self-signed certs               │         │
+│       │  • Peer certificate fingerprint pinned in endpoint bundle │         │
+│       │  • Payload never touches signaling server                 │         │
+│       └───────────────────────────────────────────────────────────┘         │
+```
+
+The sequence diagram above shows the full protocol flow. Each phase is
+described in detail in the sections below.
+
 ## Transfer code
 
 The transfer code encodes the channel ID and the PAKE passphrase.
@@ -146,14 +235,18 @@ Both peers run the hole punch concurrently. The typical completion time on symme
 
 ## QUIC connection
 
-After hole punching, the receiver acts as the QUIC server and the sender as the client.
+After hole punching, both peers race a QUIC dial and accept simultaneously on the
+same muxed UDP socket. The first handshake to complete wins. This bidirectional
+initiation means the connection succeeds even when only one direction traverses
+the NAT (e.g. one peer is behind a more restrictive firewall).
 
-Each peer generates an ephemeral RSA-2048 self-signed X.509 certificate for this connection. The certificate fingerprint was exchanged in the endpoint bundle (above). Both peers pin the peer's fingerprint in their TLS `VerifyPeerCertificate` callback, replacing normal CA-chain verification.
+Each peer generates an ephemeral ECDSA P-256 self-signed X.509 certificate for this connection. The certificate fingerprint was exchanged in the endpoint bundle (above). Both peers pin the peer's fingerprint in their TLS `VerifyPeerCertificate` callback, replacing normal CA-chain verification. The TLS config uses `RequireAnyClientCert` for mutual authentication — both sides present and verify certificates. ECDSA P-256 is chosen for fast key generation and smaller signatures (L-02).
 
 QUIC configuration:
 - TLS 1.3 (enforced by quic-go)
 - ALPN: `hermod-p2p`
 - Idle timeout: 30 seconds
+- Keep-alive period: 5 seconds
 
 ## Payload transfer
 
@@ -248,5 +341,5 @@ Both sides exit with a non-zero status code after cancellation.
 - Client IP addresses are never stored in plaintext. The rate-limiter bucket key is `HMAC-SHA256(dailySalt, ipPrefix)`. The salt is replaced every UTC calendar day and all buckets are cleared on rotation. Stale buckets are also evicted every 10 minutes to bound memory usage.
 - Endpoint bundles are encrypted with `AES-256-GCM(K, channelID_as_AAD, bundle)`. The channel ID bound as AAD prevents a captured bundle from being replayed in a different session.
 - The CPace implementation uses the `P256_XMD:SHA-256_SSWU_RO_` suite (RFC 9380) to hash passwords to P-256 curve points. SSWU always produces a valid point in a single, fixed-length computation with no data-dependent loop iterations, eliminating the loop-count timing side channel of the former try-and-increment method.
-- Ephemeral QUIC certificates use RSA-2048. They are valid for 24 hours and are never stored.
+- Ephemeral QUIC certificates use ECDSA P-256. They are valid for 24 hours and are never stored.
 - Payload integrity is verified end-to-end via a trailing hash stream. The sender computes SHA-256 in parallel during transfer and sends the digest after the payload stream closes. The receiver computes SHA-256 in parallel during receipt and verifies against the sender's trailing digest. No pre-buffering of large inputs is required.

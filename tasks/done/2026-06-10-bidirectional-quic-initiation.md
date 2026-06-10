@@ -27,6 +27,7 @@ Race QUIC dial and accept on both sides after hole punch so the connection succe
 - In `runRx`, replace `ListenQUIC` + `ln.Accept(ctx)` with `RaceQUIC`:
   - Same TLS cert, base config, and fingerprint
   - Address comes from `punchResult.PeerAddr`
+  - Update log message from "accepted from sender" to "established" (generic, bidirectional)
 
 ### `docs/protocol.md`
 
@@ -41,9 +42,9 @@ Race QUIC dial and accept on both sides after hole punch so the connection succe
 
 ## Cleanup checklist
 
-- [ ] `go test ./internal/network/...` passes
-- [ ] `go test ./internal/cli/...` passes
-- [ ] `go test ./e2e/...` passes
-- [ ] No references to `DialQUIC` or `ListenQUIC` remain in `cli/` (if unused, remove imports)
-- [ ] `docs/protocol.md` reflects bidirectional initiation correctly
-- [ ] All affected log messages are still accurate
+- [x] `go test ./internal/network/...` passes
+- [x] `go test ./internal/cli/...` passes
+- [x] `go test ./e2e/...` passes
+- [x] No references to `DialQUIC` or `ListenQUIC` remain in `cli/`
+- [x] `docs/protocol.md` reflects bidirectional initiation correctly
+- [x] All affected log messages are still accurate
