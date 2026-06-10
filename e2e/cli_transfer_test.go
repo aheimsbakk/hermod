@@ -43,11 +43,10 @@ func startCLIServer(t *testing.T) (serverURL, fingerprint string) {
 
 	ln, _ := net.Listen("tcp", "127.0.0.1:0")
 	addr := ln.Addr().String()
-	ln.Close()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
-	go srv.ListenAndServe(ctx, addr, tlsCfg)
+	go srv.Serve(ctx, ln, tlsCfg)
 
 	for i := 0; i < 30; i++ {
 		time.Sleep(50 * time.Millisecond)

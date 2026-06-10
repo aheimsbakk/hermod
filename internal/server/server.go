@@ -105,23 +105,29 @@ func NewServer(store SignalingStore, certRL, wsRL, joinRL *RateLimiter, ttl time
 
 // ListenAndServe starts the HTTPS/WebSocket server on addr using the given TLS config.
 func (s *Server) ListenAndServe(ctx context.Context, addr string, tlsCfg *tls.Config) error {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/ws", s.handleWS)
-	mux.HandleFunc("/cert", s.handleCert)
-
-	s.httpServer = &http.Server{
-		Addr:      addr,
-		Handler:   mux,
-		TLSConfig: tlsCfg,
-	}
-
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		return fmt.Errorf("listen %s: %w", addr, err)
 	}
+	return s.Serve(ctx, ln, tlsCfg)
+}
+
+// Serve starts the HTTPS/WebSocket server on the given listener using the TLS
+// config.  The caller owns the listener; it is closed when the server shuts down.
+func (s *Server) Serve(ctx context.Context, ln net.Listener, tlsCfg *tls.Config) error {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/ws", s.handleWS)
+	mux.HandleFunc("/cert", s.handleCert)
+
 	tlsLn := tls.NewListener(ln, tlsCfg)
 
-	s.logger.Info("Signaling server ready", "addr", addr)
+	s.httpServer = &http.Server{
+		Addr:      ln.Addr().String(),
+		Handler:   mux,
+		TLSConfig: tlsCfg,
+	}
+
+	s.logger.Info("Signaling server ready", "addr", ln.Addr().String())
 
 	// Start background goroutine to evict stale rate-limit buckets.
 	// Buckets inactive for more than 30 minutes are removed. Without this,
@@ -250,21 +256,39 @@ func (s *Server) handleAllocate(conn *websocket.Conn, remoteAddr string, channel
 		writeError(conn, "could not allocate channel")
 		return
 	}
-	// Reply with public IP (STUN-like), tagged with address family.
 	host, _, _ := net.SplitHostPort(remoteAddr)
 	respMap := publicIPResponse(host)
 	payload, _ := json.Marshal(respMap)
+
+	wsc := &wsConn{conn: conn, sender: true}
+	s.mu.Lock()
+	s.waiters[channelID] = append(s.waiters[channelID], wsc)
+
+	var receiverConn *websocket.Conn
+	for _, w := range s.waiters[channelID] {
+		if !w.sender {
+			receiverConn = w.conn
+			break
+		}
+	}
+
+	// Send responses while holding the lock so handleJoin cannot
+	// write to the same connection concurrently.
 	conn.WriteJSON(Message{Type: MsgOK, ChannelID: channelID, Payload: payload})
+	if receiverConn != nil {
+		conn.WriteJSON(Message{Type: MsgReady, ChannelID: channelID})
+	}
+	s.mu.Unlock()
+
 	s.logger.Info("Channel allocated",
 		"channel_id", channelID,
 		"public_ipv4", respMap["public_ipv4"],
 		"public_ipv6", respMap["public_ipv6"],
 		"ttl", s.ttl)
 
-	wsc := &wsConn{conn: conn, sender: true}
-	s.mu.Lock()
-	s.waiters[channelID] = append(s.waiters[channelID], wsc)
-	s.mu.Unlock()
+	if receiverConn != nil {
+		s.logger.Debug("Sent ready signal to sender (receiver joined early)", "channel_id", channelID)
+	}
 
 	// Now relay blobs between peers
 	s.relay(conn, channelID, true)
@@ -305,22 +329,37 @@ func (s *Server) handleJoin(conn *websocket.Conn, remoteAddr string, channelID u
 		}
 	}
 
-	wsc := &wsConn{conn: conn, sender: false}
-	s.waiters[channelID] = append(s.waiters[channelID], wsc)
-	// Notify sender that receiver has joined
+	// Find sender and send MsgReady while holding the lock so handleAllocate
+	// cannot write to the same connection concurrently.
+	var senderConn *websocket.Conn
 	for _, w := range s.waiters[channelID] {
 		if w.sender {
-			w.conn.WriteJSON(Message{Type: MsgReady, ChannelID: channelID})
-			s.logger.Debug("Sent ready signal to sender", "channel_id", channelID)
+			senderConn = w.conn
 			break
 		}
 	}
-	s.mu.Unlock()
+	if senderConn != nil {
+		senderConn.WriteJSON(Message{Type: MsgReady, ChannelID: channelID})
+	}
 
+	// Send MsgOK to the receiver BEFORE adding it to waiters. If we add
+	// the receiver first, the sender's relay (running in a separate goroutine)
+	// can find it and forward a MsgBlob before MsgOK is written. The client's
+	// Join() would then read the MsgBlob instead of MsgOK and fail.
 	host, _, _ := net.SplitHostPort(remoteAddr)
 	respMap := publicIPResponse(host)
 	payload, _ := json.Marshal(respMap)
 	conn.WriteJSON(Message{Type: MsgOK, ChannelID: channelID, Payload: payload})
+
+	// Now add the receiver to waiters so the relay can forward blobs.
+	wsc := &wsConn{conn: conn, sender: false}
+	s.waiters[channelID] = append(s.waiters[channelID], wsc)
+	s.mu.Unlock()
+
+	if senderConn != nil {
+		s.logger.Debug("Sent ready signal to sender", "channel_id", channelID)
+	}
+
 	s.logger.Info("Receiver joined channel",
 		"channel_id", channelID,
 		"public_ipv4", respMap["public_ipv4"],
@@ -339,11 +378,14 @@ func (s *Server) relay(conn *websocket.Conn, channelID uint16, isSender bool) {
 	defer func() {
 		s.mu.Lock()
 		conns := s.waiters[channelID]
+		var peer *wsConn
 		updated := conns[:0]
 		for _, w := range conns {
-			if w.conn != conn {
-				updated = append(updated, w)
+			if w.conn == conn {
+				continue
 			}
+			updated = append(updated, w)
+			peer = w
 		}
 		if len(updated) == 0 {
 			delete(s.waiters, channelID)
@@ -352,6 +394,13 @@ func (s *Server) relay(conn *websocket.Conn, channelID uint16, isSender bool) {
 			s.waiters[channelID] = updated
 		}
 		s.mu.Unlock()
+
+		if peer != nil {
+			s.logger.Debug("Closing peer connection — peer disconnected from relay",
+				"channel_id", channelID, "role", role)
+			peer.conn.Close()
+		}
+
 		s.logger.Debug("Relay loop ended", "channel_id", channelID, "role", role)
 	}()
 
@@ -385,19 +434,27 @@ func (s *Server) relay(conn *websocket.Conn, channelID uint16, isSender bool) {
 			}
 			// Forward blob to peer
 			s.mu.Lock()
-			forwarded := false
+			var peerConn *websocket.Conn
 			for _, w := range s.waiters[channelID] {
 				if w.sender != isSender {
-					w.conn.WriteJSON(Message{
-						Type:      MsgBlob,
-						ChannelID: channelID,
-						Payload:   msg.Payload,
-					})
-					forwarded = true
+					peerConn = w.conn
 					break
 				}
 			}
 			s.mu.Unlock()
+
+			var forwarded bool
+			if peerConn != nil {
+				if err := peerConn.WriteJSON(Message{
+					Type:      MsgBlob,
+					ChannelID: channelID,
+					Payload:   msg.Payload,
+				}); err != nil {
+					s.logger.Error("Failed to forward blob to peer", "channel_id", channelID, "err", err)
+				} else {
+					forwarded = true
+				}
+			}
 			if !forwarded {
 				s.logger.Warn("No peer available to receive blob", "channel_id", channelID, "role", role)
 			} else {

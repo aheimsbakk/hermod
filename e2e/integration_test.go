@@ -45,11 +45,10 @@ func startE2EServer(t *testing.T) string {
 
 	ln, _ := net.Listen("tcp", "127.0.0.1:0")
 	addr := ln.Addr().String()
-	ln.Close()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
-	go srv.ListenAndServe(ctx, addr, tlsCfg)
+	go srv.Serve(ctx, ln, tlsCfg)
 
 	for i := 0; i < 30; i++ {
 		time.Sleep(50 * time.Millisecond)
@@ -337,13 +336,35 @@ func runReceiver(serverURL, code string) ([]byte, error) {
 	}
 	myFP := network.CertFingerprint(epCertDER)
 
-	sig, err := network.DialSignaling(serverURL, "")
-	if err != nil {
-		return nil, err
+	// Retry join with backoff — the sender may not have allocated the
+	// channel yet (the 100ms sleep in testFullTransfer is not reliable).
+	// The server processes at most one message per connection, so we must
+	// create a fresh connection on each attempt.
+	var publicIPV4, publicIPV6 string
+	var sig *network.SignalingClient
+	for attempt := 0; attempt < 30; attempt++ {
+		if sig != nil {
+			sig.Close()
+		}
+		sig, err = network.DialSignaling(serverURL, "")
+		if err != nil {
+			return nil, err
+		}
+		publicIPV4, publicIPV6, err = sig.Join(channelID)
+		if err == nil {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			sig.Close()
+			return nil, fmt.Errorf("join timeout: %w", ctx.Err())
+		case <-time.After(50 * time.Millisecond):
+		}
 	}
 	defer sig.Close()
-
-	publicIPV4, publicIPV6, _ := sig.Join(channelID)
+	if err != nil {
+		return nil, fmt.Errorf("join after retry: %w", err)
+	}
 
 	udpConn, _ := network.BindUDP(":0")
 	mux := network.NewPacketMux(udpConn)

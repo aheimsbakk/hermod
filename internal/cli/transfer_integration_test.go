@@ -26,6 +26,7 @@ import (
 // The server is shut down via t.Cleanup.
 func startLocalServer(t *testing.T) (serverURL, fingerprint string) {
 	t.Helper()
+	t.Cleanup(func() { ipv4Only = false; ipv6Only = false; quietMode = false })
 	cfg := config.Default()
 	if err := config.GenerateServerCert(cfg); err != nil {
 		t.Fatalf("gen cert: %v", err)
@@ -41,17 +42,16 @@ func startLocalServer(t *testing.T) (serverURL, fingerprint string) {
 	rl := server.NewRateLimiter(100, 1000)
 	srv := server.NewServer(store, rl, rl, rl, 60*time.Second, server.DefaultMaxBlobsPerChannel, server.DefaultMaxCPaceFailures, nil, slog.Default())
 
-	// Pick a free port, then release the listener so the server can bind it.
+	// Keep the listener open to prevent port reuse races.
 	ln, err := net.Listen("tcp", ":0")
 	if err != nil {
 		t.Fatalf("pick port: %v", err)
 	}
 	addr := ln.Addr().String()
-	ln.Close()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
-	go srv.ListenAndServe(ctx, addr, tlsCfg) //nolint:errcheck
+	go srv.Serve(ctx, ln, tlsCfg) //nolint:errcheck
 
 	// Wait until the port is accepting connections (up to 1.5 s).
 	for i := 0; i < 30; i++ {

@@ -137,6 +137,9 @@ func (c *SignalingClient) ctxErr(err error) error {
 // Close closes the WebSocket connection and signals any WithContext goroutines
 // to exit, preventing goroutine leaks (L-08).
 func (c *SignalingClient) Close() error {
+	if c == nil {
+		return nil
+	}
 	c.closeOnce.Do(func() { close(c.done) })
 	return c.conn.Close()
 }
@@ -160,18 +163,29 @@ func (c *SignalingClient) Allocate(channelID uint16) (publicV4, publicV6 string,
 	if err := c.Send(server.Message{Type: server.MsgAllocate, ChannelID: channelID}); err != nil {
 		return "", "", fmt.Errorf("allocate send: %w", err)
 	}
-	resp, err := c.Recv()
-	if err != nil {
-		return "", "", fmt.Errorf("allocate recv: %w", err)
+	// The server may reply with either MsgOK (the normal response) or MsgReady
+	// (if the receiver already joined before handleAllocate could reply).
+	// Handle both to avoid a non-deterministic hang with -cover (L-09).
+	for {
+		resp, err := c.Recv()
+		if err != nil {
+			return "", "", fmt.Errorf("allocate recv: %w", err)
+		}
+		switch resp.Type {
+		case server.MsgOK:
+			var m map[string]string
+			if err := json.Unmarshal(resp.Payload, &m); err != nil {
+				return "", "", fmt.Errorf("allocate decode response: %w", err)
+			}
+			return m["public_ipv4"], m["public_ipv6"], nil
+		case server.MsgReady:
+			// Receiver already joined — Allocate is effectively done.
+			// Return empty IPs; the sender will fall back to local endpoints.
+			return "", "", nil
+		case server.MsgError:
+			return "", "", fmt.Errorf("server error: %s", resp.Error)
+		}
 	}
-	if resp.Type == server.MsgError {
-		return "", "", fmt.Errorf("server error: %s", resp.Error)
-	}
-	var m map[string]string
-	if err := json.Unmarshal(resp.Payload, &m); err != nil {
-		return "", "", fmt.Errorf("allocate decode response: %w", err)
-	}
-	return m["public_ipv4"], m["public_ipv6"], nil
 }
 
 // Join sends a join request for channelID.
@@ -211,10 +225,10 @@ func (c *SignalingClient) RecvBlob() ([]byte, error) {
 		case server.MsgBlob:
 			return msg.Payload, nil
 		case server.MsgReady:
-			// receiver joined — sender waits for Ready before sending blob
 			continue
 		case server.MsgError:
 			return nil, fmt.Errorf("relay error: %s", msg.Error)
+		default:
 		}
 	}
 }
