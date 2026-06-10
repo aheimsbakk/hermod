@@ -240,91 +240,40 @@ func OpenAAD(key, aad, blob []byte) ([]byte, error) {
 
 // --- SAS (Short Authentication String) ---
 
-// pgpWordListEven and pgpWordListOdd are used for SAS generation.
-var pgpWordListEven = []string{
-	"aardvark", "absurd", "accrue", "acme", "adrift", "adult", "afflict", "ahead",
-	"aimless", "algol", "allow", "almighty", "ammo", "ancient", "apple", "arsenal",
-	"assess", "atlas", "avalanche", "baboon", "barter", "behave", "belie", "believe",
-	"berserk", "bilge", "blackjack", "blockade", "blowtorch", "blunder", "bombast", "bookshelf",
-	"brackish", "breakaway", "brimstone", "bruiser", "bulldozer", "burnish", "button", "buzzard",
-	"cement", "chairlift", "chatter", "chinchilla", "choking", "clarion", "classic", "cobra",
-	"commence", "concert", "conform", "conquest", "crossover", "cruelly", "crusader", "cubic",
-	"cyberspace", "cyclone", "damage", "darkroom", "daybreak", "deadlock", "debacle", "delight",
-	"delta", "demote", "dentist", "depot", "desolate", "dingo", "diplomat", "discord",
-	"dislodge", "displace", "disrupt", "distort", "diving", "document", "dolphin", "dominant",
-	"doorstep", "dragon", "durable", "dwelling", "eclipse", "egghead", "element", "embargo",
-	"embers", "embrace", "emerge", "emperor", "enchant", "endorse", "enrich", "entire",
-	"envelope", "epoxy", "erase", "esteem", "eureka", "exact", "examine", "exceed",
-	"exclaim", "exclude", "exhibit", "expel", "exploit", "eyeball", "fable", "facet",
-	"faction", "fallout", "fanfare", "fantasy", "farmhand", "feather", "festive", "filament",
-	"firebrand", "firsthand", "flagship", "flannel", "flashback", "flatten", "flicker", "floodgate",
-	"flourish", "flywheel", "folklore", "footprint", "forage", "forecast", "forfeit", "fragment",
-	"freshwater", "frontier", "frostbite", "fuselage", "gallop", "gatepost", "glimmer", "glitter",
-	"gloom", "goblin", "goldfish", "governor", "gravel", "gridlock", "grizzly", "grovel",
-	"guidebook", "gunshot", "hallway", "hamster", "handshake", "hangover", "hardship", "hardwood",
-	"harmless", "harvest", "headband", "headlock", "heartbeat", "helpline", "heretic", "highrise",
-	"holster", "homeland", "hopscotch", "horoscope", "howitzer", "humankind", "hustle", "iceberg",
-	"icebreaker", "ignition", "implant", "impulse", "inferno", "inkblot", "innkeeper", "insomnia",
-	"instant", "interlude", "invoke", "ironclad", "ironwork", "joystick", "junction", "keystone",
-	"kickback", "kingpin", "kneecap", "labyrinth", "landfall", "landslide", "lantern", "liftoff",
-	"limestone", "lockjaw", "lodestone", "longbow", "longtime", "lookout", "loudmouth", "mainframe",
-	"malpractice", "mandate", "manifold", "marathon", "matchbox", "mechanic", "megabyte", "meltdown",
-	"membrane", "merchant", "midnight", "minefield", "misfire", "missile", "mistletoe", "mockery",
-	"momentum", "monument", "moonbeam", "mortgage", "motorboat", "mudslide", "mustang", "mystery",
-	"navigate", "necklace", "neon", "newborn", "nightfall", "nightmare", "nimble", "nocturnal",
-	"nominate", "notarize", "nowhere", "nuclear", "nutshell", "oblivion", "offshore", "outbreak",
-	"outburst", "outpost", "overcast", "overlook", "overture", "overwork", "parachute", "parasite",
-}
-
-var pgpWordListOdd = []string{
-	"adroitly", "adviser", "aftermath", "aggregate", "aggressor", "alphabet", "amulet", "antenna",
-	"applicant", "aptitude", "arbitrary", "ardent", "armistice", "arraign", "article", "artisan",
-	"aspect", "aspen", "assemble", "assert", "assist", "assorted", "attic", "atypical",
-	"audacious", "auditor", "backdrop", "bacteria", "badminton", "baffle", "bankroll", "banter",
-	"barbecue", "baseline", "bastion", "battalion", "battlement", "bayonet", "beckon", "bedrock",
-	"beehive", "bellhop", "benefactor", "benign", "betrayal", "bilateral", "binocular", "blockbuster",
-	"blowfish", "blueprint", "boardroom", "boatswain", "bookkeeper", "bordello", "bracelet", "broadside",
-	"brownstone", "bulletin", "bulwark", "bushfire", "calculate", "callback", "camouflage", "capacitor",
-	"carbide", "caretaker", "cartridge", "cashflow", "catalyst", "catapult", "centrifuge", "chainsaw",
-	"chromosome", "cinnamon", "clearance", "clockwork", "cloudbank", "colossal", "commander", "commuter",
-	"conduit", "contract", "conveyor", "copperhead", "cornfield", "corridor", "corrosive", "counselor",
-	"coverage", "crackdown", "crossfire", "crossroads", "crumble", "deadweight", "debrief", "decipher",
-	"defiance", "delusion", "detonator", "diameter", "dictator", "diffusion", "dilemma", "directory",
-	"dividend", "doctrine", "downfall", "downlink", "downturn", "drawback", "dropship", "dumbwaiter",
-	"duration", "endeavor", "entrance", "epidemic", "erratic", "escalate", "evaluate", "excavate",
-	"executor", "exponent", "exposure", "extortion", "filibuster", "firmware", "freeform", "freehold",
-	"freighter", "frequency", "fugitive", "function", "futuristic", "galactic", "gangplank", "garrison",
-	"geologist", "gladiator", "gradient", "gratitude", "guardian", "guerrilla", "guideline", "gunpowder",
-	"hardcover", "hardware", "harmonica", "headmaster", "headstone", "hemisphere", "hierarchy", "hostname",
-	"hydrogen", "hyperlink", "illusion", "incognito", "indicate", "indulge", "industry", "infantry",
-	"infraction", "inquire", "interact", "isolate", "isotope", "jackhammer", "javelin", "labrador",
-	"latitude", "ledger", "leverage", "lifeguard", "likewise", "lobbyist", "locksmith", "longitude",
-	"lowrider", "luggage", "magnitude", "mainspring", "maneuver", "maritime", "marksman", "marshall",
-	"mastermind", "material", "maximize", "militant", "minimize", "minotaur", "mobilize", "moderate",
-	"molecule", "monolith", "moonlight", "motorway", "navigate", "navigator", "nebulous", "network",
-	"nightclub", "nobility", "northwest", "noteworthy", "objective", "observer", "occupant", "offender",
-	"operative", "optional", "original", "outskirts", "pageant", "parallel", "paramedic", "partisan",
-	"periscope", "petition", "platinum", "polaroid", "portfolio", "practical", "practise", "precedent",
-}
+// sasWordCount is the number of EFF Short Wordlist 1 words in the SAS.
+const sasWordCount = 6
 
 // SASFromBytes generates a human-readable SAS from 32 bytes of key material.
-// Returns 8 words alternating between even/odd word lists.
+// Returns 6 words from the EFF Short Wordlist 1 (1296 entries), drawn using
+// rejection sampling on uint16 values read from the key material.
+// The output is deterministic for the same key material and has no modulo bias.
 func SASFromBytes(keyMaterial []byte) []string {
-	words := make([]string, 8)
-	for i := 0; i < 8; i++ {
-		idx := int(keyMaterial[i]) % 256
-		if i%2 == 0 {
-			words[i] = pgpWordListEven[idx%len(pgpWordListEven)]
-		} else {
-			words[i] = pgpWordListOdd[idx%len(pgpWordListOdd)]
+	n := len(effShortWordlist) // 1296
+	// Largest multiple of n that fits in a uint16 range (0..65535):
+	// floor(65536 / n) * n = 50 * 1296 = 64800.
+	limit := (65536 / n) * n
+
+	words := make([]string, sasWordCount)
+	wordIdx := 0
+	offset := 0
+
+	for wordIdx < sasWordCount {
+		if offset+1 >= len(keyMaterial) {
+			// Fallback: should not happen with 32 bytes of key material.
+			// Draw from remaining bytes modulo wordlist size.
+			words[wordIdx] = effShortWordlist[int(keyMaterial[offset%len(keyMaterial)])%n]
+			wordIdx++
+			offset++
+			continue
+		}
+		v := int(binary.BigEndian.Uint16(keyMaterial[offset:]))
+		offset += 2
+		if v < limit {
+			words[wordIdx] = effShortWordlist[v%n]
+			wordIdx++
 		}
 	}
 	return words
-}
-
-// SASString returns the SAS as a space-separated string.
-func SASString(words []string) string {
-	return strings.Join(words, " ")
 }
 
 // --- Identicon (Visual Fingerprint) ---

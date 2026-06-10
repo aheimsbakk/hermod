@@ -10,8 +10,10 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"encoding/binary"
 	"fmt"
 	"net"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -28,7 +30,8 @@ type verifyResult struct {
 	// sasTriggered is true when the peer's bundle had RequireVerify set
 	// OR the local flag was set — i.e. the merged verify value was true.
 	sasTriggered bool
-	payload      []byte // receiver only
+	sasWords     []string // SAS words computed from TLS key material
+	payload      []byte   // receiver only
 	err          error
 }
 
@@ -147,6 +150,16 @@ func runSenderVerify(serverURL string, channelID uint16, password string, payloa
 		return verifyResult{err: fmt.Errorf("QUIC dial: %w", err)}
 	}
 
+	// Compute SAS from TLS key material for cross-check.
+	sasCtx := make([]byte, 2)
+	binary.BigEndian.PutUint16(sasCtx, channelID)
+	quicState := quicConn.ConnectionState()
+	material, err := quicState.TLS.ExportKeyingMaterial("hermod-sas-v1", sasCtx, 32)
+	var sasWords []string
+	if err == nil {
+		sasWords = crypto.SASFromBytes(material)
+	}
+
 	payloadHash := transfer.HashBytes(payload)
 	meta := &transfer.Metadata{Kind: transfer.KindText, Size: int64(len(payload)), SHA256: payloadHash}
 	metaBytes, _ := transfer.EncodeMetadata(meta)
@@ -173,7 +186,7 @@ func runSenderVerify(serverURL string, channelID uint16, password string, payloa
 	}
 	quicConn.CloseWithError(0, "done")
 
-	return verifyResult{sasTriggered: mergedVerify}
+	return verifyResult{sasTriggered: mergedVerify, sasWords: sasWords}
 }
 
 // runReceiverVerify is like runReceiver but accepts requireVerify and reports
@@ -273,6 +286,16 @@ func runReceiverVerify(serverURL, code string, requireVerify bool) verifyResult 
 	}
 	defer quicConn.CloseWithError(0, "done")
 
+	// Compute SAS from TLS key material for cross-check.
+	sasCtx := make([]byte, 2)
+	binary.BigEndian.PutUint16(sasCtx, channelID)
+	quicState := quicConn.ConnectionState()
+	material, err := quicState.TLS.ExportKeyingMaterial("hermod-sas-v1", sasCtx, 32)
+	var sasWords []string
+	if err == nil {
+		sasWords = crypto.SASFromBytes(material)
+	}
+
 	metaStream, err := quicConn.AcceptStream(ctx)
 	if err != nil {
 		return verifyResult{err: fmt.Errorf("accept meta stream: %w", err)}
@@ -304,7 +327,7 @@ func runReceiverVerify(serverURL, code string, requireVerify bool) verifyResult 
 	}
 	quicConn.CloseWithError(0, "done")
 
-	return verifyResult{sasTriggered: mergedVerify, payload: buf.Bytes()}
+	return verifyResult{sasTriggered: mergedVerify, sasWords: sasWords, payload: buf.Bytes()}
 }
 
 // runVerifyNegotiation drives one full transfer and returns the merged verify
@@ -356,6 +379,17 @@ func runVerifyNegotiation(t *testing.T, serverURL string, senderVerify, receiver
 	}
 	if !bytes.Equal(rxRes.payload, payload) {
 		t.Fatalf("payload mismatch: got %q, want %q", rxRes.payload, payload)
+	}
+
+	// Verify both sides derived the same SAS words.
+	if txRes.sasWords == nil || rxRes.sasWords == nil {
+		t.Fatal("SAS words not computed on one or both sides")
+	}
+	if !reflect.DeepEqual(txRes.sasWords, rxRes.sasWords) {
+		t.Fatalf("SAS word mismatch: sender %v, receiver %v", txRes.sasWords, rxRes.sasWords)
+	}
+	if len(txRes.sasWords) != 6 {
+		t.Fatalf("expected 6 SAS words, got %d", len(txRes.sasWords))
 	}
 
 	return txRes.sasTriggered, rxRes.sasTriggered

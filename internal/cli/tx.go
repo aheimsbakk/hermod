@@ -748,7 +748,7 @@ func promptSASVerificationFrom(ctx context.Context, tlsState tls.ConnectionState
 
 	words := crypto.SASFromBytes(material)
 	fmt.Fprintf(os.Stderr, "=== Out-of-Band Verification ===\n")
-	fmt.Fprintf(os.Stderr, "SAS: %s\n", crypto.SASString(words))
+	fmt.Fprintf(os.Stderr, "SAS: %s\n", strings.Join(words, " "))
 	identicon, err := crypto.Identicon(material[:16])
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: could not render identicon: %v\n", err)
