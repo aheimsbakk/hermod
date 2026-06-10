@@ -5,6 +5,26 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.15.0] - 2026-06-10
+
+- **why:** Replace PGP word lists with EFF Short Wordlist 1 for SAS generation; fix modulo bias; add e2e SAS cross-check
+- **model:** opencode/deepseek-v4-flash-free
+- **tags:** sas, crypto, security, wordlist, refactor
+
+### Changed
+
+- `SASFromBytes` now draws 6 words from the EFF Short Wordlist 1 (1296 entries) using rejection sampling on key material bytes, producing deterministic output with no modulo bias (`internal/crypto/crypto.go`)
+
+### Removed
+
+- `pgpWordListEven` and `pgpWordListOdd` constants (256 entries each) from `internal/crypto/crypto.go`
+- `SASString` helper function — inlined `strings.Join` at the single call site in `internal/cli/tx.go`
+
+### Added
+
+- `TestSASDeterministic` and `TestSASDifferentInput` unit tests (`internal/crypto/crypto_test.go`)
+- E2E SAS word cross-check in `TestVerifyNegotiation` — validates both sides of a QUIC connection derive identical 6-word SAS (`e2e/verify_negotiation_test.go`)
+
 ## [v0.14.3] - 2026-06-10
 
 - **why:** Apply plain language to CLI error messages — capitalize, punctuate, use active voice

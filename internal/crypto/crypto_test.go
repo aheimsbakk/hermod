@@ -2,6 +2,7 @@ package crypto_test
 
 import (
 	"bytes"
+	"reflect"
 	"testing"
 
 	"github.com/hermod/hermod/internal/crypto"
@@ -137,22 +138,41 @@ func TestOpenTooShort(t *testing.T) {
 func TestSASFromBytes(t *testing.T) {
 	material := make([]byte, 32)
 	words := crypto.SASFromBytes(material)
-	if len(words) != 8 {
-		t.Fatalf("expected 8 SAS words, got %d", len(words))
+	if len(words) != 6 {
+		t.Fatalf("expected 6 SAS words, got %d", len(words))
+	}
+	wordlist := crypto.EFFShortWordlist()
+	wordSet := make(map[string]struct{}, len(wordlist))
+	for _, w := range wordlist {
+		wordSet[w] = struct{}{}
 	}
 	for _, w := range words {
 		if w == "" {
 			t.Fatal("empty SAS word")
 		}
+		if _, ok := wordSet[w]; !ok {
+			t.Fatalf("SAS word %q is not in EFF Short Wordlist 1", w)
+		}
 	}
 }
 
-func TestSASString(t *testing.T) {
-	material := make([]byte, 32)
-	words := crypto.SASFromBytes(material)
-	s := crypto.SASString(words)
-	if s == "" {
-		t.Fatal("empty SAS string")
+func TestSASDeterministic(t *testing.T) {
+	material := []byte("12345678901234567890123456789012")
+	w1 := crypto.SASFromBytes(material)
+	w2 := crypto.SASFromBytes(material)
+	if !reflect.DeepEqual(w1, w2) {
+		t.Fatal("SASFromBytes is not deterministic")
+	}
+}
+
+func TestSASDifferentInput(t *testing.T) {
+	material1 := make([]byte, 32)
+	material2 := make([]byte, 32)
+	material2[0] = 0x01
+	w1 := crypto.SASFromBytes(material1)
+	w2 := crypto.SASFromBytes(material2)
+	if reflect.DeepEqual(w1, w2) {
+		t.Fatal("SASFromBytes produced same output for different inputs")
 	}
 }
 

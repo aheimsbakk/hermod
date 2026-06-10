@@ -93,12 +93,9 @@ Parses a transfer code. Returns the channel ID and the passphrase words.
 ```go
 func SASFromBytes(b []byte) []string
 ```
-Derives a Short Authentication String word list from raw bytes.
-
-```go
-func SASString(words []string) string
-```
-Formats words as a space-separated string.
+Derives a Short Authentication String word list (6 words) from raw bytes (32 bytes).
+Words are drawn from the EFF Short Wordlist 1 (1296 entries) using rejection
+sampling. The output is deterministic for the same input.
 
 ```go
 func Identicon(b []byte) (string, error)
