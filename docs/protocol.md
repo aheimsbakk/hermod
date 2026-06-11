@@ -31,14 +31,39 @@ Sender (tx)             Signaling server        Receiver (rx)
      |<-- blob(cpace_msg) --- | <-- blob(cpace_msg) -- |
 ```
 
-### Phase 3 — Endpoint exchange (blobs relayed via server, AES-256-GCM)
+### Phase 3 — Hybrid KEM + Endpoint exchange (blobs relayed via server)
+
+After CPace derivation, peers perform a **three-pillar hybrid KEM exchange**:
+classical CPace (P-256) + classical X25519 ECDH + post-quantum ML-KEM-768.
+
+#### Blob 1 (sender → receiver): CPace + X25519 pub (97 bytes binary)
+
+65-byte CPace point + 32-byte X25519 public key.
+
+#### Blob 2 (receiver → sender): CPace + X25519 pub + ML-KEM enc key (1281 bytes binary)
+
+65-byte CPace point + 32-byte X25519 public key + 1184-byte ML-KEM-768
+encapsulation key.
+
+#### Key derivation (both sides)
 
 ```
-Sender (tx)             Signaling server        Receiver (rx)
-     |                        |                        |
-     |--- blob(enc_bundle) -> | --> blob(enc_bundle) -> |
-     |<-- blob(enc_bundle) -- | <-- blob(enc_bundle) -- |
+kClassical  = CPaceFinish(peer_cpace, password)    // 32 bytes, P-256
+ssX25519    = ECDH(my_priv, peer_x25519_pub)        // 32 bytes, X25519
+ssMLKEM     = Encapsulate(peer_mlkem_ek)            // 32 bytes (sender)
+           = Decapsulate(my_dk, kem_ct)             // 32 bytes (receiver)
+
+hybridKey   = SHA-256(kClassical || ssX25519 || ssMLKEM)  // 32 bytes
 ```
+
+#### Blob 3 (sender → receiver): KEM ciphertext + encrypted bundle
+
+1088-byte ML-KEM-768 ciphertext + AES-256-GCM(hybridKey, AAD=channelID,
+sender_bundle).
+
+#### Blob 4 (receiver → sender): encrypted bundle
+
+AES-256-GCM(hybridKey, AAD=channelID, receiver_bundle).
 
 Signaling connection is no longer used after this point.
 
@@ -74,14 +99,36 @@ Without `--verify`, stream 0 (SAS) is skipped and all subsequent streams are ren
 
 ### Security properties
 
-- Signaling server sees only AES-256-GCM ciphertext after `allocate`/`join`
-- CPace PAKE derives shared key K from the transfer code without exposing it
-- Endpoint bundles: AES-256-GCM(K), channel ID bound as AAD
+- Signaling server sees only binary blobs (CPace points, X25519 keys, ML-KEM
+  ciphertexts, and AES-256-GCM ciphertexts) after `allocate`/`join`
+- CPace PAKE derives shared key K_classical from the transfer code without
+  exposing it
+- Endpoint bundles encrypted with **HybridBlobKey**: three-pillar combining
+  CPace (P-256) + X25519 ECDH + ML-KEM-768 via SHA-256 concatenation combiner.
+  Security is at least as strong as the strongest pillar — post-quantum secure
+  even if P-256 falls to quantum cryptanalysis
 - QUIC: TLS 1.3, ephemeral self-signed certs, fingerprint-pinned (no CA)
 - Payload integrity: trailing SHA-256 hash stream verified end-to-end
 - Payload never touches the signaling server
 
 Each phase is described in detail in the sections below.
+
+## Verification chain
+
+A transfer succeeds only when every layer in the chain passes. Each layer
+verifies a different property and a failure in any layer aborts the transfer.
+
+| Layer | What it verifies | How |
+|-------|------------------|-----|
+| **CPace (P-256)** | Both peers know the same transfer code (password) | `kClassical` derived from password; bound into hybrid key. Wrong password → AES-GCM tag mismatch on endpoint bundle → abort |
+| **X25519 ECDH** | Classical key agreement (defense-in-depth) | `ssX25519` derived from ephemeral key exchange; bound into hybrid key alongside CPace and ML-KEM |
+| **ML-KEM-768** | Post-quantum key agreement | `ssMLKEM` encapsulated by sender, decapsulated by receiver; bound into hybrid key. Protects endpoint bundles even if P-256/X25519 are broken by quantum computer |
+| **HybridBlobKey** | All three pillars combined | `SHA-256(kClassical \|\| ssX25519 \|\| ssMLKEM)`. Security is at least as strong as the strongest pillar |
+| **Endpoint bundle** | Peer identity (IPs, cert fingerprint) | AES-256-GCM encrypted with HybridBlobKey + channel ID as AAD. Contains peer's UDP candidates + ephemeral TLS cert fingerprint |
+| **UDP hole punch** | Both peers are reachable at their claimed addresses | Probe/ack exchange using nonce derived from `hybridKey` (CPace + X25519 + ML-KEM-768). Hole punch fails if no peer responds |
+| **QUIC/TLS 1.3** | Peer certificate matches the bundle | Mutual TLS with fingerprint pinning: each side verifies the peer's ephemeral cert fingerprint against the value received in the encrypted endpoint bundle |
+| **SAS (optional)** | No MitM in the QUIC handshake | Human compares 6-word SAS + identicon out-of-band (voice, Signal, etc.) derived from TLS ExportKeyingMaterial |
+| **Trailing SHA-256** | Payload integrity | Sender computes hash while streaming; receiver verifies after receipt. Mismatch → file deleted |
 
 ## Transfer code
 
@@ -141,10 +188,12 @@ Sender                  Server                  Receiver
   |                       |  ←--- join(id) --------|
   |← ready -------------- |                        |
   |                       |  --- ok(public_ip) ---→|
-  |--- blob(cpace_msg) -→ |  --- blob(cpace_msg) →|
-  |← blob(cpace_msg) ---- |  ←-- blob(cpace_msg) -|
-  |--- blob(enc_bundle) → |  --- blob(enc_bundle)→|
-  |← blob(enc_bundle) --- |  ←-- blob(enc_bundle)-|
+  |                       |                        |
+  |--- blob1(CPace+X25519) →|  → blob1 →           |
+  |← blob2(CPace+X25519+MLKEMek) |  ← blob2 ←     |
+  |                       |                        |
+  |--- blob3(KEMct+encBundle) →|  → blob3 →        |
+  |← blob4(encBundle) --- |  ←-- blob4 -----------|
 ```
 
 After the last blob exchange the signaling connection is no longer used.
@@ -169,9 +218,20 @@ The `channelID` and `role` are used as domain separators:
 
 ## Endpoint exchange
 
-After CPace, each peer encrypts its candidate UDP addresses, ephemeral TLS certificate fingerprint, and verify flag with `K` using AES-256-GCM, then relays the ciphertext through the signaling server.
+After CPace and the hybrid KEM exchange (X25519 + ML-KEM-768), each peer derives
+the **HybridBlobKey**:
 
-The channel ID (2-byte big-endian) is bound as AES-GCM Additional Authenticated Data (AAD). This prevents a captured endpoint bundle from being replayed in a different session.
+```
+hybridKey = SHA-256(kClassical || ssX25519 || ssMLKEM)
+```
+
+Each peer encrypts its candidate UDP addresses, ephemeral TLS certificate
+fingerprint, and verify flag with `hybridKey` using AES-256-GCM, then relays
+the ciphertext through the signaling server.
+
+The channel ID (2-byte big-endian) is bound as AES-GCM Additional Authenticated
+Data (AAD). This prevents a captured endpoint bundle from being replayed in a
+different session.
 
 Plaintext endpoint bundle (JSON before encryption):
 ```json
@@ -210,10 +270,10 @@ Within each phase, probe packets are sent to all candidate addresses of that fam
 Probe and ack packet format (8 bytes each):
 ```
 byte 0:    0x01        (probe/ack marker)
-bytes 1–7: hash[0:7]  (probe) or hash[8:14]  (ack) — 7 bytes of SHA-256(kClassical + "hermod-holepunch-v1")
+bytes 1–7: hash[0:7]  (probe) or hash[8:14]  (ack) — 7 bytes of SHA-256(hybridKey + "hermod-holepunch-v1")
 ```
 
-The hash is session-specific (derived from the CPace PAKE shared key). Each side uses bytes [0:7] of the hash as the probe identifier and bytes [8:15] as the ack identifier, giving 64 bits of entropy per packet — practically unguessable by an off-path attacker.
+The hash is session-specific (derived from the HybridBlobKey — CPace + X25519 ECDH + ML-KEM-768). Each side uses bytes [0:7] of the hash as the probe identifier and bytes [8:15] as the ack identifier, giving 64 bits of entropy per packet — practically unguessable by an off-path attacker.
 
 The first probe that receives a reply from the correct peer address wins. That address is used for the QUIC connection.
 
@@ -325,7 +385,7 @@ Both sides exit with a non-zero status code after cancellation.
 - The server enforces a maximum of **3 failed CPace handshake attempts** per channel. On the third violation all peer connections are closed, the channel is invalidated, and its state is purged.
 - The server enforces a maximum of **10 relayed blobs** per channel to prevent relay saturation. Exceeding the limit closes the offending connection.
 - Client IP addresses are never stored in plaintext. The rate-limiter bucket key is `HMAC-SHA256(dailySalt, ipPrefix)`. The salt is replaced every UTC calendar day and all buckets are cleared on rotation. Stale buckets are also evicted every 10 minutes to bound memory usage.
-- Endpoint bundles are encrypted with `AES-256-GCM(K, channelID_as_AAD, bundle)`. The channel ID bound as AAD prevents a captured bundle from being replayed in a different session.
+- Endpoint bundles are encrypted with `AES-256-GCM(hybridKey, channelID_as_AAD, bundle)`. The key `hybridKey = SHA-256(kClassical || ssX25519 || ssMLKEM)` combines three pillars: CPace (P-256 PAKE), X25519 ECDH, and ML-KEM-768 (post-quantum KEM). A quantum adversary who breaks P-256 to recover `kClassical` still cannot decrypt the bundles without the ML-KEM-768 shared secret.
 - The CPace implementation uses the `P256_XMD:SHA-256_SSWU_RO_` suite (RFC 9380) to hash passwords to P-256 curve points. SSWU always produces a valid point in a single, fixed-length computation with no data-dependent loop iterations, eliminating the loop-count timing side channel of the former try-and-increment method.
 - Ephemeral QUIC certificates use ECDSA P-256. They are valid for 24 hours and are never stored.
 - Payload integrity is verified end-to-end via a trailing hash stream. The sender computes SHA-256 in parallel during transfer and sends the digest after the payload stream closes. The receiver computes SHA-256 in parallel during receipt and verifies against the sender's trailing digest. No pre-buffering of large inputs is required.

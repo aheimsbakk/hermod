@@ -205,6 +205,13 @@ func runTx(input, serverURL string, numWords int, verify bool, listenUDP string,
 		return fmt.Errorf("initialize CPace handshake: %w", err)
 	}
 
+	// Generate X25519 key pair for hybrid KEM
+	logDebug("generating X25519 key pair for hybrid KEM")
+	x25519Priv, x25519Pub, err := crypto.GenerateX25519KeyPair()
+	if err != nil {
+		return fmt.Errorf("generate X25519 key pair: %w", err)
+	}
+
 	// Wait for receiver to join
 	logInfo("Waiting for receiver to join the channel")
 	if err := sig.WaitReady(); err != nil {
@@ -212,34 +219,55 @@ func runTx(input, serverURL string, numWords int, verify bool, listenUDP string,
 	}
 	logInfo("Receiver joined the channel")
 
-	// Exchange CPace messages via relay
-	logDebug("sending CPace public message to peer via relay")
-	cpaceMsgBytes, err := network.EncodeCPaceMsg(network.CPaceMsg{PubMsg: myPubMsg})
-	if err != nil {
-		return fmt.Errorf("encode CPace message: %w", err)
-	}
-	if err := sig.SendBlob(channelID, cpaceMsgBytes); err != nil {
-		return fmt.Errorf("send CPace message: %w", err)
+	// Send blob 1: CPace public message + X25519 public key (binary)
+	logDebug("sending hybrid handshake blob 1 (CPace + X25519 pub) to peer via relay")
+	blob1 := network.SenderHandshakeBlob(myPubMsg, x25519Pub)
+	if err := sig.SendBlob(channelID, blob1); err != nil {
+		return fmt.Errorf("send hybrid handshake blob 1: %w", err)
 	}
 
-	logDebug("waiting for peer CPace public message from relay")
-	peerCPaceMsgBytes, err := sig.RecvBlob()
+	// Receive blob 2: receiver's CPace + X25519 pub + ML-KEM enc key (binary)
+	logDebug("waiting for receiver hybrid handshake blob 2 from relay")
+	blob2, err := sig.RecvBlob()
 	if err != nil {
-		return fmt.Errorf("receive CPace message from peer: %w", err)
+		return fmt.Errorf("receive hybrid handshake blob 2: %w", err)
 	}
-	peerCPaceMsg, err := network.DecodeCPaceMsg(peerCPaceMsgBytes)
+	peerCPacePub, peerX25519Pub, peerMLKEMEncapKey, err := network.ParseReceiverHandshakeBlob(blob2)
 	if err != nil {
-		return fmt.Errorf("decode peer CPace message: %w", err)
+		return fmt.Errorf("parse receiver handshake blob: %w", err)
 	}
-	logDebug("peer CPace message received and decoded")
+	logDebug("receiver handshake blob received and parsed")
 
 	// Finish CPace to get shared secret
 	logDebug("completing CPace handshake to derive shared key")
-	kClassical, err := cpaceSession.CPaceFinish(peerCPaceMsg.PubMsg)
+	kClassical, err := cpaceSession.CPaceFinish(peerCPacePub)
 	if err != nil {
 		return fmt.Errorf("complete CPace handshake: %w", err)
 	}
 	logInfo("PAKE handshake complete — shared key established")
+
+	// X25519 ECDH shared secret
+	logDebug("computing X25519 ECDH shared secret")
+	peerX25519Key, err := crypto.NewX25519PubFromBytes(peerX25519Pub)
+	if err != nil {
+		return fmt.Errorf("parse peer X25519 public key: %w", err)
+	}
+	ssX25519, err := crypto.ECDHX25519(x25519Priv, peerX25519Key)
+	if err != nil {
+		return fmt.Errorf("X25519 ECDH: %w", err)
+	}
+
+	// ML-KEM encapsulation
+	logDebug("performing ML-KEM-768 encapsulation")
+	peerMLKEMKey, err := crypto.NewEncapsulationKey768Bytes(peerMLKEMEncapKey)
+	if err != nil {
+		return fmt.Errorf("parse peer ML-KEM encapsulation key: %w", err)
+	}
+	ssMLKEM, kemCt := crypto.EncapsulateMLKEM(peerMLKEMKey)
+
+	// Derive hybrid blob key
+	logDebug("deriving hybrid blob key from CPace + X25519 + ML-KEM")
+	hybridKey := crypto.DeriveHybridBlobKey(kClassical, ssX25519, ssMLKEM)
 
 	// Build local endpoints, split by address family
 	ipFamily := network.IPFamilyAny
@@ -276,22 +304,23 @@ func runTx(input, serverURL string, numWords int, verify bool, listenUDP string,
 	if err != nil {
 		return fmt.Errorf("encode endpoint bundle: %w", err)
 	}
-	encBundle, err := crypto.SealAAD(kClassical, channelIDAad(channelID), bundleBytes)
+	encBundle, err := crypto.SealAAD(hybridKey, channelIDAad(channelID), bundleBytes)
 	if err != nil {
 		return fmt.Errorf("encrypt endpoint bundle: %w", err)
 	}
-	logDebug("endpoint bundle encrypted and sending to peer via relay")
-	if err := sig.SendBlob(channelID, encBundle); err != nil {
-		return fmt.Errorf("send endpoint bundle: %w", err)
+	logDebug("endpoint bundle encrypted, sending blob 3 (KEM ct + enc bundle) via relay")
+	blob3 := network.SenderBundleBlob(kemCt, encBundle)
+	if err := sig.SendBlob(channelID, blob3); err != nil {
+		return fmt.Errorf("send blob 3 (KEM ct + bundle): %w", err)
 	}
 
 	// Receive peer's bundle
-	logDebug("waiting for receiver endpoint bundle from relay")
+	logDebug("waiting for receiver endpoint bundle blob 4 from relay")
 	encPeerBundle, err := sig.RecvBlob()
 	if err != nil {
-		return fmt.Errorf("receive endpoint bundle from peer: %w", err)
+		return fmt.Errorf("receive endpoint bundle blob 4 from peer: %w", err)
 	}
-	peerBundleBytes, err := crypto.OpenAAD(kClassical, channelIDAad(channelID), encPeerBundle)
+	peerBundleBytes, err := crypto.OpenAAD(hybridKey, channelIDAad(channelID), encPeerBundle)
 	if err != nil {
 		return fmt.Errorf("decrypt peer endpoint bundle: %w", err)
 	}
@@ -341,7 +370,7 @@ func runTx(input, serverURL string, numWords int, verify bool, listenUDP string,
 	// UDP hole punching — two-phase: IPv6 preferred, IPv4 fallback.
 	logInfo("Starting UDP hole punch", "v4_candidates", len(candidatesV4), "v6_candidates", len(candidatesV6))
 	printStatus("Establishing P2P connection...")
-	punchResult, err := network.HolePunchDual(ctx, probeCtx, mux, candidatesV4, candidatesV6, holePunchNonce(kClassical))
+	punchResult, err := network.HolePunchDual(ctx, probeCtx, mux, candidatesV4, candidatesV6, holePunchNonce(hybridKey))
 	if err != nil {
 		return fmt.Errorf("hole punch: %w", err)
 	}
@@ -529,13 +558,15 @@ func channelIDAad(id uint16) []byte {
 	return aad
 }
 
-// holePunchNonce derives a 32-byte session-unique hash from the CPace shared
-// key for use as hole-punch probe and ack discriminators.
+// holePunchNonce derives a 32-byte session-unique hash for use as hole-punch
+// probe and ack discriminators.
 // The caller uses hash[0:7] for the probe payload and hash[8:15] for the ack
 // payload, giving 64 bits of entropy per packet — practically unguessable
 // by an off-path attacker.
-func holePunchNonce(kClassical []byte) [32]byte {
-	return sha256.Sum256(append(kClassical, []byte("hermod-holepunch-v1")...))
+// key should be the strongest available session key material (currently:
+// the hybridBlobKey derived from CPace + X25519 ECDH + ML-KEM-768).
+func holePunchNonce(key []byte) [32]byte {
+	return sha256.Sum256(append(key, []byte("hermod-holepunch-v1")...))
 }
 
 // appendLenPrefix prepends a 4-byte big-endian length to data.

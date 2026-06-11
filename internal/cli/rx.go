@@ -149,42 +149,79 @@ func runRx(code, destination, serverURL string, verify bool, listenUDP string, s
 		return fmt.Errorf("initialize CPace handshake: %w", err)
 	}
 
-	// Exchange CPace messages
-	logDebug("waiting for sender CPace public message from relay")
-	peerCPaceMsgBytes, err := sig.RecvBlob()
+	// Generate X25519 key pair + ML-KEM receiver key for hybrid KEM
+	logDebug("generating X25519 + ML-KEM-768 key pairs")
+	x25519Priv, x25519Pub, err := crypto.GenerateX25519KeyPair()
 	if err != nil {
-		return fmt.Errorf("receive CPace message from peer: %w", err)
+		return fmt.Errorf("generate X25519 key pair: %w", err)
 	}
-	peerCPaceMsg, err := network.DecodeCPaceMsg(peerCPaceMsgBytes)
+	mlkemKeys, err := crypto.GenerateMLKEMReceiverKey()
 	if err != nil {
-		return fmt.Errorf("decode peer cpace msg: %w", err)
+		return fmt.Errorf("generate ML-KEM key pair: %w", err)
 	}
-	logDebug("sender CPace message received and decoded")
 
-	logDebug("sending CPace public message to peer via relay")
-	cpaceMsgBytes, err := network.EncodeCPaceMsg(network.CPaceMsg{PubMsg: myPubMsg})
+	// Receive sender's blob 1: CPace + X25519 pub
+	logDebug("waiting for sender hybrid handshake blob 1 from relay")
+	blob1, err := sig.RecvBlob()
 	if err != nil {
-		return fmt.Errorf("encode CPace message: %w", err)
+		return fmt.Errorf("receive sender handshake blob 1: %w", err)
 	}
-	if err := sig.SendBlob(channelID, cpaceMsgBytes); err != nil {
-		return fmt.Errorf("send CPace message: %w", err)
+	peerCPacePub, peerX25519Pub, err := network.ParseSenderHandshakeBlob(blob1)
+	if err != nil {
+		return fmt.Errorf("parse sender handshake blob: %w", err)
 	}
+	logDebug("sender handshake blob 1 received and parsed")
 
 	// Finish CPace
 	logDebug("completing CPace handshake to derive shared key")
-	kClassical, err := cpaceSession.CPaceFinish(peerCPaceMsg.PubMsg)
+	kClassical, err := cpaceSession.CPaceFinish(peerCPacePub)
 	if err != nil {
 		return fmt.Errorf("complete CPace handshake: %w", err)
 	}
 	logInfo("PAKE handshake complete — shared key established")
 
-	// Receive sender's bundle
-	logDebug("waiting for sender endpoint bundle from relay")
-	encSenderBundle, err := sig.RecvBlob()
+	// X25519 ECDH shared secret (before sending blob 2, so we can send immediately)
+	logDebug("computing X25519 ECDH shared secret")
+	peerX25519Key, err := crypto.NewX25519PubFromBytes(peerX25519Pub)
 	if err != nil {
-		return fmt.Errorf("receive endpoint bundle from sender: %w", err)
+		return fmt.Errorf("parse sender X25519 public key: %w", err)
 	}
-	senderBundleBytes, err := crypto.OpenAAD(kClassical, channelIDAad(channelID), encSenderBundle)
+	ssX25519, err := crypto.ECDHX25519(x25519Priv, peerX25519Key)
+	if err != nil {
+		return fmt.Errorf("X25519 ECDH: %w", err)
+	}
+
+	// Send blob 2: CPace + X25519 pub + ML-KEM enc key (binary)
+	logDebug("sending hybrid handshake blob 2 (CPace + X25519 + MLKEM ek) via relay")
+	blob2 := network.ReceiverHandshakeBlob(myPubMsg, x25519Pub, mlkemKeys.EncapKeyBytes())
+	if err := sig.SendBlob(channelID, blob2); err != nil {
+		return fmt.Errorf("send hybrid handshake blob 2: %w", err)
+	}
+
+	// Receive blob 3: KEM ciphertext + encrypted sender bundle
+	logDebug("waiting for sender bundle blob 3 (KEM ct + enc bundle) from relay")
+	blob3, err := sig.RecvBlob()
+	if err != nil {
+		return fmt.Errorf("receive sender bundle blob 3: %w", err)
+	}
+	kemCt, encSenderBundle, err := network.ParseSenderBundleBlob(blob3)
+	if err != nil {
+		return fmt.Errorf("parse sender bundle blob: %w", err)
+	}
+
+	// ML-KEM decapsulation
+	logDebug("decapsulating ML-KEM-768 shared secret")
+	ssMLKEM, err := crypto.DecapsulateMLKEM(mlkemKeys.DecapKey, kemCt)
+	if err != nil {
+		return fmt.Errorf("ML-KEM decapsulation: %w", err)
+	}
+
+	// Derive hybrid blob key
+	logDebug("deriving hybrid blob key from CPace + X25519 + ML-KEM")
+	hybridKey := crypto.DeriveHybridBlobKey(kClassical, ssX25519, ssMLKEM)
+
+	// Decrypt sender's bundle with hybrid key
+	senderBundleBytes, err := crypto.OpenAAD(hybridKey, channelIDAad(channelID), encSenderBundle)
 	if err != nil {
 		return fmt.Errorf("decrypt sender endpoint bundle: %w", err)
 	}
@@ -241,13 +278,13 @@ func runRx(code, destination, serverURL string, verify bool, listenUDP string, s
 	if err != nil {
 		return fmt.Errorf("encode endpoint bundle: %w", err)
 	}
-	encMyBundle, err := crypto.SealAAD(kClassical, channelIDAad(channelID), myBundleBytes)
+	encMyBundle, err := crypto.SealAAD(hybridKey, channelIDAad(channelID), myBundleBytes)
 	if err != nil {
 		return fmt.Errorf("encrypt endpoint bundle: %w", err)
 	}
-	logDebug("endpoint bundle encrypted and sending to sender via relay")
+	logDebug("endpoint bundle encrypted, sending blob 4 (enc bundle) to sender via relay")
 	if err := sig.SendBlob(channelID, encMyBundle); err != nil {
-		return fmt.Errorf("send endpoint bundle: %w", err)
+		return fmt.Errorf("send endpoint bundle blob 4: %w", err)
 	}
 
 	// Build candidate lists from sender's bundle, split by address family.
@@ -277,7 +314,7 @@ func runRx(code, destination, serverURL string, verify bool, listenUDP string, s
 
 	logInfo("Starting UDP hole punch", "v4_candidates", len(candidatesV4), "v6_candidates", len(candidatesV6))
 	printStatus("Establishing P2P connection...")
-	punchResult, err := network.HolePunchDual(ctx, probeCtx, mux, candidatesV4, candidatesV6, holePunchNonce(kClassical))
+	punchResult, err := network.HolePunchDual(ctx, probeCtx, mux, candidatesV4, candidatesV6, holePunchNonce(hybridKey))
 	if err != nil {
 		return fmt.Errorf("hole punch: %w", err)
 	}
