@@ -1,4 +1,4 @@
-# Security Audit — Hermod v0.16.0
+# Security Audit — Hermod v0.16.1
 
 **Model:** github-copilot/claude-sonnet-4.6  
 **Date:** 2026-06-11  

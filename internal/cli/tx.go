@@ -343,7 +343,7 @@ func runTx(input, serverURL string, numWords int, verify bool, listenUDP string,
 	printStatus("Establishing P2P connection...")
 	punchResult, err := network.HolePunchDual(ctx, probeCtx, mux, candidatesV4, candidatesV6, holePunchNonce(kClassical))
 	if err != nil {
-		return fmt.Errorf("UDP hole punch: %w", err)
+		return fmt.Errorf("hole punch: %w", err)
 	}
 	logInfo("UDP hole punch succeeded", "peer_addr", punchResult.PeerAddr.String())
 

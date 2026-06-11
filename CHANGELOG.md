@@ -5,6 +5,36 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.16.1] - 2026-06-11
+
+- **why:** Resolve security audit findings (H1–H5, M1–M5, L1–L5) — HTTP timeouts, constant-time ECDH, RFC 9380 DST compliance, concurrent write safety, context propagation, and defense-in-depth hardening
+- **model:** opencode/deepseek-v4-flash
+- **tags:** security, audit, crypto, network, server
+
+### Security
+
+- **H1:** Added `ReadHeaderTimeout=10s`, `ReadTimeout=30s`, `WriteTimeout=30s`, `IdleTimeout=120s` to HTTP server — prevents Slowloris DoS (`internal/server/server.go`)
+- **H2:** Replaced deprecated `crypto/elliptic.ScalarMult` with `crypto/ecdh.P256()` — constant-time scalar multiplication using stdlib only (`internal/crypto/crypto.go`)
+- **H3:** Replaced DST truncation with SHA-256("H2C-OVERSIZE-DST-" \|\| DST) per RFC 9380 §3.1 — fixes collision on passwords >236 bytes (`internal/crypto/hash_to_curve.go`)
+- **H4:** Moved `WriteJSON` inside mutex in `dropChannel` — prevents Gorilla WebSocket panic on concurrent writes (`internal/server/server.go`)
+
+### Changed
+
+- **M1:** `DialSignaling`, `DialSignalingWithFamily`, `FetchServerFingerprint` now accept `ctx context.Context` — SIGINT cancels in-progress dials. `HandshakeTimeout` set to 15s (`internal/network/signaling.go`; updated all callers)
+- **M3:** `DialContext` callbacks use `net.Dialer{}.DialContext(ctx, ...)` instead of `net.Dial(...)` — context cancellation propagates to TCP dial (`internal/network/signaling.go`)
+- **M4:** Temp files created with `0o600` + `O_EXCL` instead of `os.Create` — prevents world-readable temp files and silent truncation of stale temps (`internal/cli/rx.go`)
+- **M5:** Warning logged when `ws://` scheme is used — alerts user to unencrypted signaling (`internal/network/signaling.go`)
+- **L1:** KindText input redacted to `<redacted>` in debug logs — prevents secret leakage via stderr (`internal/cli/tx.go`)
+- **L2:** Added `readLenPrefixedMax()` with 256-byte limit for trailing hash stream — prevents 1 MiB allocation on corrupt input (`internal/cli/rx.go`)
+- **L3:** Ephemeral QUIC cert `NotAfter` reduced from 24h to 2h — limits exposure window on leaked key (`internal/cli/tx.go`)
+- **L4:** Windows config path uses `os.UserConfigDir()` instead of `os.Getenv("APPDATA")` — handles unset/tampered `APPDATA` gracefully (`internal/config/config.go`)
+- **L5:** `writeError` logs failures at `slog.Debug` instead of silent discard (`internal/server/server.go`)
+- Hole punch error messages made actionable: include candidate counts, address family, and timeout info instead of redundant "UDP hole punch" repetition (`internal/network/network.go`, `internal/cli/tx.go`, `internal/cli/rx.go`)
+
+### Documentation
+
+- Updated `DialSignaling`, `DialSignalingWithFamily`, `FetchServerFingerprint` signatures in `docs/api.md` to include `ctx context.Context`
+
 ## [v0.16.0] - 2026-06-10
 
 - **why:** Enable bidirectional QUIC initiation so the P2P connection succeeds even when only one direction traverses the NAT
