@@ -294,12 +294,10 @@ func SASFromBytes(keyMaterial []byte) []string {
 
 	for wordIdx < sasWordCount {
 		if offset+1 >= len(keyMaterial) {
-			// Fallback: should not happen with 32 bytes of key material.
-			// Draw from remaining bytes modulo wordlist size.
-			words[wordIdx] = effShortWordlist[int(keyMaterial[offset%len(keyMaterial)])%n]
-			wordIdx++
-			offset++
-			continue
+			// SASFromBytes requires at least 12 bytes of key material
+			// (6 words × 2 bytes each). All callers provide at least 32
+			// bytes, so this path is unreachable (defense-in-depth).
+			panic("SASFromBytes: insufficient key material (need ≥12 bytes)")
 		}
 		v := int(binary.BigEndian.Uint16(keyMaterial[offset:]))
 		offset += 2
@@ -331,7 +329,7 @@ const (
 
 // Identicon generates a visual fingerprint from 16 bytes of key material.
 // Grid: 8 rows × 16 columns (left 8 cols = entropy, right 8 = mirror).
-// Returns an error if keyMaterial is shorter than 16 bytes (H-03).
+// Returns an error if keyMaterial is shorter than 16 bytes.
 func Identicon(keyMaterial []byte) (string, error) {
 	if len(keyMaterial) < 16 {
 		return "", fmt.Errorf("identicon: need at least 16 bytes of key material, got %d", len(keyMaterial))

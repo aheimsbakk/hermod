@@ -379,7 +379,7 @@ func HolePunchDual(ctx context.Context, probeCtx context.Context, mux *packetMux
 
 // makeCertPinner returns a VerifyPeerCertificate function that enforces cert hash pinning.
 // The fingerprint comparison uses crypto/subtle.ConstantTimeCompare to prevent
-// timing side-channel attacks (H-01).
+// timing side-channel attacks.
 func makeCertPinner(expectedHex string) func(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error {
 	return func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
 		if len(rawCerts) == 0 {

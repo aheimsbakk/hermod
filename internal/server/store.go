@@ -24,8 +24,8 @@ type SignalingStore interface {
 	RecordFailure(id uint16) (int, error)
 	// DeleteChannel removes the channel and all its state.
 	DeleteChannel(id uint16) error
-	// PurgeExpired removes all expired channels.
-	PurgeExpired() error
+	// PurgeExpired removes all expired channels and returns their IDs.
+	PurgeExpired() ([]uint16, error)
 	// Close releases resources held by the store.
 	Close() error
 }
@@ -120,16 +120,18 @@ func (m *MemoryStore) DeleteChannel(id uint16) error {
 	return nil
 }
 
-func (m *MemoryStore) PurgeExpired() error {
+func (m *MemoryStore) PurgeExpired() ([]uint16, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	now := time.Now()
+	var expired []uint16
 	for id, ch := range m.channels {
 		if now.After(ch.expires) {
 			delete(m.channels, id)
+			expired = append(expired, id)
 		}
 	}
-	return nil
+	return expired, nil
 }
 
 func (m *MemoryStore) Close() error { return nil }
@@ -145,7 +147,7 @@ func RunGC(ctx context.Context, store SignalingStore, interval time.Duration) {
 			case <-ctx.Done():
 				return
 			case <-t.C:
-				_ = store.PurgeExpired()
+				_, _ = store.PurgeExpired()
 			}
 		}
 	}()

@@ -242,7 +242,7 @@ func TestMuxedConnReadFrom_Closed(t *testing.T) {
 }
 
 // TestMuxedConnReadFrom_DeadlineExceeded verifies that ReadFrom returns
-// os.ErrDeadlineExceeded when the read deadline is set in the past (H-02).
+// os.ErrDeadlineExceeded when the read deadline is set in the past.
 func TestMuxedConnReadFrom_DeadlineExceeded(t *testing.T) {
 	stub := newStubPacketConn()
 	mux := NewPacketMux(stub)
@@ -266,7 +266,7 @@ func TestMuxedConnReadFrom_DeadlineExceeded(t *testing.T) {
 }
 
 // TestMuxedConnReadFrom_DeadlineFires verifies that ReadFrom returns
-// os.ErrDeadlineExceeded when the deadline expires while waiting (H-02).
+// os.ErrDeadlineExceeded when the deadline expires while waiting.
 func TestMuxedConnReadFrom_DeadlineFires(t *testing.T) {
 	stub := newStubPacketConn()
 	mux := NewPacketMux(stub)
@@ -290,7 +290,7 @@ func TestMuxedConnReadFrom_DeadlineFires(t *testing.T) {
 }
 
 // TestMuxedConnWriteTo_DeadlineExceeded verifies that WriteTo returns
-// os.ErrDeadlineExceeded when the write deadline is set in the past (H-02).
+// os.ErrDeadlineExceeded when the write deadline is set in the past.
 func TestMuxedConnWriteTo_DeadlineExceeded(t *testing.T) {
 	stub := newStubPacketConn()
 	mux := NewPacketMux(stub)

@@ -95,7 +95,7 @@ func runServe(listenAddr string, ttl time.Duration, rateLimit, rateBurst float64
 		}
 	})
 
-	// Extract DER bytes for the /cert endpoint (M-06).
+	// Extract DER bytes for the /cert endpoint.
 	var certDER []byte
 	if len(cert.Certificate) > 0 {
 		certDER = cert.Certificate[0]

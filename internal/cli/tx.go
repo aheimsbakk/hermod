@@ -416,22 +416,22 @@ func runTx(input, serverURL string, numWords int, verify bool, listenUDP string,
 		return fmt.Errorf("open payload stream: %w", err)
 	}
 
-	// Stream payload while computing SHA-256 in parallel via TeeReader (M-07).
+	// Stream payload while computing SHA-256 in parallel via TeeReader.
 	logInfo("Sending payload", "kind", meta.Kind, "size_bytes", meta.Size)
 	isTTY := isatty.IsTerminal(os.Stderr.Fd())
 	var payloadHash string
 	if isTTY && !quietMode && size > 0 {
 		bar := newHashBar(size, "sending")
 		dest := io.MultiWriter(payloadStream, bar)
-		payloadHash, err = transfer.HashStream(reader, dest)
+		payloadHash, _, err = transfer.HashStream(reader, dest)
 	} else if isTTY && !quietMode && size < 0 {
 		// Unknown size (stream): bouncing "###" bar that resizes with the terminal.
 		bar := newStreamBar()
 		dest := io.MultiWriter(payloadStream, bar)
-		payloadHash, err = transfer.HashStream(reader, dest)
+		payloadHash, _, err = transfer.HashStream(reader, dest)
 		bar.Finish()
 	} else {
-		payloadHash, err = transfer.HashStream(reader, payloadStream)
+		payloadHash, _, err = transfer.HashStream(reader, payloadStream)
 	}
 	if err != nil {
 		if peerErr := cancelledByPeer(err); peerErr != nil {
@@ -452,7 +452,7 @@ func runTx(input, serverURL string, numWords int, verify bool, listenUDP string,
 	logDebug("payload stream closed — all bytes sent", "sha256", payloadHash)
 
 	// Send trailing hash stream (stream 2). The receiver verifies the hash of
-	// the received data against this value after draining the payload (M-07).
+	// the received data against this value after draining the payload.
 	logDebug("opening QUIC trailing hash stream (stream 2)")
 	hashStream, err := quicConn.OpenStreamSync(ctx)
 	if err != nil {
@@ -488,7 +488,7 @@ func runTx(input, serverURL string, numWords int, verify bool, listenUDP string,
 
 // buildPayload returns metadata and an io.Reader for the payload.
 // SHA256 is always empty — the hash is computed during streaming and sent as
-// trailing metadata (M-07). This avoids buffering large stdin inputs.
+// trailing metadata. This avoids buffering large stdin inputs.
 func buildPayload(input string, kind transfer.Kind, name string, isStdinPiped bool) (*transfer.Metadata, io.Reader, int64, error) {
 	switch kind {
 	case transfer.KindFile:
@@ -501,19 +501,19 @@ func buildPayload(input string, kind transfer.Kind, name string, isStdinPiped bo
 		if err != nil {
 			return nil, nil, 0, err
 		}
-		// SHA256 intentionally empty — computed during streaming (M-07).
+		// SHA256 intentionally empty — computed during streaming.
 		meta := &transfer.Metadata{Kind: transfer.KindFile, Name: name, Size: size}
 		return meta, f, size, nil
 
 	case transfer.KindText:
 		data := []byte(input)
-		// SHA256 intentionally empty — computed during streaming (M-07).
+		// SHA256 intentionally empty — computed during streaming.
 		meta := &transfer.Metadata{Kind: transfer.KindText, Size: int64(len(data))}
 		return meta, strings.NewReader(input), int64(len(data)), nil
 
 	case transfer.KindStream:
 		// Do not buffer stdin. Stream directly from os.Stdin while computing
-		// hash in parallel via TeeReader in the send loop (M-07).
+		// hash in parallel via TeeReader in the send loop.
 		// Size -1 signals unknown length to the progress bar logic.
 		meta := &transfer.Metadata{Kind: transfer.KindStream, Size: -1}
 		return meta, os.Stdin, -1, nil
@@ -522,7 +522,7 @@ func buildPayload(input string, kind transfer.Kind, name string, isStdinPiped bo
 }
 
 // channelIDAad returns the 2-byte big-endian encoding of id for use as
-// Additional Authenticated Data in AES-GCM endpoint bundle encryption (M-02).
+// Additional Authenticated Data in AES-GCM endpoint bundle encryption.
 func channelIDAad(id uint16) []byte {
 	aad := make([]byte, 2)
 	binary.BigEndian.PutUint16(aad, id)
