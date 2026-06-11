@@ -414,7 +414,7 @@ func TestHolePunch_Timeout(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected timeout error from HolePunch")
 	}
-	if !strings.Contains(err.Error(), "UDP hole punch timed out") {
+	if !strings.Contains(err.Error(), "unreachable after 10s") {
 		t.Errorf("unexpected error message: %v", err)
 	}
 }

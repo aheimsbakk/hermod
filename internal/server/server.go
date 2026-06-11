@@ -122,9 +122,13 @@ func (s *Server) Serve(ctx context.Context, ln net.Listener, tlsCfg *tls.Config)
 	tlsLn := tls.NewListener(ln, tlsCfg)
 
 	s.httpServer = &http.Server{
-		Addr:      ln.Addr().String(),
-		Handler:   mux,
-		TLSConfig: tlsCfg,
+		Addr:              ln.Addr().String(),
+		Handler:           mux,
+		TLSConfig:         tlsCfg,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       120 * time.Second,
 	}
 
 	s.logger.Info("Signaling server ready", "addr", ln.Addr().String())
@@ -480,10 +484,15 @@ func (s *Server) dropChannel(channelID uint16) {
 	s.mu.Lock()
 	conns := s.waiters[channelID]
 	delete(s.waiters, channelID)
+	// Write the error to each peer while holding the lock so that no other
+	// goroutine (e.g. the peer's relay loop) writes to the same connection
+	// concurrently. Gorilla WebSocket panics on concurrent writes (H-04).
+	for _, w := range conns {
+		_ = w.conn.WriteJSON(Message{Type: MsgError, Error: "channel terminated: CPace failure limit exceeded"})
+	}
 	s.mu.Unlock()
 
 	for _, w := range conns {
-		_ = w.conn.WriteJSON(Message{Type: MsgError, Error: "channel terminated: CPace failure limit exceeded"})
 		w.conn.Close()
 	}
 	_ = s.store.DeleteChannel(channelID)
@@ -541,5 +550,7 @@ func publicIPResponse(host string) map[string]string {
 }
 
 func writeError(conn *websocket.Conn, msg string) {
-	conn.WriteJSON(Message{Type: MsgError, Error: msg})
+	if err := conn.WriteJSON(Message{Type: MsgError, Error: msg}); err != nil {
+		slog.Debug("Failed to write error to client", "err", err)
+	}
 }

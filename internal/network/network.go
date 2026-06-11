@@ -231,7 +231,7 @@ func HolePunch(ctx context.Context, probeCtx context.Context, mux *packetMux, ca
 	for {
 		select {
 		case <-ctx.Done():
-			return nil, fmt.Errorf("UDP hole punch timed out: %w", ctx.Err())
+			return nil, fmt.Errorf("unreachable after 10s: %d candidate(s) tried: %w", len(candidates), ctx.Err())
 		case pkt := <-mux.probeCh:
 			if len(pkt.data) < 8 {
 				continue
@@ -369,12 +369,12 @@ func HolePunchDual(ctx context.Context, probeCtx context.Context, mux *packetMux
 	if len(candidatesV4) > 0 {
 		result, err := HolePunch(ctx, probeCtx, mux, candidatesV4, probeNonce)
 		if err != nil {
-			return nil, fmt.Errorf("UDP hole punch failed for all candidates: %w", err)
+			return nil, fmt.Errorf("IPv4 fallback: %w", err)
 		}
 		return result, nil
 	}
 
-	return nil, fmt.Errorf("UDP hole punch failed: no candidates available")
+	return nil, fmt.Errorf("no candidates available (IPv4: %d, IPv6: %d)", len(candidatesV4), len(candidatesV6))
 }
 
 // makeCertPinner returns a VerifyPeerCertificate function that enforces cert hash pinning.

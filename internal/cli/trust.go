@@ -2,8 +2,11 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"net/url"
+	"os/signal"
+	"syscall"
 
 	"github.com/spf13/cobra"
 
@@ -40,6 +43,9 @@ preventing TOFU attacks when the fingerprint is already known.`,
 }
 
 func runTrust(serverArg, knownFingerprint string) error {
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
 	// Normalize: if no scheme, prepend wss://
 	serverURL := serverArg
 	if len(serverURL) < 4 || serverURL[:4] != "wss:" && serverURL[:3] != "ws:" {
@@ -69,7 +75,7 @@ func runTrust(serverArg, knownFingerprint string) error {
 	case ipv6Only:
 		sigFamily = network.IPFamilyV6
 	}
-	fp, err := network.FetchServerFingerprint(serverURL, knownFingerprint, sigFamily)
+	fp, err := network.FetchServerFingerprint(ctx, serverURL, knownFingerprint, sigFamily)
 	if err != nil {
 		return fmt.Errorf("fetch fingerprint: %w", err)
 	}

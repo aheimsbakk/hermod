@@ -10,6 +10,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
@@ -33,17 +34,17 @@ type SignalingClient struct {
 // fingerprint if provided (empty = accept any cert for `trust` bootstrapping).
 // When family is not IPFamilyAny, the TCP connection is restricted to addresses
 // from that IP protocol family only.
-func dialSignaling(serverURL string, pinnedFingerprint string, family IPFamily) (*SignalingClient, error) {
+// The dial is cancelled when ctx is done; HandshakeTimeout is set to 15s.
+func dialSignaling(ctx context.Context, serverURL string, pinnedFingerprint string, family IPFamily) (*SignalingClient, error) {
 	u, err := url.Parse(serverURL)
 	if err != nil {
 		return nil, fmt.Errorf("parse server url: %w", err)
 	}
-	// Convert wss:// -> https:// for dialing
 	switch u.Scheme {
 	case "wss":
 		u.Scheme = "wss"
 	case "ws":
-		u.Scheme = "ws"
+		slog.Warn("Using plaintext WebSocket (ws://) — connection is not encrypted and is vulnerable to interception")
 	default:
 		return nil, fmt.Errorf("unsupported URL scheme: %s", u.Scheme)
 	}
@@ -65,16 +66,18 @@ func dialSignaling(serverURL string, pinnedFingerprint string, family IPFamily) 
 	}
 
 	dialer := websocket.Dialer{
-		TLSClientConfig: tlsCfg,
+		TLSClientConfig:  tlsCfg,
+		HandshakeTimeout: 15 * time.Second, // M1: bound the WebSocket handshake
 	}
 	// Restrict DNS resolution and TCP connections to the requested IP family.
+	// Use the provided context so cancellation propagates to the TCP dial (M3).
 	if family == IPFamilyV4 {
-		dialer.NetDial = func(network, addr string) (net.Conn, error) {
-			return net.Dial("tcp4", addr)
+		dialer.NetDial = func(n, addr string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, "tcp4", addr)
 		}
 	} else if family == IPFamilyV6 {
-		dialer.NetDial = func(network, addr string) (net.Conn, error) {
-			return net.Dial("tcp6", addr)
+		dialer.NetDial = func(n, addr string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, "tcp6", addr)
 		}
 	}
 	wsURL := u.String()
@@ -87,22 +90,22 @@ func dialSignaling(serverURL string, pinnedFingerprint string, family IPFamily) 
 		}
 	}
 
-	conn, _, err := dialer.Dial(wsURL, nil)
+	conn, _, err := dialer.DialContext(ctx, wsURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("WebSocket dial on %s: %w", wsURL, err)
 	}
-	return &SignalingClient{conn: conn, ctx: context.Background(), done: make(chan struct{})}, nil
+	return &SignalingClient{conn: conn, ctx: ctx, done: make(chan struct{})}, nil
 }
 
 // DialSignaling opens a WebSocket to serverURL with optional cert pinning.
-func DialSignaling(serverURL, pinnedFingerprint string) (*SignalingClient, error) {
-	return dialSignaling(serverURL, pinnedFingerprint, IPFamilyAny)
+func DialSignaling(ctx context.Context, serverURL, pinnedFingerprint string) (*SignalingClient, error) {
+	return dialSignaling(ctx, serverURL, pinnedFingerprint, IPFamilyAny)
 }
 
 // DialSignalingWithFamily opens a WebSocket to serverURL with optional cert pinning
 // and restricts DNS resolution and TCP connections to the given IP family.
-func DialSignalingWithFamily(serverURL, pinnedFingerprint string, family IPFamily) (*SignalingClient, error) {
-	return dialSignaling(serverURL, pinnedFingerprint, family)
+func DialSignalingWithFamily(ctx context.Context, serverURL, pinnedFingerprint string, family IPFamily) (*SignalingClient, error) {
+	return dialSignaling(ctx, serverURL, pinnedFingerprint, family)
 }
 
 // WithContext returns a copy of the client whose blocking reads are cancelled
@@ -260,7 +263,8 @@ func (c *SignalingClient) WaitReady() error {
 //
 // When family is not IPFamilyAny, DNS resolution and TCP connections are
 // restricted to that IP protocol family.
-func FetchServerFingerprint(serverURL string, pinnedFingerprint string, family IPFamily) (string, error) {
+// The request is cancelled when ctx is done.
+func FetchServerFingerprint(ctx context.Context, serverURL string, pinnedFingerprint string, family IPFamily) (string, error) {
 	u, err := url.Parse(serverURL)
 	if err != nil {
 		return "", fmt.Errorf("parse server URL: %w", err)
@@ -292,20 +296,25 @@ func FetchServerFingerprint(serverURL string, pinnedFingerprint string, family I
 
 	transport := &http.Transport{TLSClientConfig: tlsCfg}
 	// Restrict DNS resolution and TCP connections to the requested IP family.
+	// Use the provided context so cancellation propagates to the TCP dial (M3).
 	if family == IPFamilyV4 {
-		transport.DialContext = func(_ context.Context, network, addr string) (net.Conn, error) {
-			return net.Dial("tcp4", addr)
+		transport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, "tcp4", addr)
 		}
 	} else if family == IPFamilyV6 {
-		transport.DialContext = func(_ context.Context, network, addr string) (net.Conn, error) {
-			return net.Dial("tcp6", addr)
+		transport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, "tcp6", addr)
 		}
 	}
 	client := &http.Client{
 		Transport: transport,
 		Timeout:   10 * time.Second,
 	}
-	resp, err := client.Get(certURL)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, certURL, nil)
+	if err != nil {
+		return "", fmt.Errorf("create cert request: %w", err)
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("fetch cert from %s: %w", certURL, err)
 	}
@@ -315,9 +324,13 @@ func FetchServerFingerprint(serverURL string, pinnedFingerprint string, family I
 		return "", fmt.Errorf("certificate endpoint returned %s", resp.Status)
 	}
 
-	certPEM, err := io.ReadAll(resp.Body)
+	// M2: limit certificate response to 8 KB (a valid PEM cert is at most ~2 KB).
+	certPEM, err := io.ReadAll(io.LimitReader(resp.Body, 8192))
 	if err != nil {
 		return "", fmt.Errorf("read cert response: %w", err)
+	}
+	if len(certPEM) >= 8192 {
+		return "", fmt.Errorf("certificate response exceeds maximum size")
 	}
 	if len(certPEM) == 0 {
 		return "", fmt.Errorf("empty certificate response")

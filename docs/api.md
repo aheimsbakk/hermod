@@ -219,9 +219,14 @@ JSON serialisation for the CPace public message exchanged via the signaling rela
 ### Signaling client
 
 ```go
-func DialSignaling(serverURL, pinnedFingerprint string) (*SignalingClient, error)
+func DialSignaling(ctx context.Context, serverURL, pinnedFingerprint string) (*SignalingClient, error)
 ```
-Opens a WebSocket connection to the signaling server. If `pinnedFingerprint` is non-empty, the server's certificate must match.
+Opens a WebSocket connection to the signaling server. If `pinnedFingerprint` is non-empty, the server's certificate must match. The dial is cancelled when `ctx` is done; `HandshakeTimeout` is 15s.
+
+```go
+func DialSignalingWithFamily(ctx context.Context, serverURL, pinnedFingerprint string, family IPFamily) (*SignalingClient, error)
+```
+Like `DialSignaling` but restricts DNS and TCP to the given IP family (`IPFamilyAny`, `IPFamilyV4`, `IPFamilyV6`).
 
 ```go
 func (c *SignalingClient) WithContext(ctx context.Context) *SignalingClient
@@ -238,9 +243,9 @@ func (c *SignalingClient) WaitReady() error
 ```
 
 ```go
-func FetchServerFingerprint(serverURL string, pinnedFingerprint string, family IPFamily) (string, error)
+func FetchServerFingerprint(ctx context.Context, serverURL string, pinnedFingerprint string, family IPFamily) (string, error)
 ```
-Fetches the server's TLS certificate via the HTTPS `/cert` endpoint, decodes the PEM block, and returns the SHA-256 fingerprint of the DER certificate. When `pinnedFingerprint` is non-empty, the certificate is verified against this value during the TLS handshake. When empty (TOFU mode), only use over a trusted network (VPN, LAN, or out-of-band fingerprint verification). `family` restricts DNS and TCP to the given IP family (`IPFamilyAny`, `IPFamilyV4`, `IPFamilyV6`). Used by `hermod trust`.
+Fetches the server's TLS certificate via the HTTPS `/cert` endpoint, decodes the PEM block, and returns the SHA-256 fingerprint of the DER certificate. When `pinnedFingerprint` is non-empty, the certificate is verified against this value during the TLS handshake. When empty (TOFU mode), only use over a trusted network (VPN, LAN, or out-of-band fingerprint verification). `family` restricts DNS and TCP to the given IP family (`IPFamilyAny`, `IPFamilyV4`, `IPFamilyV6`). The request is cancelled when `ctx` is done. Used by `hermod trust`.
 
 ---
 

@@ -178,7 +178,7 @@ func runSender(serverURL string, channelID uint16, password string, kind transfe
 	}
 	myFP := network.CertFingerprint(epCertDER)
 
-	sig, err := network.DialSignaling(serverURL, "")
+	sig, err := network.DialSignaling(context.Background(), serverURL, "")
 	if err != nil {
 		return fmt.Errorf("dial: %w", err)
 	}
@@ -341,7 +341,7 @@ func runReceiver(serverURL, code string) ([]byte, error) {
 		if sig != nil {
 			sig.Close()
 		}
-		sig, err = network.DialSignaling(serverURL, "")
+		sig, err = network.DialSignaling(context.Background(), serverURL, "")
 		if err != nil {
 			return nil, err
 		}

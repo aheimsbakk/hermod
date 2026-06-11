@@ -192,7 +192,7 @@ You can cancel SAS verification at any time by pressing Ctrl+C. The cancellation
 
 Hermod stores its config in:
 - Linux/macOS: `~/.config/hermod/config.yaml`
-- Windows: `%APPDATA%\Hermod\config.yaml`
+- Windows: `%APPDATA%\Hermod\config.yaml` (resolved via `os.UserConfigDir()`)
 - The server certificate PEM is stored in the same file
 
 No environment variables are required for normal use. Supported env vars:

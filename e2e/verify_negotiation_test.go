@@ -50,7 +50,7 @@ func runSenderVerify(serverURL string, channelID uint16, password string, payloa
 	}
 	myFP := network.CertFingerprint(epCertDER)
 
-	sig, err := network.DialSignaling(serverURL, "")
+	sig, err := network.DialSignaling(context.Background(), serverURL, "")
 	if err != nil {
 		return verifyResult{err: fmt.Errorf("dial: %w", err)}
 	}
@@ -203,7 +203,7 @@ func runReceiverVerify(serverURL, code string, requireVerify bool) verifyResult 
 	}
 	myFP := network.CertFingerprint(epCertDER)
 
-	sig, err := network.DialSignaling(serverURL, "")
+	sig, err := network.DialSignaling(context.Background(), serverURL, "")
 	if err != nil {
 		return verifyResult{err: err}
 	}

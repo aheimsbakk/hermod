@@ -114,7 +114,11 @@ func runTx(input, serverURL string, numWords int, verify bool, listenUDP string,
 	if err != nil {
 		return fmt.Errorf("classify input: %w", err)
 	}
-	logDebug("payload classified", "kind", kind, "name", name, "input", input)
+	loggedInput := input
+	if kind == transfer.KindText {
+		loggedInput = "<redacted>"
+	}
+	logDebug("payload classified", "kind", kind, "name", name, "input", loggedInput)
 
 	// Generate transfer code
 	channelID, code, err := crypto.GenerateTransferCode(numWords)
@@ -142,7 +146,7 @@ func runTx(input, serverURL string, numWords int, verify bool, listenUDP string,
 		sigFamily = network.IPFamilyV6
 	}
 	logInfo("Connecting to signaling server", "server", serverURL)
-	sigRaw, err := network.DialSignalingWithFamily(serverURL, pinnedFP, sigFamily)
+	sigRaw, err := network.DialSignalingWithFamily(ctx, serverURL, pinnedFP, sigFamily)
 	if err != nil {
 		return fmt.Errorf("connect to signaling server: %w", err)
 	}
@@ -339,7 +343,7 @@ func runTx(input, serverURL string, numWords int, verify bool, listenUDP string,
 	printStatus("Establishing P2P connection...")
 	punchResult, err := network.HolePunchDual(ctx, probeCtx, mux, candidatesV4, candidatesV6, holePunchNonce(kClassical))
 	if err != nil {
-		return fmt.Errorf("UDP hole punch: %w", err)
+		return fmt.Errorf("hole punch: %w", err)
 	}
 	logInfo("UDP hole punch succeeded", "peer_addr", punchResult.PeerAddr.String())
 
@@ -561,7 +565,7 @@ func generateEphemeralCert() (*x509.Certificate, interface{}, []byte, error) {
 		SerialNumber: serial,
 		Subject:      pkix.Name{CommonName: "hermod-ephemeral"},
 		NotBefore:    time.Now().Add(-time.Minute),
-		NotAfter:     time.Now().Add(24 * time.Hour),
+		NotAfter:     time.Now().Add(2 * time.Hour),
 		KeyUsage:     x509.KeyUsageDigitalSignature,
 	}
 	certDER, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, key.Public(), key)

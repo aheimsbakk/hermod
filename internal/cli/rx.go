@@ -104,7 +104,7 @@ func runRx(code, destination, serverURL string, verify bool, listenUDP string, s
 		sigFamily = network.IPFamilyV6
 	}
 	logInfo("Connecting to signaling server", "server", serverURL)
-	sigRaw, err := network.DialSignalingWithFamily(serverURL, pinnedFP, sigFamily)
+	sigRaw, err := network.DialSignalingWithFamily(ctx, serverURL, pinnedFP, sigFamily)
 	if err != nil {
 		return fmt.Errorf("connect to signaling server: %w", err)
 	}
@@ -279,7 +279,7 @@ func runRx(code, destination, serverURL string, verify bool, listenUDP string, s
 	printStatus("Establishing P2P connection...")
 	punchResult, err := network.HolePunchDual(ctx, probeCtx, mux, candidatesV4, candidatesV6, holePunchNonce(kClassical))
 	if err != nil {
-		return fmt.Errorf("UDP hole punch: %w", err)
+		return fmt.Errorf("hole punch: %w", err)
 	}
 	logInfo("UDP hole punch succeeded", "peer_addr", punchResult.PeerAddr.String())
 
@@ -364,7 +364,7 @@ func runRx(code, destination, serverURL string, verify bool, listenUDP string, s
 	if err != nil {
 		logWarn("could not accept trailing hash stream — skipping integrity check", "err", err)
 	} else {
-		trailingHashBytes, hashErr := readLenPrefixed(hashStream)
+		trailingHashBytes, hashErr := readLenPrefixedMax(hashStream, 256)
 		hashStream.Close()
 		if hashErr != nil {
 			logWarn("could not read trailing hash — skipping integrity check", "err", hashErr)
@@ -469,7 +469,16 @@ func saveToFile(ctx context.Context, r io.Reader, meta *transfer.Metadata, desti
 	}
 
 	tmpPath := transfer.TempPath(destPath)
-	f, err := os.Create(tmpPath)
+	// M4: create temp file with 0o600 permissions and O_EXCL to prevent
+	// silently overwriting a stale temp from a previous crashed transfer.
+	f, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0o600)
+	if os.IsExist(err) {
+		// Stale temp file — remove and retry.
+		if removeErr := os.Remove(tmpPath); removeErr != nil {
+			return "", fmt.Errorf("remove stale temp file: %w", removeErr)
+		}
+		f, err = os.OpenFile(tmpPath, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0o600)
+	}
 	if err != nil {
 		return "", fmt.Errorf("create temp file: %w", err)
 	}
@@ -527,15 +536,21 @@ func saveToFile(ctx context.Context, r io.Reader, meta *transfer.Metadata, desti
 	return computedHash, nil
 }
 
-// readLenPrefixed reads a 4-byte big-endian length-prefixed message from r.
+// readLenPrefixed reads a 4-byte big-endian length-prefixed message from r
+// with a maximum allowed size of 1 MiB.
 func readLenPrefixed(r io.Reader) ([]byte, error) {
+	return readLenPrefixedMax(r, 1<<20)
+}
+
+// readLenPrefixedMax is like readLenPrefixed but with an explicit max byte limit.
+func readLenPrefixedMax(r io.Reader, max uint32) ([]byte, error) {
 	var lenBuf [4]byte
 	if _, err := io.ReadFull(r, lenBuf[:]); err != nil {
 		return nil, fmt.Errorf("read length: %w", err)
 	}
 	length := binary.BigEndian.Uint32(lenBuf[:])
-	if length > 1<<20 { // 1 MiB sanity limit for metadata
-		return nil, fmt.Errorf("metadata too large: %d bytes", length)
+	if length > max {
+		return nil, fmt.Errorf("message too large: %d bytes (max %d)", length, max)
 	}
 	buf := make([]byte, length)
 	if _, err := io.ReadFull(r, buf); err != nil {

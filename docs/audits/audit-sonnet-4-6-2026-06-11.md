@@ -1,4 +1,4 @@
-# Security Audit — Hermod v0.16.0
+# Security Audit — Hermod v0.16.1
 
 **Model:** github-copilot/claude-sonnet-4.6  
 **Date:** 2026-06-11  
@@ -11,20 +11,22 @@
 
 | Severity | Count |
 |----------|-------|
-| High     | 4     |
-| Medium   | 5     |
-| Low      | 6     |
+| High     | 0     |
+| Medium   | 0     |
+| Low      | 1     |
 | Info     | 2     |
 
 No critical findings. The core security architecture is sound: CPace PAKE over an untrusted relay, ephemeral cert pinning, AES-256-GCM endpoint bundle encryption, SHA-256 trailing integrity, TLS 1.3 minimum, and per-IP HMAC-keyed rate limiting all work correctly as designed. `govulncheck` could not complete a module-level scan due to a type-information issue with `golang.org/x/sys/unix`; no known CVEs were identified in the dependency set through manual review.
 
 The findings below are implementation defects and defense-in-depth gaps, not architectural breaks.
 
+**All 4 high-severity findings (H1–H4), all 5 medium-severity findings (M1–M5), and 5 of 6 low-severity findings (L1–L5) have been fixed and verified. L6 (SASFromBytes fallback modulo bias) excluded by design — the fallback path is unreachable with 32-byte input and the fix would be a breaking API change with zero practical benefit. Tests pass.**
+
 ---
 
 ## High
 
-### H1 — HTTP server has no timeouts (Slowloris DoS)
+### ~~H1 — HTTP server has no timeouts (Slowloris DoS)~~ ✅ Solved
 
 **File:** `internal/server/server.go:124–128`
 
@@ -54,7 +56,7 @@ s.httpServer = &http.Server{
 
 ---
 
-### H2 — Deprecated `crypto/elliptic` scalar multiplication with a secret scalar
+### ~~H2 — Deprecated `crypto/elliptic` scalar multiplication with a secret scalar~~ ✅ Solved
 
 **Files:** `internal/crypto/crypto.go:63, 90, 156, 162`
 
@@ -68,13 +70,16 @@ iskX, _ := curve.ScalarMult(peerX, peerY, s.scalar)
 
 The scalar is ephemeral (one per session), so the practical attack window is narrow. However, the Go documentation is unambiguous: this API must not be used with secret inputs.
 
-**Fix:** Replace with `crypto/ecdh.P256()` (available since Go 1.20) or `filippo.io/nistec.P256Point`, which provides constant-time scalar multiplication by design. The `filippo.io/nistec` package is already an indirect dependency.
+**Fix:** Replaced all `elliptic.P256().ScalarMult()` calls with `crypto/ecdh.P256()`, which provides constant-time scalar multiplication as part of the standard library. The `crypto/elliptic` import was removed from production code.
 
-Also applies to `elliptic.P256().IsOnCurve()` at line 162 — replace with `ecdh`'s built-in point validation.
+- `CPaceInit`: creates a `ecdh.PrivateKey` from the ephemeral scalar and a `ecdh.PublicKey` from the hash-to-curve generator point, then calls `ECDH()` to get the x-coordinate of `scalar * G_password`. The y-coordinate is recovered from the curve equation (`y² = x³ - 3x + b mod p`, with `p ≡ 3 mod 4` giving `y = (y²)^((p+1)/4) mod p`).
+- `CPaceFinish`: uses `ecdh.P256().NewPublicKey()` to parse and validate the peer's point (on-curve check), then `ecdh.PrivateKey.ECDH(peerKey)` to compute the shared x-coordinate directly.
+- `unmarshalPoint` (dead code) replaced entirely by `ecdh`'s built-in point validation — removed.
+- No new dependencies; `crypto/ecdh` is in the standard library since Go 1.20.
 
 ---
 
-### H3 — DST silently truncated for long passwords — not RFC 9380 compliant
+### ~~H3 — DST silently truncated for long passwords — not RFC 9380 compliant~~ ✅ Solved
 
 **File:** `internal/crypto/hash_to_curve.go:336–338`
 
@@ -104,7 +109,7 @@ if len(dst) > 255 {
 
 ---
 
-### H4 — `dropChannel` writes to WebSocket connections outside mutex — concurrent write race
+### ~~H4 — `dropChannel` writes to WebSocket connections outside mutex — concurrent write race~~ ✅ Solved
 
 **File:** `internal/server/server.go:479–490`
 
@@ -149,7 +154,7 @@ func (s *Server) dropChannel(channelID uint16) {
 
 ## Medium
 
-### M1 — WebSocket dial has no timeout and ignores context
+### ~~M1 — WebSocket dial has no timeout and ignores context~~ ✅ Solved
 
 **File:** `internal/network/signaling.go:67–93`
 
@@ -181,7 +186,7 @@ The function signature of `dialSignaling` should be updated to accept a `context
 
 ---
 
-### M2 — `io.ReadAll` without size limit on certificate fetch
+### ~~M2 — `io.ReadAll` without size limit on certificate fetch~~ ✅ Solved
 
 **File:** `internal/network/signaling.go:318`
 
@@ -202,7 +207,7 @@ if err == nil && len(certPEM) == 8192 {
 
 ---
 
-### M3 — `DialContext` callbacks ignore the provided context
+### ~~M3 — `DialContext` callbacks ignore the provided context~~ ✅ Solved
 
 **File:** `internal/network/signaling.go:296–301`
 
@@ -226,7 +231,7 @@ Apply the same fix to the IPv6 counterpart at line 300.
 
 ---
 
-### M4 — Temp file created with world-readable default permissions
+### ~~M4 — Temp file created with world-readable default permissions~~ ✅ Solved
 
 **File:** `internal/cli/rx.go:472`
 
@@ -251,7 +256,7 @@ if os.IsExist(err) {
 
 ---
 
-### M5 — Plaintext `ws://` accepted without warning
+### ~~M5 — Plaintext `ws://` accepted without warning~~ ✅ Solved
 
 **Files:** `internal/network/signaling.go:46–48`, `internal/cli/trust.go:45`
 
@@ -275,7 +280,7 @@ case "ws":
 
 ## Low
 
-### L1 — KindText input logged at debug level
+### ~~L1 — KindText input logged at debug level~~ ✅ Solved
 
 **File:** `internal/cli/tx.go:117`
 
@@ -297,7 +302,7 @@ logDebug("payload classified", "kind", kind, "name", name, "input", loggedInput)
 
 ---
 
-### L2 — Trailing hash stream allows 1 MiB allocation per read
+### ~~L2 — Trailing hash stream allows 1 MiB allocation per read~~ ✅ Solved
 
 **File:** `internal/cli/rx.go:537`
 
@@ -317,7 +322,7 @@ trailingHashBytes, hashErr := readLenPrefixedMax(hashStream, 256)
 
 ---
 
-### L3 — Ephemeral QUIC cert has a 24-hour validity window
+### ~~L3 — Ephemeral QUIC cert has a 24-hour validity window~~ ✅ Solved
 
 **File:** `internal/cli/tx.go:563–564`
 
@@ -332,7 +337,7 @@ Ephemeral certificates exist only for the duration of a single transfer session 
 
 ---
 
-### L4 — Windows config path controlled by `APPDATA` environment variable
+### ~~L4 — Windows config path controlled by `APPDATA` environment variable~~ ✅ Solved
 
 **File:** `internal/config/config.go:56`
 
@@ -354,7 +359,7 @@ return filepath.Join(dir, "Hermod")
 
 ---
 
-### L5 — `writeError` silently discards write errors
+### ~~L5 — `writeError` silently discards write errors~~ ✅ Solved
 
 **File:** `internal/server/server.go:543–545`
 
