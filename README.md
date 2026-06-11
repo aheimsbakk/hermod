@@ -209,7 +209,7 @@ No environment variables are required for normal use. Supported env vars:
 2. The transfer code encodes the channel ID plus a random word passphrase.
 3. The receiver connects to the signaling server using the code and joins the channel.
 4. Both peers run a CPace PAKE handshake over the signaling channel to establish a shared key, authenticated by the passphrase.
-5. Each peer encrypts its UDP endpoints with the shared key and sends them through the signaling relay.
+5. Both peers exchange X25519 public keys and ML-KEM-768 (post-quantum) keys, deriving a hybrid key from CPace + X25519 + ML-KEM-768. UDP endpoints are encrypted with this hybrid key and exchanged through the signaling relay. Even if the CPace key is broken by a quantum computer, the ML-KEM component protects the endpoint data.
 6. Both peers punch through NAT using a two-phase holepunch: IPv6 first (5 s), then IPv4 (10 s). Use `-4` or `-6` to enforce a single protocol.
 7. A QUIC connection is established directly between the peers, with the server certificate pinned to each side's ephemeral cert.
 8. File metadata and payload stream over QUIC. The receiver verifies the SHA-256 hash on arrival.
@@ -222,6 +222,7 @@ See [docs/protocol.md](docs/protocol.md) for the full protocol specification.
 |---|---|
 | Confidentiality | TLS 1.3 over QUIC |
 | Authentication | CPace PAKE — only someone with the transfer code can connect |
+| Post-quantum handshake | Hybrid KEM (X25519 + ML-KEM-768) layered on CPace — endpoint bundles are secure even against quantum cryptanalysis |
 | Integrity | SHA-256 hash verified on the received payload |
 | Server cannot read data | Payload never touches the signaling server |
 | Active MITM detection | Optional SAS out-of-band verification |

@@ -5,6 +5,33 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.17.0] - 2026-06-11
+
+- **why:** Add hybrid KEM encryption (X25519 + ML-KEM-768 + CPace) for endpoint bundles exchanged over signaling relay, providing post-quantum security for the handshake phase
+- **model:** opencode/deepseek-v4-flash
+- **tags:** crypto, kem, post-quantum, mlkem, security
+
+### Added
+
+- `GenerateX25519KeyPair()`, `ECDHX25519()`, `GenerateMLKEMReceiverKey()`, `EncapsulateMLKEM()`, `DecapsulateMLKEM()`, `DeriveHybridBlobKey()` — three-pillar hybrid KEM using CPace (P-256) + X25519 ECDH + ML-KEM-768 (`crypto/mlkem` stdlib). Hybrid key = SHA-256(kClassical || ssX25519 || ssMLKEM) (`internal/crypto/crypto.go`)
+- Binary blob serialization: `SenderHandshakeBlob`, `ParseSenderHandshakeBlob`, `ReceiverHandshakeBlob`, `ParseReceiverHandshakeBlob`, `SenderBundleBlob`, `ParseSenderBundleBlob` — fixed-length encoding for CPace points, X25519 keys, ML-KEM encapsulation keys, and ciphertexts (`internal/network/handshake.go`)
+- Verification chain table in `docs/protocol.md` documenting all 9 verification layers from CPace through trailing SHA-256 hash
+- Unit tests for hybrid KEM key generation, ECDH, ML-KEM round-trip, hybrid key derivation, and end-to-end sender-receiver exchange (`internal/crypto/crypto_test.go`)
+- Unit tests for handshake blob serialization round-trips and error paths (`internal/network/network_test.go`)
+
+### Changed
+
+- Endpoint bundle encryption now uses `hybridKey` instead of `kClassical` directly. Sender and receiver exchange X25519 public keys + ML-KEM encapsulation keys alongside CPace points in binary format (2 blobs), then exchange KEM ciphertext + encrypted bundles (2 blobs) — still 4 blobs total (`internal/cli/tx.go`, `internal/cli/rx.go`)
+- Hole punch nonce now derived from `hybridKey` (CPace + X25519 + ML-KEM-768) instead of `kClassical` alone — consistent with using the strongest session key material (`internal/cli/tx.go`, `internal/cli/rx.go`)
+- All e2e tests updated to use hybrid KEM flow instead of CPace-only exchange (`e2e/integration_test.go`, `e2e/verify_negotiation_test.go`)
+- `BLUEPRINT.md` and `CONTEXT.md` updated with hybrid KEM architecture and dependency notes
+- `docs/api.md` updated with hybrid KEM function signatures, blob serialisation API, replaced obsolete CPaceMsg section, updated HolePunch nonce doc
+- `README.md` step 5 and security table updated to mention post-quantum hybrid KEM
+
+### Removed
+
+- Old CPace-only endpoint bundle encryption (AES-256-GCM with kClassical only) — wire protocol is now hybrid-only, no backward compatibility
+
 ## [v0.16.2] - 2026-06-11
 
 - **why:** Resolve security audit findings from gpt-5.4 — expired channel cleanup, client-side WebSocket read limit, trailing hash fail-closed, ws:// rejection, and SAS defense-in-depth

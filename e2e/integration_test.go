@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/tls"
+	"encoding/binary"
 	"encoding/hex"
 	"fmt"
 	"log/slog"
@@ -203,24 +204,51 @@ func runSender(serverURL string, channelID uint16, password string, kind transfe
 		return fmt.Errorf("initialize CPace handshake: %w", err)
 	}
 
+	x25519Priv, x25519Pub, err := crypto.GenerateX25519KeyPair()
+	if err != nil {
+		return fmt.Errorf("generate X25519 key pair: %w", err)
+	}
+
 	// Wait for receiver
 	if err := sig.WaitReady(); err != nil {
 		return fmt.Errorf("wait ready: %w", err)
 	}
 
-	// CPace exchange
-	cpaceMsgBytes, _ := network.EncodeCPaceMsg(network.CPaceMsg{PubMsg: myPubMsg})
-	sig.SendBlob(channelID, cpaceMsgBytes)
+	// Hybrid KEM handshake — send blob 1 (CPace + X25519 pub)
+	blob1 := network.SenderHandshakeBlob(myPubMsg, x25519Pub)
+	sig.SendBlob(channelID, blob1)
 
-	peerCPaceMsgBytes, err := sig.RecvBlob()
+	// Receive blob 2 (receiver CPace + X25519 pub + ML-KEM enc key)
+	blob2, err := sig.RecvBlob()
 	if err != nil {
-		return fmt.Errorf("recv cpace: %w", err)
+		return fmt.Errorf("recv handshake blob: %w", err)
 	}
-	peerCPaceMsg, _ := network.DecodeCPaceMsg(peerCPaceMsgBytes)
-	kClassical, err := cpaceSession.CPaceFinish(peerCPaceMsg.PubMsg)
+	peerCPacePub, peerX25519Pub, mlkemEncapKey, err := network.ParseReceiverHandshakeBlob(blob2)
+	if err != nil {
+		return fmt.Errorf("parse receiver handshake blob: %w", err)
+	}
+
+	kClassical, err := cpaceSession.CPaceFinish(peerCPacePub)
 	if err != nil {
 		return fmt.Errorf("complete CPace handshake: %w", err)
 	}
+
+	peerX25519Key, err := crypto.NewX25519PubFromBytes(peerX25519Pub)
+	if err != nil {
+		return fmt.Errorf("parse peer X25519 pub: %w", err)
+	}
+	ssX25519, err := crypto.ECDHX25519(x25519Priv, peerX25519Key)
+	if err != nil {
+		return fmt.Errorf("compute X25519 shared secret: %w", err)
+	}
+
+	peerMLKEMKey, err := crypto.NewEncapsulationKey768Bytes(mlkemEncapKey)
+	if err != nil {
+		return fmt.Errorf("parse peer ML-KEM key: %w", err)
+	}
+	ssMLKEM, kemCt := crypto.EncapsulateMLKEM(peerMLKEMKey)
+
+	hybridKey := crypto.DeriveHybridBlobKey(kClassical, ssX25519, ssMLKEM)
 
 	// Endpoint exchange
 	localV4, localV6, _ := network.LocalEndpoints(localAddr.Port, network.IPFamilyAny)
@@ -240,14 +268,18 @@ func runSender(serverURL string, channelID uint16, password string, kind transfe
 		CertFingerprint:  myFP,
 	}
 	bundleBytes, _ := network.EncodeEndpointBundle(bundle)
-	encBundle, _ := crypto.Seal(kClassical, bundleBytes)
-	sig.SendBlob(channelID, encBundle)
+	encBundle, _ := crypto.SealAAD(hybridKey, channelIDAad(channelID), bundleBytes)
 
+	// Send blob 3 (KEM ciphertext + encrypted bundle)
+	blob3 := network.SenderBundleBlob(kemCt, encBundle)
+	sig.SendBlob(channelID, blob3)
+
+	// Receive blob 4 (peer's encrypted bundle)
 	encPeerBundle, err := sig.RecvBlob()
 	if err != nil {
 		return fmt.Errorf("receive endpoint bundle from peer: %w", err)
 	}
-	peerBundleBytes, err := crypto.Open(kClassical, encPeerBundle)
+	peerBundleBytes, err := crypto.OpenAAD(hybridKey, channelIDAad(channelID), encPeerBundle)
 	if err != nil {
 		return fmt.Errorf("decrypt peer bundle: %w", err)
 	}
@@ -368,21 +400,43 @@ func runReceiver(serverURL, code string) ([]byte, error) {
 
 	cpaceSession, myPubMsg, _ := crypto.CPaceInit(password, channelID, "receiver")
 
-	// Exchange CPace
-	peerCPaceMsgBytes, err := sig.RecvBlob()
+	x25519Priv, x25519Pub, _ := crypto.GenerateX25519KeyPair()
+	mlkemKeys, _ := crypto.GenerateMLKEMReceiverKey()
+
+	// Receive blob 1 (sender CPace + X25519 pub)
+	blob1, err := sig.RecvBlob()
 	if err != nil {
-		return nil, fmt.Errorf("recv cpace: %w", err)
+		return nil, fmt.Errorf("recv handshake blob: %w", err)
 	}
-	peerCPaceMsg, _ := network.DecodeCPaceMsg(peerCPaceMsgBytes)
+	peerCPacePub, peerX25519Pub, err := network.ParseSenderHandshakeBlob(blob1)
+	if err != nil {
+		return nil, fmt.Errorf("parse sender handshake blob: %w", err)
+	}
 
-	cpaceMsgBytes, _ := network.EncodeCPaceMsg(network.CPaceMsg{PubMsg: myPubMsg})
-	sig.SendBlob(channelID, cpaceMsgBytes)
+	// Send blob 2 (CPace + X25519 pub + ML-KEM enc key)
+	blob2 := network.ReceiverHandshakeBlob(myPubMsg, x25519Pub, mlkemKeys.EncapKeyBytes())
+	sig.SendBlob(channelID, blob2)
 
-	kClassical, _ := cpaceSession.CPaceFinish(peerCPaceMsg.PubMsg)
+	kClassical, _ := cpaceSession.CPaceFinish(peerCPacePub)
 
-	// Exchange endpoints
-	encSenderBundle, _ := sig.RecvBlob()
-	senderBundleBytes, _ := crypto.Open(kClassical, encSenderBundle)
+	peerX25519Key, _ := crypto.NewX25519PubFromBytes(peerX25519Pub)
+	ssX25519, _ := crypto.ECDHX25519(x25519Priv, peerX25519Key)
+
+	// Receive blob 3 (KEM ciphertext + encrypted sender bundle)
+	blob3, err := sig.RecvBlob()
+	if err != nil {
+		return nil, fmt.Errorf("recv sender bundle blob: %w", err)
+	}
+	kemCt, encSenderBundle, err := network.ParseSenderBundleBlob(blob3)
+	if err != nil {
+		return nil, fmt.Errorf("parse sender bundle blob: %w", err)
+	}
+
+	ssMLKEM, _ := crypto.DecapsulateMLKEM(mlkemKeys.DecapKey, kemCt)
+
+	hybridKey := crypto.DeriveHybridBlobKey(kClassical, ssX25519, ssMLKEM)
+
+	senderBundleBytes, _ := crypto.OpenAAD(hybridKey, channelIDAad(channelID), encSenderBundle)
 	senderBundle, _ := network.DecodeEndpointBundle(senderBundleBytes)
 
 	localV4, localV6, _ := network.LocalEndpoints(localAddr.Port, network.IPFamilyAny)
@@ -402,7 +456,7 @@ func runReceiver(serverURL, code string) ([]byte, error) {
 		CertFingerprint:  myFP,
 	}
 	myBundleBytes, _ := network.EncodeEndpointBundle(myBundle)
-	encMyBundle, _ := crypto.Seal(kClassical, myBundleBytes)
+	encMyBundle, _ := crypto.SealAAD(hybridKey, channelIDAad(channelID), myBundleBytes)
 	sig.SendBlob(channelID, encMyBundle)
 
 	candidatesV4, _ := network.ParseCandidates(senderBundle.CandidatesV4())
@@ -498,4 +552,10 @@ func readFull(r interface{ Read([]byte) (int, error) }, buf []byte) (int, error)
 		}
 	}
 	return total, nil
+}
+
+func channelIDAad(id uint16) []byte {
+	aad := make([]byte, 2)
+	binary.BigEndian.PutUint16(aad, id)
+	return aad
 }

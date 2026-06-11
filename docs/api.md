@@ -64,6 +64,58 @@ func (s *CPaceSession) CPaceFinish(peerPubMsg []byte) ([]byte, error)
 ```
 Completes the handshake using the peer's public message. Returns a 32-byte shared key. Returns an error if `peerPubMsg` is not a valid P-256 point.
 
+### Hybrid KEM (X25519 + ML-KEM-768)
+
+```go
+func GenerateX25519KeyPair() (*ecdh.PrivateKey, []byte, error)
+```
+Generates an ephemeral X25519 key pair. Returns the private key and the 32-byte public key.
+
+```go
+func ECDHX25519(priv *ecdh.PrivateKey, pub *ecdh.PublicKey) ([]byte, error)
+```
+Computes the X25519 ECDH shared secret. Returns 32 bytes.
+
+```go
+func NewX25519PubFromBytes(data []byte) (*ecdh.PublicKey, error)
+```
+Parses a 32-byte X25519 public key.
+
+```go
+type MLKEMReceiverKey struct {
+    DecapKey *mlkem.DecapsulationKey768
+    EncapKey *mlkem.EncapsulationKey768
+}
+
+func GenerateMLKEMReceiverKey() (*MLKEMReceiverKey, error)
+```
+Generates an ML-KEM-768 key pair for the receiver side. The receiver sends `EncapKeyBytes()` to the sender and keeps `DecapKey` for decapsulation.
+
+```go
+func (k *MLKEMReceiverKey) EncapKeyBytes() []byte
+```
+Returns the 1184-byte ML-KEM-768 encapsulation key.
+
+```go
+func NewEncapsulationKey768Bytes(data []byte) (*mlkem.EncapsulationKey768, error)
+```
+Parses a 1184-byte ML-KEM-768 encapsulation key received from a peer.
+
+```go
+func EncapsulateMLKEM(ek *mlkem.EncapsulationKey768) (sharedKey, ciphertext []byte)
+```
+Encapsulates a shared secret using the peer's encapsulation key. Returns the 32-byte shared key and the 1088-byte ciphertext.
+
+```go
+func DecapsulateMLKEM(dk *mlkem.DecapsulationKey768, ciphertext []byte) ([]byte, error)
+```
+Recovers the 32-byte shared secret from a KEM ciphertext.
+
+```go
+func DeriveHybridBlobKey(kClassical, ssX25519, ssMLKEM []byte) []byte
+```
+Derives the 32-byte hybrid blob key: `SHA-256(kClassical || ssX25519 || ssMLKEM)`. Combines CPace (P-256) + X25519 ECDH + ML-KEM-768 into a single key. Security is at least as strong as the strongest component.
+
 ### Symmetric encryption
 
 ```go
@@ -72,9 +124,19 @@ func Seal(key, plaintext []byte) ([]byte, error)
 Encrypts `plaintext` with AES-256-GCM. Generates a random 12-byte nonce, prepends it to the ciphertext. `key` must be 32 bytes.
 
 ```go
+func SealAAD(key, aad, plaintext []byte) ([]byte, error)
+```
+Like `Seal` but binds `aad` as additional authenticated data. Used for endpoint bundle encryption with the channel ID as AAD.
+
+```go
 func Open(key, ciphertext []byte) ([]byte, error)
 ```
 Decrypts and authenticates ciphertext produced by `Seal`. Returns an error if authentication fails.
+
+```go
+func OpenAAD(key, aad, blob []byte) ([]byte, error)
+```
+Like `Open` but requires the same `aad` used during encryption.
 
 ### Transfer codes
 
@@ -141,7 +203,7 @@ type HolePunchResult struct {
 
 func HolePunch(ctx context.Context, mux *packetMux, candidates []*net.UDPAddr, probeNonce [32]byte) (*HolePunchResult, error)
 ```
-Sends 8-byte probe packets (marker byte + 7 hash bytes) to all candidate addresses concurrently until one replies. `probeNonce` is a 32-byte SHA-256 hash derived from the CPace shared key; bytes [0:7] form the probe payload and bytes [8:15] form the ack payload, giving 64 bits of entropy per packet. Returns the first address that responds. Cancelled by `ctx` timeout (default 10 s).
+Sends 8-byte probe packets (marker byte + 7 hash bytes) to all candidate addresses concurrently until one replies. `probeNonce` is a 32-byte SHA-256 hash derived from the hybrid blob key (CPace + X25519 + ML-KEM-768); bytes [0:7] form the probe payload and bytes [8:15] form the ack payload, giving 64 bits of entropy per packet. Returns the first address that responds. Cancelled by `ctx` timeout (default 10 s).
 
 ```go
 func HolePunchDual(ctx context.Context, mux *packetMux, candidatesV4, candidatesV6 []*net.UDPAddr, probeNonce [32]byte) (*HolePunchResult, error)
@@ -204,17 +266,46 @@ func (b *EndpointBundle) CandidatesV6() []string
 ```
 JSON serialisation for the encrypted endpoint exchange. Endpoints are split by address family. `CandidatesV4` / `CandidatesV6` return the public endpoint first, then local endpoints, as a flat string slice. `RequireVerify` is `true` when the local peer was started with `--verify`. After decoding the peer bundle, the caller merges the flags: `verify = local || peer.RequireVerify`.
 
-### CPace message
+### Hybrid handshake blob serialisation
+
+Fixed-length binary encoding for the hybrid KEM handshake (CPace + X25519 + ML-KEM-768) exchanged via the signaling relay.
 
 ```go
-type CPaceMsg struct {
-    PubMsg []byte
-}
-
-func EncodeCPaceMsg(m CPaceMsg) ([]byte, error)
-func DecodeCPaceMsg(data []byte) (CPaceMsg, error)
+const CPacePointSize       = 65
+const X25519PubSize        = 32
+const MLKEMEncapKeySize    = 1184
+const MLKEMCiphertextSize  = 1088
 ```
-JSON serialisation for the CPace public message exchanged via the signaling relay.
+
+```go
+func SenderHandshakeBlob(cpacePub, x25519Pub []byte) []byte
+```
+Encodes the sender's CPace point (65 bytes) and X25519 public key (32 bytes) into a 97-byte binary blob (blob 1).
+
+```go
+func ParseSenderHandshakeBlob(data []byte) (cpacePub, x25519Pub []byte, err error)
+```
+Extracts CPace point and X25519 public key from a sender handshake blob.
+
+```go
+func ReceiverHandshakeBlob(cpacePub, x25519Pub, mlkemEncapKey []byte) []byte
+```
+Encodes the receiver's CPace point (65 bytes), X25519 public key (32 bytes), and ML-KEM-768 encapsulation key (1184 bytes) into a 1281-byte binary blob (blob 2).
+
+```go
+func ParseReceiverHandshakeBlob(data []byte) (cpacePub, x25519Pub, mlkemEncapKey []byte, err error)
+```
+Extracts CPace point, X25519 public key, and ML-KEM encapsulation key from a receiver handshake blob.
+
+```go
+func SenderBundleBlob(kemCt, encBundle []byte) []byte
+```
+Encodes the ML-KEM ciphertext (1088 bytes) followed by the AES-256-GCM encrypted endpoint bundle (blob 3).
+
+```go
+func ParseSenderBundleBlob(data []byte) (kemCt, encBundle []byte, err error)
+```
+Extracts KEM ciphertext and encrypted bundle from a sender bundle blob.
 
 ### Signaling client
 

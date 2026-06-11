@@ -20,7 +20,7 @@ docs/api.md                 — internal package API reference
 docs/worklogs/              — session worklogs
 scripts/                    — bump-version.sh, build-release.sh, check-coverage.sh, extract-changelog-entry.sh, validate-changelog.sh
 .github/workflows/          — release.yml (GitHub Actions: cross-build + publish on tag push)
-VERSION                     — current version (0.16.2)
+VERSION                     — current version (0.17.0)
 ```
 
 ## Logging
@@ -77,11 +77,17 @@ Implementation: `MemoryStore` (default, in-process). SQLite removed.
 `sha256` is always empty in the leading metadata — the actual hash is computed during transfer and sent in the trailing hash stream after the payload (M-07).  
 `kind`: `"file"` | `"text"` | `"stream"`
 
-### EndpointBundle (JSON, AES-256-GCM encrypted with channel ID as AAD, relayed via signaling)
+### EndpointBundle (JSON, AES-256-GCM encrypted with HybridBlobKey + channel ID as AAD, relayed via signaling)
 ```json
 {"local_endpoints_v4":["192.168.1.5:51234"],"local_endpoints_v6":["[fe80::1]:51234"],"public_endpoint_v4":"1.2.3.4:51234","public_endpoint_v6":"[2001:db8::1]:51234","cert_fingerprint":"hex","require_verify":false}
 ```
 The channel ID (2-byte big-endian) is used as AES-GCM Additional Authenticated Data to bind the ciphertext to the session.
+The encryption key is a **HybridBlobKey** derived from three pillars:
+- `kClassical` — CPace (P-256) shared secret
+- `ssX25519` — X25519 ECDH shared secret
+- `ssMLKEM` — ML-KEM-768 (post-quantum) shared secret
+
+Final key: `SHA-256(kClassical || ssX25519 || ssMLKEM)`
 
 ## Interfaces / Key Functions
 
@@ -98,8 +104,11 @@ The channel ID (2-byte big-endian) is used as AES-GCM Additional Authenticated D
 
 1. Sender allocates channel on signaling server → gets channel ID + public IP
 2. Receiver joins channel (server validates channel exists) → sender receives `ready`
-3. CPace handshake over signaling relay (P-256, password = transfer code words)
-4. Endpoint bundles exchanged (AES-256-GCM encrypted with CPace key + channel ID as AAD)
+3. Hybrid handshake over signaling relay:
+   a. CPace public messages exchanged (P-256, password = transfer code words)
+   b. X25519 public keys + ML-KEM-768 encapsulation keys exchanged in same blobs
+   c. Sender encapsulates ML-KEM → ciphertext sent alongside encrypted bundle
+4. Endpoint bundles encrypted with HybridBlobKey (AES-256-GCM, channel ID as AAD). HybridBlobKey = SHA-256(kClassical || ssX25519 || ssMLKEM)
 5. UDP hole punch to peer candidates (two-phase: IPv6 preferred, IPv4 fallback; 5s/10s timeouts; `-4`/`-6` flags enforce single family)
 6. QUIC connection (TLS 1.3, ephemeral ECDSA P-256 certs, fingerprint-pinned)
 7. Stream 0 (SAS coordination, only when verify active): 1-byte confirm/reject exchange; Stream 1 (or 0 without verify): 4-byte-prefixed JSON metadata (sha256 = ""); Stream 2 (or 1 without verify): raw payload bytes streamed while sender computes SHA-256 in parallel; Stream 3 (or 2 without verify): 4-byte-prefixed trailing hash (hex SHA-256 computed during send)

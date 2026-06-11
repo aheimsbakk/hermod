@@ -271,6 +271,292 @@ func TestCPaceFinishInvalidPubMsg(t *testing.T) {
 	}
 }
 
+// --- Hybrid KEM tests ---
+
+// TestGenerateX25519KeyPair verifies X25519 key generation works.
+func TestGenerateX25519KeyPair(t *testing.T) {
+	priv, pubBytes, err := crypto.GenerateX25519KeyPair()
+	if err != nil {
+		t.Fatalf("GenerateX25519KeyPair: %v", err)
+	}
+	if priv == nil {
+		t.Fatal("expected non-nil private key")
+	}
+	if len(pubBytes) != 32 {
+		t.Fatalf("expected 32-byte public key, got %d", len(pubBytes))
+	}
+	// Verify public key can be parsed back
+	pub, err := crypto.NewX25519PubFromBytes(pubBytes)
+	if err != nil {
+		t.Fatalf("NewX25519PubFromBytes: %v", err)
+	}
+	if pub == nil {
+		t.Fatal("expected non-nil public key")
+	}
+}
+
+// TestX25519ECDH verifies two parties derive the same shared secret.
+func TestX25519ECDH(t *testing.T) {
+	alicePriv, alicePub, err := crypto.GenerateX25519KeyPair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	bobPriv, bobPub, err := crypto.GenerateX25519KeyPair()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	aliceKey, err := crypto.NewX25519PubFromBytes(bobPub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bobKey, err := crypto.NewX25519PubFromBytes(alicePub)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	aliceSS, err := crypto.ECDHX25519(alicePriv, aliceKey)
+	if err != nil {
+		t.Fatalf("alice ECDH: %v", err)
+	}
+	bobSS, err := crypto.ECDHX25519(bobPriv, bobKey)
+	if err != nil {
+		t.Fatalf("bob ECDH: %v", err)
+	}
+
+	if len(aliceSS) != 32 {
+		t.Fatalf("expected 32-byte shared secret, got %d", len(aliceSS))
+	}
+	if string(aliceSS) != string(bobSS) {
+		t.Fatal("X25519 ECDH shared secrets do not match")
+	}
+}
+
+// TestGenerateMLKEMReceiverKey verifies ML-KEM key generation.
+func TestGenerateMLKEMReceiverKey(t *testing.T) {
+	kp, err := crypto.GenerateMLKEMReceiverKey()
+	if err != nil {
+		t.Fatalf("GenerateMLKEMReceiverKey: %v", err)
+	}
+	if kp.DecapKey == nil {
+		t.Fatal("expected non-nil decapsulation key")
+	}
+	if kp.EncapKey == nil {
+		t.Fatal("expected non-nil encapsulation key")
+	}
+	ekBytes := kp.EncapKeyBytes()
+	if len(ekBytes) != 1184 {
+		t.Fatalf("expected 1184-byte enc key, got %d", len(ekBytes))
+	}
+}
+
+// TestMLKEMRoundTrip verifies encapsulate/decapsulate produces the same key.
+func TestMLKEMRoundTrip(t *testing.T) {
+	kp, err := crypto.GenerateMLKEMReceiverKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ekBytes := kp.EncapKeyBytes()
+
+	ek, err := crypto.NewEncapsulationKey768Bytes(ekBytes)
+	if err != nil {
+		t.Fatalf("NewEncapsulationKey768Bytes: %v", err)
+	}
+
+	ss1, ct := crypto.EncapsulateMLKEM(ek)
+	if len(ss1) != 32 {
+		t.Fatalf("expected 32-byte shared key, got %d", len(ss1))
+	}
+	if len(ct) != 1088 {
+		t.Fatalf("expected 1088-byte ciphertext, got %d", len(ct))
+	}
+
+	ss2, err := crypto.DecapsulateMLKEM(kp.DecapKey, ct)
+	if err != nil {
+		t.Fatalf("DecapsulateMLKEM: %v", err)
+	}
+	if string(ss1) != string(ss2) {
+		t.Fatal("ML-KEM shared secrets do not match")
+	}
+}
+
+// TestMLKEMInvalidCiphertext verifies decapsulation rejects bad ciphertexts.
+func TestMLKEMInvalidCiphertext(t *testing.T) {
+	kp, err := crypto.GenerateMLKEMReceiverKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = crypto.DecapsulateMLKEM(kp.DecapKey, []byte{0x01, 0x02})
+	if err == nil {
+		t.Fatal("expected error for invalid ciphertext length")
+	}
+}
+
+// TestDeriveHybridBlobKey verifies determinism and basic properties.
+func TestDeriveHybridBlobKey(t *testing.T) {
+	kClassical := make([]byte, 32)
+	ssX25519 := make([]byte, 32)
+	ssMLKEM := make([]byte, 32)
+
+	key1 := crypto.DeriveHybridBlobKey(kClassical, ssX25519, ssMLKEM)
+	if len(key1) != 32 {
+		t.Fatalf("expected 32-byte key, got %d", len(key1))
+	}
+
+	// Deterministic
+	key2 := crypto.DeriveHybridBlobKey(kClassical, ssX25519, ssMLKEM)
+	if string(key1) != string(key2) {
+		t.Fatal("DeriveHybridBlobKey is not deterministic")
+	}
+
+	// Different inputs produce different keys
+	ssMLKEM[0] = 0x01
+	key3 := crypto.DeriveHybridBlobKey(kClassical, ssX25519, ssMLKEM)
+	if string(key1) == string(key3) {
+		t.Fatal("different inputs produced the same key")
+	}
+}
+
+// TestHybridKEMEndToEnd simulates a full sender-receiver hybrid KEM exchange.
+func TestHybridKEMEndToEnd(t *testing.T) {
+	// Both sides have kClassical from CPace (simulated)
+	kClassical := []byte("this-is-the-cpace-classical-shared-secret-thirtytwo!"[:32])
+
+	// Sender: generate X25519 key pair
+	senderPriv, senderPub, err := crypto.GenerateX25519KeyPair()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Receiver: generate X25519 + ML-KEM key pairs
+	recvPriv, recvPub, err := crypto.GenerateX25519KeyPair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	mlkemKP, err := crypto.GenerateMLKEMReceiverKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Exchange public keys over the (simulated) relay
+
+	// --- Sender side ---
+	// Parse receiver's X25519 pub
+	recvX25519Key, err := crypto.NewX25519PubFromBytes(recvPub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// ECDH
+	ssX25519Sender, err := crypto.ECDHX25519(senderPriv, recvX25519Key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// ML-KEM encapsulate
+	peerEK, err := crypto.NewEncapsulationKey768Bytes(mlkemKP.EncapKeyBytes())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ssMLKEMSender, kemCt := crypto.EncapsulateMLKEM(peerEK)
+	hybridKeySender := crypto.DeriveHybridBlobKey(kClassical, ssX25519Sender, ssMLKEMSender)
+
+	// --- Receiver side ---
+	// Parse sender's X25519 pub
+	senderX25519Key, err := crypto.NewX25519PubFromBytes(senderPub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// ECDH
+	ssX25519Receiver, err := crypto.ECDHX25519(recvPriv, senderX25519Key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// ML-KEM decapsulate
+	ssMLKEMReceiver, err := crypto.DecapsulateMLKEM(mlkemKP.DecapKey, kemCt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hybridKeyReceiver := crypto.DeriveHybridBlobKey(kClassical, ssX25519Receiver, ssMLKEMReceiver)
+
+	// Both sides must derive the same hybrid key
+	if string(hybridKeySender) != string(hybridKeyReceiver) {
+		t.Fatal("hybrid keys do not match between sender and receiver")
+	}
+
+	// Verify the key works for AES-GCM end-to-end
+	plaintext := []byte("endpoint-bundle-data")
+	aad := []byte{0x00, 0x01} // channel ID
+
+	ct, err := crypto.SealAAD(hybridKeySender, aad, plaintext)
+	if err != nil {
+		t.Fatalf("sender seal: %v", err)
+	}
+	decrypted, err := crypto.OpenAAD(hybridKeyReceiver, aad, ct)
+	if err != nil {
+		t.Fatalf("receiver open: %v", err)
+	}
+	if string(decrypted) != string(plaintext) {
+		t.Fatal("decrypted plaintext mismatch")
+	}
+}
+
+// TestHybridKEMWrongKey verifies decryption fails with wrong ML-KEM key.
+func TestHybridKEMWrongKey(t *testing.T) {
+	kClassical := []byte("this-is-the-cpace-classical-shared-secret-thirtytwo!"[:32])
+
+	senderPriv, _, err := crypto.GenerateX25519KeyPair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, recvPub, err := crypto.GenerateX25519KeyPair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	realKP, err := crypto.GenerateMLKEMReceiverKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Wrong key pair (eavesdropper)
+	wrongKP, err := crypto.GenerateMLKEMReceiverKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Sender (correctly uses receiver's real MLKEM key)
+	recvX25519Key, err := crypto.NewX25519PubFromBytes(recvPub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ssX25519, err := crypto.ECDHX25519(senderPriv, recvX25519Key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	peerEK, err := crypto.NewEncapsulationKey768Bytes(realKP.EncapKeyBytes())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ssMLKEM, kemCt := crypto.EncapsulateMLKEM(peerEK)
+	hybridKey := crypto.DeriveHybridBlobKey(kClassical, ssX25519, ssMLKEM)
+
+	// Wrong receiver: decapsulation with wrong key may succeed but
+	// produces a different shared secret. AES-GCM catches the mismatch.
+	wrongSS, err := crypto.DecapsulateMLKEM(wrongKP.DecapKey, kemCt)
+	if err != nil {
+		// Some ML-KEM implementations reject wrong key — that's also fine.
+		return
+	}
+
+	// Derive wrong hybrid key and verify AES-GCM decryption fails
+	wrongHybridKey := crypto.DeriveHybridBlobKey(kClassical, ssX25519, wrongSS)
+	ct, err := crypto.SealAAD(hybridKey, nil, []byte("test data"))
+	if err != nil {
+		t.Fatalf("seal: %v", err)
+	}
+	_, err = crypto.OpenAAD(wrongHybridKey, nil, ct)
+	if err == nil {
+		t.Fatal("expected OpenAAD error with wrong hybrid key")
+	}
+}
+
 // TestCPaceRoleSeparation verifies that the role is bound into the shared
 // secret derivation. Two sessions that both use the same role ("sender")
 // must NOT derive the same shared secret when each completes with the other's
