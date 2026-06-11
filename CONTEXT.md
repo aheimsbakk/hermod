@@ -33,4 +33,4 @@ Scripts: `scripts/build-release.sh`, `scripts/extract-changelog-entry.sh`.
 
 ## Config Locations
 - Linux/macOS: `~/.config/hermod/config.yaml`
-- Windows: `%APPDATA%\Hermod\config.yaml`
+- Windows: `%APPDATA%\Hermod\config.yaml` (resolved via `os.UserConfigDir()` since v0.16.1)
