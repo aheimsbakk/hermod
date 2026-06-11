@@ -266,7 +266,7 @@ func (s *Server) serveClient(conn *websocket.Conn, remoteAddr string) {
 		s.handleJoin(conn, remoteAddr, initMsg.ChannelID, initMsg.Payload)
 	default:
 		s.logger.Warn("Unknown first message type from client", "remote_addr", remoteAddr, "type", initMsg.Type)
-		writeError(conn, "unrecognized message type")
+		writeError(conn, "first message must be 'allocate' or 'join'")
 	}
 }
 
