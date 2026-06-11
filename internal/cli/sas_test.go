@@ -563,7 +563,7 @@ func TestSASCoordinated_OpenStreamError(t *testing.T) {
 	defer cancel()
 
 	err = performSASCoordinatedWith(ctx, conn, clientConn.ConnectionState(), true, strings.NewReader("y\n"), nil)
-	if err == nil || !strings.Contains(err.Error(), "Failed to complete SAS verification") {
+	if err == nil || !strings.Contains(err.Error(), "failed to complete SAS verification") {
 		t.Fatalf("expected 'Could not complete SAS verification' error, got: %v", err)
 	}
 }
@@ -580,7 +580,7 @@ func TestSASCoordinated_AcceptStreamError(t *testing.T) {
 	defer cancel()
 
 	err = performSASCoordinatedWith(ctx, conn, serverConn.ConnectionState(), false, strings.NewReader("y\n"), nil)
-	if err == nil || !strings.Contains(err.Error(), "Failed to complete SAS verification") {
+	if err == nil || !strings.Contains(err.Error(), "failed to complete SAS verification") {
 		t.Fatalf("expected 'Could not complete SAS verification' error, got: %v", err)
 	}
 }
@@ -597,7 +597,7 @@ func TestSASCoordinated_StreamWriteError(t *testing.T) {
 	defer cancel()
 
 	err = performSASCoordinatedWith(ctx, conn, clientConn.ConnectionState(), true, strings.NewReader("y\n"), nil)
-	if err == nil || !strings.Contains(err.Error(), "Failed to send SAS result") {
+	if err == nil || !strings.Contains(err.Error(), "failed to send SAS result") {
 		t.Fatalf("expected 'Could not send SAS result' error, got: %v", err)
 	}
 }
@@ -614,7 +614,7 @@ func TestSASCoordinated_StreamReadError(t *testing.T) {
 	defer cancel()
 
 	err = performSASCoordinatedWith(ctx, conn, clientConn.ConnectionState(), true, strings.NewReader("y\n"), nil)
-	if err == nil || !strings.Contains(err.Error(), "Failed to read SAS result") {
+	if err == nil || !strings.Contains(err.Error(), "failed to read SAS result") {
 		t.Fatalf("expected 'Could not read SAS result' error, got: %v", err)
 	}
 }

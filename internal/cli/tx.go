@@ -712,7 +712,7 @@ func performSASCoordinatedWith(ctx context.Context, conn sasStreamConn, tlsState
 			if cancelled {
 				return errors.New(cancelMessage(ctx))
 			}
-			return fmt.Errorf("Failed to complete SAS verification: %w", err)
+			return fmt.Errorf("failed to complete SAS verification: %w", err)
 		}
 	} else {
 		stream, err = conn.AcceptStream(ctx)
@@ -720,7 +720,7 @@ func performSASCoordinatedWith(ctx context.Context, conn sasStreamConn, tlsState
 			if cancelled {
 				return errors.New(cancelMessage(ctx))
 			}
-			return fmt.Errorf("Failed to complete SAS verification: %w", err)
+			return fmt.Errorf("failed to complete SAS verification: %w", err)
 		}
 	}
 	defer stream.Close()
@@ -731,7 +731,7 @@ func performSASCoordinatedWith(ctx context.Context, conn sasStreamConn, tlsState
 		if cancelled {
 			return errors.New(cancelMessage(ctx))
 		}
-		return fmt.Errorf("Failed to send SAS result to the other side: %w", err)
+		return fmt.Errorf("failed to send SAS result to the other side: %w", err)
 	}
 
 	var peerBuf [1]byte
@@ -739,7 +739,7 @@ func performSASCoordinatedWith(ctx context.Context, conn sasStreamConn, tlsState
 		if cancelled {
 			return errors.New(cancelMessage(ctx))
 		}
-		return fmt.Errorf("Failed to read SAS result from the other side: %w", err)
+		return fmt.Errorf("failed to read SAS result from the other side: %w", err)
 	}
 
 	switch {

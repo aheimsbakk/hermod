@@ -5,6 +5,18 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.17.1] - 2026-06-11
+
+- **why:** Apply clear-language fixes to all user-facing strings and log messages
+- **model:** opencode/deepseek-v4-flash
+- **tags:** docs, clear-language, error-messages
+
+### Changed
+
+- SAS verification error messages in `performSASCoordinatedWith` now use lowercase for wrapped fmt.Errorf calls, consistent with Go wrapping convention (`internal/cli/tx.go`)
+- Signaling server "unrecognized message type" WebSocket error changed to "first message must be 'allocate' or 'join'" — tells the caller what types are accepted (`internal/server/server.go`)
+- Test assertions updated to match lowercase error substrings (`internal/cli/sas_test.go`)
+
 ## [v0.17.0] - 2026-06-11
 
 - **why:** Add hybrid KEM encryption (X25519 + ML-KEM-768 + CPace) for endpoint bundles exchanged over signaling relay, providing post-quantum security for the handshake phase
