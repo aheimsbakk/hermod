@@ -142,7 +142,7 @@ func runTx(input, serverURL string, numWords int, verify bool, listenUDP string,
 		sigFamily = network.IPFamilyV6
 	}
 	logInfo("Connecting to signaling server", "server", serverURL)
-	sigRaw, err := network.DialSignalingWithFamily(serverURL, pinnedFP, sigFamily)
+	sigRaw, err := network.DialSignalingWithFamily(ctx, serverURL, pinnedFP, sigFamily)
 	if err != nil {
 		return fmt.Errorf("connect to signaling server: %w", err)
 	}

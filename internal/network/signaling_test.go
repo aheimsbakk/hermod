@@ -57,8 +57,10 @@ func TestSignalingClientAllocateJoin(t *testing.T) {
 	defer cancel()
 	serverURL := "wss://" + addr
 
+	ctx := context.Background()
+
 	// Sender allocates
-	sender, err := network.DialSignaling(serverURL, "")
+	sender, err := network.DialSignaling(ctx, serverURL, "")
 	if err != nil {
 		t.Fatalf("dial sender: %v", err)
 	}
@@ -72,7 +74,7 @@ func TestSignalingClientAllocateJoin(t *testing.T) {
 	// Receiver joins
 	done := make(chan error, 1)
 	go func() {
-		receiver, err := network.DialSignaling(serverURL, "")
+		receiver, err := network.DialSignaling(ctx, serverURL, "")
 		if err != nil {
 			done <- err
 			return
@@ -96,8 +98,9 @@ func TestSignalingClientBlobExchange(t *testing.T) {
 	addr, cancel := startSignalingServer(t)
 	defer cancel()
 	serverURL := "wss://" + addr
+	ctx := context.Background()
 
-	sender, err := network.DialSignaling(serverURL, "")
+	sender, err := network.DialSignaling(ctx, serverURL, "")
 	if err != nil {
 		t.Fatalf("dial sender: %v", err)
 	}
@@ -106,7 +109,7 @@ func TestSignalingClientBlobExchange(t *testing.T) {
 
 	receiverDone := make(chan []byte, 1)
 	go func() {
-		receiver, err := network.DialSignaling(serverURL, "")
+		receiver, err := network.DialSignaling(ctx, serverURL, "")
 		if err != nil {
 			receiverDone <- nil
 			return
@@ -173,8 +176,9 @@ func TestFetchServerFingerprint(t *testing.T) {
 	addr, cancel := startSignalingServer(t)
 	defer cancel()
 	serverURL := "wss://" + addr
+	ctx := context.Background()
 
-	fp, err := network.FetchServerFingerprint(serverURL, "", network.IPFamilyAny)
+	fp, err := network.FetchServerFingerprint(ctx, serverURL, "", network.IPFamilyAny)
 	if err != nil {
 		t.Fatalf("fetch fingerprint: %v", err)
 	}
@@ -187,24 +191,25 @@ func TestFetchServerFingerprintWithMismatch(t *testing.T) {
 	addr, cancel := startSignalingServer(t)
 	defer cancel()
 	serverURL := "wss://" + addr
+	ctx := context.Background()
 
 	// Pass a wrong fingerprint — the TLS handshake should fail.
 	wrongFP := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-	_, err := network.FetchServerFingerprint(serverURL, wrongFP, network.IPFamilyAny)
+	_, err := network.FetchServerFingerprint(ctx, serverURL, wrongFP, network.IPFamilyAny)
 	if err == nil {
 		t.Fatal("expected fingerprint mismatch error during TLS handshake")
 	}
 }
 
 func TestDialSignalingUnsupportedScheme(t *testing.T) {
-	_, err := network.DialSignaling("ftp://localhost/ws", "")
+	_, err := network.DialSignaling(context.Background(), "ftp://localhost/ws", "")
 	if err == nil {
 		t.Fatal("expected error for unsupported scheme")
 	}
 }
 
 func TestDialSignalingBadURL2(t *testing.T) {
-	_, err := network.DialSignaling("://bad url", "")
+	_, err := network.DialSignaling(context.Background(), "://bad url", "")
 	if err == nil {
 		t.Fatal("expected error for invalid URL")
 	}
@@ -215,7 +220,7 @@ func TestDialSignalingWithPinnedFingerprintMismatch(t *testing.T) {
 	defer cancel()
 	serverURL := "wss://" + addr
 	// Pass wrong fingerprint — should fail TLS verification
-	_, err := network.DialSignaling(serverURL, "0000000000000000000000000000000000000000000000000000000000000000")
+	_, err := network.DialSignaling(context.Background(), serverURL, "0000000000000000000000000000000000000000000000000000000000000000")
 	if err == nil {
 		t.Fatal("expected fingerprint mismatch error")
 	}
@@ -225,13 +230,14 @@ func TestAllocateTwiceSameChannelErrors(t *testing.T) {
 	addr, cancel := startSignalingServer(t)
 	defer cancel()
 	serverURL := "wss://" + addr
+	ctx := context.Background()
 
-	c1, _ := network.DialSignaling(serverURL, "")
+	c1, _ := network.DialSignaling(ctx, serverURL, "")
 	defer c1.Close()
 	c1.Allocate(5555)
 
 	// Second allocation of same channel should error
-	c2, _ := network.DialSignaling(serverURL, "")
+	c2, _ := network.DialSignaling(ctx, serverURL, "")
 	defer c2.Close()
 	_, _, err := c2.Allocate(5555)
 	if err == nil {
@@ -243,14 +249,15 @@ func TestDialSignalingAllocateJoinErrorBranch(t *testing.T) {
 	addr, cancel := startSignalingServer(t)
 	defer cancel()
 	serverURL := "wss://" + addr
+	ctx := context.Background()
 
 	// Allocate channel
-	c1, _ := network.DialSignaling(serverURL, "")
+	c1, _ := network.DialSignaling(ctx, serverURL, "")
 	defer c1.Close()
 	c1.Allocate(6666)
 
 	// Join as receiver
-	c2, _ := network.DialSignaling(serverURL, "")
+	c2, _ := network.DialSignaling(ctx, serverURL, "")
 	defer c2.Close()
 	_, _, err := c2.Join(6666)
 	if err != nil {
@@ -262,9 +269,10 @@ func TestJoinDuplicateReceiverRejected(t *testing.T) {
 	addr, cancel := startSignalingServer(t)
 	defer cancel()
 	serverURL := "wss://" + addr
+	ctx := context.Background()
 
 	// Sender allocates channel
-	sender, err := network.DialSignaling(serverURL, "")
+	sender, err := network.DialSignaling(ctx, serverURL, "")
 	if err != nil {
 		t.Fatalf("dial sender: %v", err)
 	}
@@ -274,7 +282,7 @@ func TestJoinDuplicateReceiverRejected(t *testing.T) {
 	}
 
 	// First receiver joins — should succeed
-	r1, err := network.DialSignaling(serverURL, "")
+	r1, err := network.DialSignaling(ctx, serverURL, "")
 	if err != nil {
 		t.Fatalf("dial r1: %v", err)
 	}
@@ -284,7 +292,7 @@ func TestJoinDuplicateReceiverRejected(t *testing.T) {
 	}
 
 	// Second receiver joins same channel — must be rejected (L-04)
-	r2, err := network.DialSignaling(serverURL, "")
+	r2, err := network.DialSignaling(ctx, serverURL, "")
 	if err != nil {
 		t.Fatalf("dial r2: %v", err)
 	}
@@ -300,7 +308,7 @@ func TestSignalingWithContextCancellation(t *testing.T) {
 	defer cancel()
 	serverURL := "wss://" + addr
 
-	client, err := network.DialSignaling(serverURL, "")
+	client, err := network.DialSignaling(context.Background(), serverURL, "")
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}

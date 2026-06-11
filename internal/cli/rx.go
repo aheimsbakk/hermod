@@ -104,7 +104,7 @@ func runRx(code, destination, serverURL string, verify bool, listenUDP string, s
 		sigFamily = network.IPFamilyV6
 	}
 	logInfo("Connecting to signaling server", "server", serverURL)
-	sigRaw, err := network.DialSignalingWithFamily(serverURL, pinnedFP, sigFamily)
+	sigRaw, err := network.DialSignalingWithFamily(ctx, serverURL, pinnedFP, sigFamily)
 	if err != nil {
 		return fmt.Errorf("connect to signaling server: %w", err)
 	}
@@ -469,7 +469,16 @@ func saveToFile(ctx context.Context, r io.Reader, meta *transfer.Metadata, desti
 	}
 
 	tmpPath := transfer.TempPath(destPath)
-	f, err := os.Create(tmpPath)
+	// M4: create temp file with 0o600 permissions and O_EXCL to prevent
+	// silently overwriting a stale temp from a previous crashed transfer.
+	f, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0o600)
+	if os.IsExist(err) {
+		// Stale temp file — remove and retry.
+		if removeErr := os.Remove(tmpPath); removeErr != nil {
+			return "", fmt.Errorf("remove stale temp file: %w", removeErr)
+		}
+		f, err = os.OpenFile(tmpPath, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0o600)
+	}
 	if err != nil {
 		return "", fmt.Errorf("create temp file: %w", err)
 	}

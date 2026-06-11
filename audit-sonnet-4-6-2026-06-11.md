@@ -12,7 +12,7 @@
 | Severity | Count |
 |----------|-------|
 | High     | 0     |
-| Medium   | 5     |
+| Medium   | 0     |
 | Low      | 6     |
 | Info     | 2     |
 
@@ -20,7 +20,7 @@ No critical findings. The core security architecture is sound: CPace PAKE over a
 
 The findings below are implementation defects and defense-in-depth gaps, not architectural breaks.
 
-**All 4 high-severity findings (H1–H4) have been fixed and verified. Tests pass.**
+**All 4 high-severity findings (H1–H4) and all 5 medium-severity findings (M1–M5) have been fixed and verified. Tests pass.**
 
 ---
 
@@ -154,7 +154,7 @@ func (s *Server) dropChannel(channelID uint16) {
 
 ## Medium
 
-### M1 — WebSocket dial has no timeout and ignores context
+### ~~M1 — WebSocket dial has no timeout and ignores context~~ ✅ Solved
 
 **File:** `internal/network/signaling.go:67–93`
 
@@ -186,7 +186,7 @@ The function signature of `dialSignaling` should be updated to accept a `context
 
 ---
 
-### M2 — `io.ReadAll` without size limit on certificate fetch
+### ~~M2 — `io.ReadAll` without size limit on certificate fetch~~ ✅ Solved
 
 **File:** `internal/network/signaling.go:318`
 
@@ -207,7 +207,7 @@ if err == nil && len(certPEM) == 8192 {
 
 ---
 
-### M3 — `DialContext` callbacks ignore the provided context
+### ~~M3 — `DialContext` callbacks ignore the provided context~~ ✅ Solved
 
 **File:** `internal/network/signaling.go:296–301`
 
@@ -231,7 +231,7 @@ Apply the same fix to the IPv6 counterpart at line 300.
 
 ---
 
-### M4 — Temp file created with world-readable default permissions
+### ~~M4 — Temp file created with world-readable default permissions~~ ✅ Solved
 
 **File:** `internal/cli/rx.go:472`
 
@@ -256,7 +256,7 @@ if os.IsExist(err) {
 
 ---
 
-### M5 — Plaintext `ws://` accepted without warning
+### ~~M5 — Plaintext `ws://` accepted without warning~~ ✅ Solved
 
 **Files:** `internal/network/signaling.go:46–48`, `internal/cli/trust.go:45`
 
