@@ -53,7 +53,11 @@ func Default() *Config {
 // Dir returns the platform-specific config directory.
 func Dir() string {
 	if runtime.GOOS == "windows" {
-		return filepath.Join(os.Getenv("APPDATA"), "Hermod")
+		dir, err := os.UserConfigDir()
+		if err != nil {
+			return filepath.Join(os.TempDir(), "Hermod")
+		}
+		return filepath.Join(dir, "Hermod")
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {

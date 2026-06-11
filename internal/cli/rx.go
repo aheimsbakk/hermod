@@ -364,7 +364,7 @@ func runRx(code, destination, serverURL string, verify bool, listenUDP string, s
 	if err != nil {
 		logWarn("could not accept trailing hash stream — skipping integrity check", "err", err)
 	} else {
-		trailingHashBytes, hashErr := readLenPrefixed(hashStream)
+		trailingHashBytes, hashErr := readLenPrefixedMax(hashStream, 256)
 		hashStream.Close()
 		if hashErr != nil {
 			logWarn("could not read trailing hash — skipping integrity check", "err", hashErr)
@@ -536,15 +536,21 @@ func saveToFile(ctx context.Context, r io.Reader, meta *transfer.Metadata, desti
 	return computedHash, nil
 }
 
-// readLenPrefixed reads a 4-byte big-endian length-prefixed message from r.
+// readLenPrefixed reads a 4-byte big-endian length-prefixed message from r
+// with a maximum allowed size of 1 MiB.
 func readLenPrefixed(r io.Reader) ([]byte, error) {
+	return readLenPrefixedMax(r, 1<<20)
+}
+
+// readLenPrefixedMax is like readLenPrefixed but with an explicit max byte limit.
+func readLenPrefixedMax(r io.Reader, max uint32) ([]byte, error) {
 	var lenBuf [4]byte
 	if _, err := io.ReadFull(r, lenBuf[:]); err != nil {
 		return nil, fmt.Errorf("read length: %w", err)
 	}
 	length := binary.BigEndian.Uint32(lenBuf[:])
-	if length > 1<<20 { // 1 MiB sanity limit for metadata
-		return nil, fmt.Errorf("metadata too large: %d bytes", length)
+	if length > max {
+		return nil, fmt.Errorf("message too large: %d bytes (max %d)", length, max)
 	}
 	buf := make([]byte, length)
 	if _, err := io.ReadFull(r, buf); err != nil {

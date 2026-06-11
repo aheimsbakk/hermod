@@ -114,7 +114,11 @@ func runTx(input, serverURL string, numWords int, verify bool, listenUDP string,
 	if err != nil {
 		return fmt.Errorf("classify input: %w", err)
 	}
-	logDebug("payload classified", "kind", kind, "name", name, "input", input)
+	loggedInput := input
+	if kind == transfer.KindText {
+		loggedInput = "<redacted>"
+	}
+	logDebug("payload classified", "kind", kind, "name", name, "input", loggedInput)
 
 	// Generate transfer code
 	channelID, code, err := crypto.GenerateTransferCode(numWords)
@@ -561,7 +565,7 @@ func generateEphemeralCert() (*x509.Certificate, interface{}, []byte, error) {
 		SerialNumber: serial,
 		Subject:      pkix.Name{CommonName: "hermod-ephemeral"},
 		NotBefore:    time.Now().Add(-time.Minute),
-		NotAfter:     time.Now().Add(24 * time.Hour),
+		NotAfter:     time.Now().Add(2 * time.Hour),
 		KeyUsage:     x509.KeyUsageDigitalSignature,
 	}
 	certDER, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, key.Public(), key)

@@ -13,14 +13,14 @@
 |----------|-------|
 | High     | 0     |
 | Medium   | 0     |
-| Low      | 6     |
+| Low      | 1     |
 | Info     | 2     |
 
 No critical findings. The core security architecture is sound: CPace PAKE over an untrusted relay, ephemeral cert pinning, AES-256-GCM endpoint bundle encryption, SHA-256 trailing integrity, TLS 1.3 minimum, and per-IP HMAC-keyed rate limiting all work correctly as designed. `govulncheck` could not complete a module-level scan due to a type-information issue with `golang.org/x/sys/unix`; no known CVEs were identified in the dependency set through manual review.
 
 The findings below are implementation defects and defense-in-depth gaps, not architectural breaks.
 
-**All 4 high-severity findings (H1–H4) and all 5 medium-severity findings (M1–M5) have been fixed and verified. Tests pass.**
+**All 4 high-severity findings (H1–H4), all 5 medium-severity findings (M1–M5), and 5 of 6 low-severity findings (L1–L5) have been fixed and verified. L6 (SASFromBytes fallback modulo bias) excluded by design — the fallback path is unreachable with 32-byte input and the fix would be a breaking API change with zero practical benefit. Tests pass.**
 
 ---
 
@@ -280,7 +280,7 @@ case "ws":
 
 ## Low
 
-### L1 — KindText input logged at debug level
+### ~~L1 — KindText input logged at debug level~~ ✅ Solved
 
 **File:** `internal/cli/tx.go:117`
 
@@ -302,7 +302,7 @@ logDebug("payload classified", "kind", kind, "name", name, "input", loggedInput)
 
 ---
 
-### L2 — Trailing hash stream allows 1 MiB allocation per read
+### ~~L2 — Trailing hash stream allows 1 MiB allocation per read~~ ✅ Solved
 
 **File:** `internal/cli/rx.go:537`
 
@@ -322,7 +322,7 @@ trailingHashBytes, hashErr := readLenPrefixedMax(hashStream, 256)
 
 ---
 
-### L3 — Ephemeral QUIC cert has a 24-hour validity window
+### ~~L3 — Ephemeral QUIC cert has a 24-hour validity window~~ ✅ Solved
 
 **File:** `internal/cli/tx.go:563–564`
 
@@ -337,7 +337,7 @@ Ephemeral certificates exist only for the duration of a single transfer session 
 
 ---
 
-### L4 — Windows config path controlled by `APPDATA` environment variable
+### ~~L4 — Windows config path controlled by `APPDATA` environment variable~~ ✅ Solved
 
 **File:** `internal/config/config.go:56`
 
@@ -359,7 +359,7 @@ return filepath.Join(dir, "Hermod")
 
 ---
 
-### L5 — `writeError` silently discards write errors
+### ~~L5 — `writeError` silently discards write errors~~ ✅ Solved
 
 **File:** `internal/server/server.go:543–545`
 

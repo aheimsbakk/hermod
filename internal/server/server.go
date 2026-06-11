@@ -550,5 +550,7 @@ func publicIPResponse(host string) map[string]string {
 }
 
 func writeError(conn *websocket.Conn, msg string) {
-	conn.WriteJSON(Message{Type: MsgError, Error: msg})
+	if err := conn.WriteJSON(Message{Type: MsgError, Error: msg}); err != nil {
+		slog.Debug("Failed to write error to client", "err", err)
+	}
 }
