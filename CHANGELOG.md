@@ -31,9 +31,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **L5:** `writeError` logs failures at `slog.Debug` instead of silent discard (`internal/server/server.go`)
 - Hole punch error messages made actionable: include candidate counts, address family, and timeout info instead of redundant "UDP hole punch" repetition (`internal/network/network.go`, `internal/cli/tx.go`, `internal/cli/rx.go`)
 
+### Removed
+
+- **SUM-10:** Deleted five stale `TestSQLiteStore*` functions — relics from the removed SQLite backend; `TestMemoryStore*` already covers the same paths (`internal/server/server_test.go`)
+
 ### Documentation
 
 - Updated `DialSignaling`, `DialSignalingWithFamily`, `FetchServerFingerprint` signatures in `docs/api.md` to include `ctx context.Context`
+- Tagged all 10 consolidated audit findings as `[OPEN]` / `[CLOSED]` / `[WON'T FIX]` in `docs/audits/2026-06-07-summary.md`
+- Moved audit report to `docs/audits/audit-sonnet-4-6-2026-06-11.md`
+- Updated `BLUEPRINT.md` version, `CONTEXT.md` and `README.md` Windows config path notes
+- Documented SUM-01 (channel ID space), SUM-03 (hash-to-curve timing) as accepted design decisions with rationale
 
 ## [v0.16.0] - 2026-06-10
 
