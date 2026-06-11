@@ -11,7 +11,7 @@
 
 | Severity | Count |
 |----------|-------|
-| High     | 4     |
+| High     | 0     |
 | Medium   | 5     |
 | Low      | 6     |
 | Info     | 2     |
@@ -20,11 +20,13 @@ No critical findings. The core security architecture is sound: CPace PAKE over a
 
 The findings below are implementation defects and defense-in-depth gaps, not architectural breaks.
 
+**All 4 high-severity findings (H1–H4) have been fixed and verified. Tests pass.**
+
 ---
 
 ## High
 
-### H1 — HTTP server has no timeouts (Slowloris DoS)
+### ~~H1 — HTTP server has no timeouts (Slowloris DoS)~~ ✅ Solved
 
 **File:** `internal/server/server.go:124–128`
 
@@ -54,7 +56,7 @@ s.httpServer = &http.Server{
 
 ---
 
-### H2 — Deprecated `crypto/elliptic` scalar multiplication with a secret scalar
+### ~~H2 — Deprecated `crypto/elliptic` scalar multiplication with a secret scalar~~ ✅ Solved
 
 **Files:** `internal/crypto/crypto.go:63, 90, 156, 162`
 
@@ -68,13 +70,16 @@ iskX, _ := curve.ScalarMult(peerX, peerY, s.scalar)
 
 The scalar is ephemeral (one per session), so the practical attack window is narrow. However, the Go documentation is unambiguous: this API must not be used with secret inputs.
 
-**Fix:** Replace with `crypto/ecdh.P256()` (available since Go 1.20) or `filippo.io/nistec.P256Point`, which provides constant-time scalar multiplication by design. The `filippo.io/nistec` package is already an indirect dependency.
+**Fix:** Replaced all `elliptic.P256().ScalarMult()` calls with `crypto/ecdh.P256()`, which provides constant-time scalar multiplication as part of the standard library. The `crypto/elliptic` import was removed from production code.
 
-Also applies to `elliptic.P256().IsOnCurve()` at line 162 — replace with `ecdh`'s built-in point validation.
+- `CPaceInit`: creates a `ecdh.PrivateKey` from the ephemeral scalar and a `ecdh.PublicKey` from the hash-to-curve generator point, then calls `ECDH()` to get the x-coordinate of `scalar * G_password`. The y-coordinate is recovered from the curve equation (`y² = x³ - 3x + b mod p`, with `p ≡ 3 mod 4` giving `y = (y²)^((p+1)/4) mod p`).
+- `CPaceFinish`: uses `ecdh.P256().NewPublicKey()` to parse and validate the peer's point (on-curve check), then `ecdh.PrivateKey.ECDH(peerKey)` to compute the shared x-coordinate directly.
+- `unmarshalPoint` (dead code) replaced entirely by `ecdh`'s built-in point validation — removed.
+- No new dependencies; `crypto/ecdh` is in the standard library since Go 1.20.
 
 ---
 
-### H3 — DST silently truncated for long passwords — not RFC 9380 compliant
+### ~~H3 — DST silently truncated for long passwords — not RFC 9380 compliant~~ ✅ Solved
 
 **File:** `internal/crypto/hash_to_curve.go:336–338`
 
@@ -104,7 +109,7 @@ if len(dst) > 255 {
 
 ---
 
-### H4 — `dropChannel` writes to WebSocket connections outside mutex — concurrent write race
+### ~~H4 — `dropChannel` writes to WebSocket connections outside mutex — concurrent write race~~ ✅ Solved
 
 **File:** `internal/server/server.go:479–490`
 

@@ -334,8 +334,13 @@ func p256DST(password string, channelID uint16) []byte {
 	dst = append(dst, ':')
 	dst = append(dst, []byte(password)...)
 	if len(dst) > 255 {
-		// Truncate to 255 bytes as required by RFC 9380.
-		dst = dst[:255]
+		// RFC 9380 §3.1: DSTs longer than 255 bytes MUST be encoded as
+		// SHA-256("H2C-OVERSIZE-DST-" || DST). Truncation is NOT permitted
+		// because two DSTs sharing the same first 255 bytes would collide.
+		h := sha256.New()
+		h.Write([]byte("H2C-OVERSIZE-DST-"))
+		h.Write(dst)
+		dst = h.Sum(nil)
 	}
 	return dst
 }

@@ -14,7 +14,7 @@ package crypto
 import (
 	"crypto/aes"
 	"crypto/cipher"
-	"crypto/elliptic"
+	"crypto/ecdh"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/binary"
@@ -24,6 +24,28 @@ import (
 	"math/big"
 	"strings"
 )
+
+// p256Order is the order of the P-256 curve (number of points on the group).
+// Used by randScalar to generate a valid scalar in [1, n-1].
+var p256Order, _ = new(big.Int).SetString(
+	"ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551", 16)
+
+// recoverYOnP256 computes the y-coordinate for a given x on P-256 so that
+// (x, y) satisfies y² = x³ - 3x + b (mod p). Since p ≡ 3 (mod 4), the
+// square root is y = (y²)^((p+1)/4) mod p. Either root is valid for ECDH
+// (shared secret is the x-coordinate only), and both parties use the same
+// recovery algorithm, so the protocol is consistent.
+func recoverYOnP256(x *big.Int) *big.Int {
+	p := p256P
+	// y² = x³ - 3x + b (mod p)
+	x3 := new(big.Int).Exp(x, big.NewInt(3), p)
+	ax := new(big.Int).Mod(new(big.Int).Mul(p256A, x), p)
+	y2 := new(big.Int).Add(new(big.Int).Add(x3, ax), p256B)
+	y2.Mod(y2, p)
+	// sqrt: y = y2^((p+1)/4) mod p
+	exp := new(big.Int).Rsh(new(big.Int).Add(p, big.NewInt(1)), 2) // (p+1)/4
+	return new(big.Int).Exp(y2, exp, p)
+}
 
 // --- CPace (RFC 9496 simplified over P-256) ---
 
@@ -52,15 +74,28 @@ func CPaceInit(password string, channelID uint16, role string) (*CPaceSession, [
 	}
 
 	// Generate ephemeral scalar y
-	curve := elliptic.P256()
-	n := curve.Params().N
-	scalar, err := randScalar(n)
+	scalar, err := randScalar(p256Order)
 	if err != nil {
 		return nil, nil, fmt.Errorf("cpace scalar: %w", err)
 	}
 
-	// Y = scalar * G_password
-	Yx, Yy := curve.ScalarMult(gx, gy, scalar.Bytes())
+	// Y = scalar * G_password using crypto/ecdh (constant-time, stdlib only).
+	curve := ecdh.P256()
+	privKey, err := curve.NewPrivateKey(scalar.Bytes())
+	if err != nil {
+		return nil, nil, fmt.Errorf("cpace private key: %w", err)
+	}
+	genBytes := marshalPoint(gx, gy)
+	genKey, err := curve.NewPublicKey(genBytes)
+	if err != nil {
+		return nil, nil, fmt.Errorf("cpace generator public key: %w", err)
+	}
+	sharedX, err := privKey.ECDH(genKey)
+	if err != nil {
+		return nil, nil, fmt.Errorf("cpace scalar mult: %w", err)
+	}
+	Yx := new(big.Int).SetBytes(sharedX)
+	Yy := recoverYOnP256(Yx)
 
 	pubMsg := marshalPoint(Yx, Yy)
 
@@ -81,13 +116,25 @@ func (s *CPaceSession) CPaceFinish(peerPub []byte) ([]byte, error) {
 	if len(peerPub) != cpacePointSize || peerPub[0] != 0x04 {
 		return nil, errors.New("invalid peer public message: must be a 65-byte uncompressed P-256 point")
 	}
-	curve := elliptic.P256()
-	peerX, peerY, err := unmarshalPoint(curve, peerPub)
+
+	// Parse and validate the peer point using ecdh (validates on-curve).
+	curve := ecdh.P256()
+	peerKey, err := curve.NewPublicKey(peerPub)
 	if err != nil {
-		return nil, fmt.Errorf("cpace finish unmarshal: %w", err)
+		return nil, fmt.Errorf("cpace finish invalid peer point: %w", err)
 	}
-	// ISK_x = scalar * peerPub (x-coordinate)
-	iskX, _ := curve.ScalarMult(peerX, peerY, s.scalar)
+
+	// ISK_x = scalar * peerPub using constant-time ECDH.
+	// ECDH returns the x-coordinate of the point, which is what we need.
+	privKey, err := curve.NewPrivateKey(s.scalar)
+	if err != nil {
+		return nil, fmt.Errorf("cpace finish private key: %w", err)
+	}
+	iskXBytes, err := privKey.ECDH(peerKey)
+	if err != nil {
+		return nil, fmt.Errorf("cpace finish ecdh: %w", err)
+	}
+	iskX := new(big.Int).SetBytes(iskXBytes)
 
 	// Build role-ordered transcript: iskX || pubSender || pubReceiver.
 	// Both sides resolve sender/receiver the same way using their stored role,
@@ -151,18 +198,6 @@ func marshalPoint(x, y *big.Int) []byte {
 	copy(pt[1:33], padTo32(x))
 	copy(pt[33:], padTo32(y))
 	return pt
-}
-
-func unmarshalPoint(curve elliptic.Curve, data []byte) (*big.Int, *big.Int, error) {
-	if len(data) != 65 || data[0] != 0x04 {
-		return nil, nil, errors.New("invalid uncompressed point format in peer message")
-	}
-	x := new(big.Int).SetBytes(data[1:33])
-	y := new(big.Int).SetBytes(data[33:65])
-	if !curve.IsOnCurve(x, y) {
-		return nil, nil, errors.New("peer point is not on the P-256 curve")
-	}
-	return x, y, nil
 }
 
 // randScalar generates a uniformly random scalar in [1, n-1] using rejection
