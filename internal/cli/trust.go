@@ -57,13 +57,11 @@ func runTrust(serverArg, knownFingerprint string) error {
 	if err != nil {
 		return fmt.Errorf("parse server URL: %w", err)
 	}
+	if u.Scheme == "ws" {
+		return fmt.Errorf("plaintext WebSocket (ws://) is not allowed by default; use wss://")
+	}
 	if u.Port() == "" {
-		switch u.Scheme {
-		case "wss":
-			serverURL = "wss://" + u.Host + ":4376" + u.Path
-		case "ws":
-			serverURL = "ws://" + u.Host + ":4376" + u.Path
-		}
+		serverURL = "wss://" + u.Host + ":4376" + u.Path
 	}
 
 	printStatus("Connecting to %s to fetch certificate...", serverURL)

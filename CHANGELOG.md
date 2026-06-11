@@ -5,6 +5,24 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.16.2] - 2026-06-11
+
+- **why:** Resolve security audit findings from gpt-5.4 — expired channel cleanup, client-side WebSocket read limit, trailing hash fail-closed, ws:// rejection, and SAS defense-in-depth
+- **model:** opencode/deepseek-v4-flash
+- **tags:** security, server, network, integrity, cleanup
+
+### Fixed
+
+- Expired channels now close live WebSocket waiters and remove stale entries — `purgeExpiredWaiters()` runs after each GC tick, `handleAllocate()` rejects stale waiters, WebSocket read deadline + pong handler closes idle connections (`internal/server/server.go`, `internal/server/store.go`)
+- Client sets `conn.SetReadLimit(64 KiB)` in `dialSignaling()` and validates decoded `Payload` size in `Recv()` — prevents memory exhaustion from a compromised relay (`internal/network/signaling.go`)
+- Trailing hash verification is now fail-closed — missing or unreadable hash is a fatal error, temp file is not renamed until verification passes, received byte count checked against `meta.Size` (`internal/cli/rx.go`, `pkg/transfer/transfer.go`)
+- `dialSignaling()` and `runTrust()` reject `ws://` URLs with an error instead of a warning — plaintext mode removed (`internal/network/signaling.go`, `internal/cli/trust.go`)
+- `SASFromBytes()` biased modulo fallback replaced with `panic` — path is unreachable (callers always supply ≥32 bytes) (`internal/crypto/crypto.go`)
+
+### Changed
+
+- Removed all audit document cross-references (e.g. `(H-01)`, `(M-07)`) from code comments across `internal/cli/`, `internal/config/`, `internal/crypto/`, `internal/network/`, `internal/server/`, and `pkg/transfer/` — comments now explain intent directly without external references
+
 ## [v0.16.1] - 2026-06-11
 
 - **why:** Resolve security audit findings (H1–H5, M1–M5, L1–L5) — HTTP timeouts, constant-time ECDH, RFC 9380 DST compliance, concurrent write safety, context propagation, and defense-in-depth hardening

@@ -207,8 +207,19 @@ func TestSaveToFile_Success(t *testing.T) {
 	}
 	destDir := t.TempDir()
 
-	if _, err := saveToFile(context.Background(), bytes.NewReader(data), meta, destDir); err != nil {
+	hash, tmpPath, destPath, n, err := saveToFile(context.Background(), bytes.NewReader(data), meta, destDir)
+	if err != nil {
 		t.Fatalf("saveToFile: %v", err)
+	}
+	if n != int64(len(data)) {
+		t.Fatalf("bytes written: %d, expected %d", n, len(data))
+	}
+	if hash != meta.SHA256 {
+		t.Fatalf("hash: %s, expected %s", hash, meta.SHA256)
+	}
+	// Caller must rename after verification (new contract, M-07).
+	if err := os.Rename(tmpPath, destPath); err != nil {
+		t.Fatalf("rename: %v", err)
 	}
 	got, err := os.ReadFile(filepath.Join(destDir, "out.txt"))
 	if err != nil {
@@ -230,8 +241,19 @@ func TestSaveToFile_FilePath(t *testing.T) {
 	}
 	destPath := filepath.Join(t.TempDir(), "result.txt")
 
-	if _, err := saveToFile(context.Background(), bytes.NewReader(data), meta, destPath); err != nil {
+	hash, tmpPath, _, n, err := saveToFile(context.Background(), bytes.NewReader(data), meta, destPath)
+	if err != nil {
 		t.Fatalf("saveToFile with file path: %v", err)
+	}
+	if n != int64(len(data)) {
+		t.Fatalf("bytes written: %d, expected %d", n, len(data))
+	}
+	if hash != meta.SHA256 {
+		t.Fatalf("hash: %s, expected %s", hash, meta.SHA256)
+	}
+	// Caller must rename after verification (new contract, M-07).
+	if err := os.Rename(tmpPath, destPath); err != nil {
+		t.Fatalf("rename: %v", err)
 	}
 	got, err := os.ReadFile(destPath)
 	if err != nil {
@@ -253,8 +275,18 @@ func TestSaveToFile_EmptyName(t *testing.T) {
 	}
 	destDir := t.TempDir()
 
-	if _, err := saveToFile(context.Background(), bytes.NewReader(data), meta, destDir); err != nil {
+	hash, tmpPath, destPath, n, err := saveToFile(context.Background(), bytes.NewReader(data), meta, destDir)
+	if err != nil {
 		t.Fatalf("saveToFile: %v", err)
+	}
+	if n != int64(len(data)) {
+		t.Fatalf("bytes written: %d, expected %d", n, len(data))
+	}
+	if hash != meta.SHA256 {
+		t.Fatalf("hash mismatch")
+	}
+	if err := os.Rename(tmpPath, destPath); err != nil {
+		t.Fatalf("rename: %v", err)
 	}
 	if _, err := os.ReadFile(filepath.Join(destDir, "received")); err != nil {
 		t.Fatalf("expected file named 'received': %v", err)
@@ -272,7 +304,7 @@ func TestSaveToFile_HashMismatch(t *testing.T) {
 	}
 	destDir := t.TempDir()
 
-	_, err := saveToFile(context.Background(), bytes.NewReader(data), meta, destDir)
+	_, _, _, _, err := saveToFile(context.Background(), bytes.NewReader(data), meta, destDir)
 	if err == nil {
 		t.Fatal("expected error on hash mismatch")
 	}
@@ -299,7 +331,7 @@ func TestSaveToFile_ContextCancelled_CleansUp(t *testing.T) {
 	}
 	destDir := t.TempDir()
 
-	_, err := saveToFile(ctx, bytes.NewReader(data), meta, destDir)
+	_, _, _, _, err := saveToFile(ctx, bytes.NewReader(data), meta, destDir)
 	if err == nil {
 		t.Fatal("expected error for cancelled context with hash mismatch")
 	}
@@ -324,8 +356,12 @@ func TestReceivePayload_ToDestination(t *testing.T) {
 	}
 	destDir := t.TempDir()
 
-	if _, err := receivePayload(context.Background(), meta, bytes.NewReader(data), destDir, false); err != nil {
+	if _, _, tmpPath, destPath, err := receivePayload(context.Background(), meta, bytes.NewReader(data), destDir, false); err != nil {
 		t.Fatalf("receivePayload: %v", err)
+	} else if tmpPath != "" && destPath != "" {
+		if err := os.Rename(tmpPath, destPath); err != nil {
+			t.Fatalf("rename: %v", err)
+		}
 	}
 	got, err := os.ReadFile(filepath.Join(destDir, "recv.txt"))
 	if err != nil {
@@ -352,7 +388,7 @@ func TestReceivePayload_PipedStdout(t *testing.T) {
 	oldStdout := os.Stdout
 	os.Stdout = w
 
-	_, recvErr := receivePayload(context.Background(), meta, bytes.NewReader(data), "", false)
+	_, _, _, _, recvErr := receivePayload(context.Background(), meta, bytes.NewReader(data), "", false)
 
 	w.Close()
 	os.Stdout = oldStdout
@@ -382,7 +418,7 @@ func TestReceivePayload_TTYText(t *testing.T) {
 	oldStdout := os.Stdout
 	os.Stdout = w
 
-	_, recvErr := receivePayload(context.Background(), meta, bytes.NewReader(data), "", true)
+	_, _, _, _, recvErr := receivePayload(context.Background(), meta, bytes.NewReader(data), "", true)
 
 	w.Close()
 	os.Stdout = oldStdout
@@ -414,7 +450,7 @@ func TestReceivePayload_TTYTextNoSize(t *testing.T) {
 	oldStdout := os.Stdout
 	os.Stdout = w
 
-	_, recvErr := receivePayload(context.Background(), meta, bytes.NewReader(data), "", true)
+	_, _, _, _, recvErr := receivePayload(context.Background(), meta, bytes.NewReader(data), "", true)
 
 	w.Close()
 	os.Stdout = oldStdout
@@ -447,7 +483,7 @@ func TestReceivePayload_TTYStream(t *testing.T) {
 	oldStdout := os.Stdout
 	os.Stdout = w
 
-	_, recvErr := receivePayload(context.Background(), meta, bytes.NewReader(data), "", true)
+	_, _, _, _, recvErr := receivePayload(context.Background(), meta, bytes.NewReader(data), "", true)
 
 	w.Close()
 	os.Stdout = oldStdout
@@ -481,8 +517,12 @@ func TestReceivePayload_TTYFile(t *testing.T) {
 	}
 	defer os.Chdir(origDir) //nolint:errcheck
 
-	if _, err := receivePayload(context.Background(), meta, bytes.NewReader(data), "", true); err != nil {
+	if _, _, tmpPath, destPath, err := receivePayload(context.Background(), meta, bytes.NewReader(data), "", true); err != nil {
 		t.Fatalf("receivePayload TTY file: %v", err)
+	} else if tmpPath != "" && destPath != "" {
+		if err := os.Rename(tmpPath, destPath); err != nil {
+			t.Fatalf("rename: %v", err)
+		}
 	}
 	got, err := os.ReadFile(filepath.Join(destDir, "tty_output.txt"))
 	if err != nil {
@@ -780,7 +820,7 @@ func TestReceivePayload_TTYUnknownKind(t *testing.T) {
 		Kind: transfer.Kind("unknown-kind-xyz"),
 		Size: 0,
 	}
-	_, err := receivePayload(context.Background(), meta, strings.NewReader(""), "", true)
+	_, _, _, _, err := receivePayload(context.Background(), meta, strings.NewReader(""), "", true)
 	if err != nil {
 		t.Fatalf("unexpected error for unknown kind in TTY mode: %v", err)
 	}
@@ -984,11 +1024,27 @@ func TestQuietMode_SaveToFile(t *testing.T) {
 	}
 	destDir := t.TempDir()
 
+	var tmpPath, destPath string
 	out := testCapturingStderr(t, func() {
-		if _, err := saveToFile(context.Background(), bytes.NewReader(data), meta, destDir); err != nil {
+		var hash string
+		var n int64
+		var err error
+		hash, tmpPath, destPath, n, err = saveToFile(context.Background(), bytes.NewReader(data), meta, destDir)
+		if err != nil {
 			t.Errorf("saveToFile: %v", err)
 		}
+		if hash != meta.SHA256 {
+			t.Errorf("hash mismatch")
+		}
+		if n != int64(len(data)) {
+			t.Errorf("bytes written: %d, expected %d", n, len(data))
+		}
 	})
+	if tmpPath != "" && destPath != "" {
+		if err := os.Rename(tmpPath, destPath); err != nil {
+			t.Fatalf("rename: %v", err)
+		}
+	}
 
 	// File must be written correctly.
 	got, err := os.ReadFile(filepath.Join(destDir, "quiet.txt"))
@@ -1020,7 +1076,7 @@ func TestQuietMode_ReceivePayload_Text(t *testing.T) {
 	oldStdout := os.Stdout
 	os.Stdout = w
 
-	_, recvErr := receivePayload(context.Background(), meta, bytes.NewReader(data), "", false)
+	_, _, _, _, recvErr := receivePayload(context.Background(), meta, bytes.NewReader(data), "", false)
 
 	w.Close()
 	os.Stdout = oldStdout

@@ -24,6 +24,11 @@ const (
 	DefaultMaxBlobsPerChannel = 10
 	// DefaultMaxCPaceFailures is the default limit on CPace handshake failures per channel.
 	DefaultMaxCPaceFailures = 3
+
+	// wsIdleTimeout is the read deadline for idle WebSocket connections.
+	// If no data (including pong) is received within this period the connection
+	// is closed, preventing stale waiters from blocking channel reuse.
+	wsIdleTimeout = 2 * time.Minute
 )
 
 // MsgType identifies signaling message types.
@@ -93,7 +98,7 @@ func NewServer(store SignalingStore, certRL, wsRL, joinRL *RateLimiter, ttl time
 		logger:             logger,
 		waiters:            make(map[uint16][]*wsConn),
 		upgrader: websocket.Upgrader{
-			// Reject browser-sourced cross-origin WebSocket connections (L-06).
+			// Reject browser-sourced cross-origin WebSocket connections.
 			// Non-browser clients (CLI) do not set an Origin header, so this
 			// allows all legitimate hermod peers while blocking CSRF-style attacks.
 			CheckOrigin: func(r *http.Request) bool {
@@ -135,7 +140,7 @@ func (s *Server) Serve(ctx context.Context, ln net.Listener, tlsCfg *tls.Config)
 
 	// Start background goroutine to evict stale rate-limit buckets.
 	// Buckets inactive for more than 30 minutes are removed. Without this,
-	// the bucket map grows unboundedly for every distinct source IP (M-03).
+	// the bucket map grows unboundedly for every distinct source IP.
 	cleanupCtx, cleanupCancel := context.WithCancel(ctx)
 	defer cleanupCancel()
 	go func() {
@@ -149,6 +154,12 @@ func (s *Server) Serve(ctx context.Context, ln net.Listener, tlsCfg *tls.Config)
 				s.certRL.Cleanup(30 * time.Minute)
 				s.wsRL.Cleanup(30 * time.Minute)
 				s.joinRL.Cleanup(30 * time.Minute)
+				// Purge expired channel store entries and clean up any
+				// stale waiters whose store entries have expired.
+				expiredIDs, _ := s.store.PurgeExpired()
+				if len(expiredIDs) > 0 {
+					s.purgeExpiredWaiters(expiredIDs)
+				}
 				s.logger.Debug("Rate limiter bucket cleanup completed")
 			}
 		}
@@ -190,7 +201,7 @@ func (s *Server) Addr() string {
 // handleCert serves the server's TLS certificate as PEM for client pinning.
 // Clients can hash the DER bytes inside the PEM block with SHA-256 to obtain
 // the fingerprint they should store via `hermod trust`.
-// Rate limiting is applied to prevent abuse (M-05).
+// Rate limiting is applied to prevent abuse.
 func (s *Server) handleCert(w http.ResponseWriter, r *http.Request) {
 	if !s.certRL.Allow(r.RemoteAddr) {
 		s.logger.Warn("cert endpoint rate-limited", "remote_addr", r.RemoteAddr)
@@ -226,6 +237,13 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 	conn.SetReadLimit(maxMessageSize)
+	// Enforce an idle timeout so stale connections cannot block channel reuse.
+	// The deadline is extended on every pong from the client.
+	conn.SetReadDeadline(time.Now().Add(wsIdleTimeout))
+	conn.SetPongHandler(func(string) error {
+		conn.SetReadDeadline(time.Now().Add(wsIdleTimeout))
+		return nil
+	})
 
 	s.logger.Debug("WebSocket connection established", "remote_addr", remoteAddr)
 	s.serveClient(conn, remoteAddr)
@@ -260,6 +278,22 @@ func (s *Server) handleAllocate(conn *websocket.Conn, remoteAddr string, channel
 		writeError(conn, "could not allocate channel")
 		return
 	}
+	// Remove any stale waiters that were left behind after the store entry
+	// expired. This prevents a stale sender slot from being matched to a new
+	// receiver.
+	s.mu.Lock()
+	for i, w := range s.waiters[channelID] {
+		if w.conn == conn {
+			continue
+		}
+		s.logger.Warn("Removing stale waiter for channel", "channel_id", channelID, "sender", w.sender)
+		w.conn.Close()
+		// Remove stale entry by swapping with the last element.
+		s.waiters[channelID][i] = s.waiters[channelID][len(s.waiters[channelID])-1]
+		s.waiters[channelID] = s.waiters[channelID][:len(s.waiters[channelID])-1]
+	}
+	s.mu.Unlock()
+
 	host, _, _ := net.SplitHostPort(remoteAddr)
 	respMap := publicIPResponse(host)
 	payload, _ := json.Marshal(respMap)
@@ -309,9 +343,9 @@ func (s *Server) handleJoin(conn *websocket.Conn, remoteAddr string, channelID u
 		return
 	}
 
-	// Reject join for channels that were never allocated (M-05).
+	// Reject join for channels that were never allocated.
 	// Use a generic error message so clients cannot distinguish between
-	// non-existent channels, duplicate receivers, and transient failures (L-09).
+	// non-existent channels, duplicate receivers, and transient failures.
 	if !s.store.ChannelExists(channelID) {
 		s.logger.Warn("Receiver attempted to join non-existent channel",
 			"channel_id", channelID, "remote_addr", remoteAddr)
@@ -320,7 +354,7 @@ func (s *Server) handleJoin(conn *websocket.Conn, remoteAddr string, channelID u
 	}
 
 	// Check for existing receiver AND add the new one under a single lock
-	// to prevent a TOCTOU race (C-01). Two concurrent joins must not both
+	// to prevent a TOCTOU race. Two concurrent joins must not both
 	// pass the check before either adds itself.
 	s.mu.Lock()
 	for _, w := range s.waiters[channelID] {
@@ -477,6 +511,31 @@ func (s *Server) relay(conn *websocket.Conn, channelID uint16, isSender bool) {
 	}
 }
 
+// purgeExpiredWaiters closes and removes all waiter connections for the given
+// expired channel IDs. This ensures stale waiters do not block channel reuse
+// after the store entry has expired.
+func (s *Server) purgeExpiredWaiters(expiredIDs []uint16) {
+	s.mu.Lock()
+	var toClose []*websocket.Conn
+	for _, id := range expiredIDs {
+		conns, ok := s.waiters[id]
+		if !ok {
+			continue
+		}
+		delete(s.waiters, id)
+		for _, w := range conns {
+			toClose = append(toClose, w.conn)
+		}
+	}
+	s.mu.Unlock()
+	for _, c := range toClose {
+		c.Close()
+	}
+	if len(toClose) > 0 {
+		s.logger.Debug("Purged expired waiters", "count", len(toClose))
+	}
+}
+
 // dropChannel closes all peer connections for channelID, sends them a final
 // error, and purges the channel from the store. It is safe to call even if the
 // channel has already been removed.
@@ -486,7 +545,7 @@ func (s *Server) dropChannel(channelID uint16) {
 	delete(s.waiters, channelID)
 	// Write the error to each peer while holding the lock so that no other
 	// goroutine (e.g. the peer's relay loop) writes to the same connection
-	// concurrently. Gorilla WebSocket panics on concurrent writes (H-04).
+	// concurrently. Gorilla WebSocket panics on concurrent writes.
 	for _, w := range conns {
 		_ = w.conn.WriteJSON(Message{Type: MsgError, Error: "channel terminated: CPace failure limit exceeded"})
 	}

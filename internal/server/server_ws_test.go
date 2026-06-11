@@ -276,7 +276,7 @@ func TestRunGC(t *testing.T) {
 }
 
 // TestServerBlobLimitEnforced verifies that the server rejects a MsgBlob once
-// the per-channel hard cap is reached (GAP.md §6).
+// the per-channel hard cap is reached.
 func TestServerBlobLimitEnforced(t *testing.T) {
 	const limit = 2
 	addr, cancel := startTestServerWithLimits(t, limit, server.DefaultMaxCPaceFailures, nil)
@@ -345,7 +345,7 @@ func TestServerBlobLimitEnforced(t *testing.T) {
 
 // TestServerCPaceFailureLimitEnforced verifies that the server drops all
 // connections and invalidates a channel after maxCPaceFailures protocol
-// violations (GAP.md §5).
+// violations.
 func TestServerCPaceFailureLimitEnforced(t *testing.T) {
 	// maxCPaceFailures=1 so a single bad message terminates the channel.
 	addr, cancel := startTestServerWithLimits(t, server.DefaultMaxBlobsPerChannel, 1, nil)
@@ -407,7 +407,7 @@ func TestServerCPaceFailureLimitEnforced(t *testing.T) {
 }
 
 // TestServerCertEndpoint verifies the /cert endpoint returns the DER-encoded
-// TLS certificate (M-05).
+// TLS certificate.
 func TestServerCertEndpoint(t *testing.T) {
 	addr, cancel := startTestServer(t)
 	defer cancel()

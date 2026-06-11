@@ -10,7 +10,6 @@ import (
 	"encoding/pem"
 	"fmt"
 	"io"
-	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
@@ -21,6 +20,11 @@ import (
 
 	"github.com/hermod/hermod/internal/server"
 )
+
+// maxMessageSize limits WebSocket message size on the client side to match
+// the server-side limit. This prevents a compromised relay from forcing
+// unbounded memory allocation on the client.
+const maxMessageSize = 65536 // 64 KiB
 
 // SignalingClient manages a WebSocket connection to the signaling server.
 type SignalingClient struct {
@@ -44,7 +48,7 @@ func dialSignaling(ctx context.Context, serverURL string, pinnedFingerprint stri
 	case "wss":
 		u.Scheme = "wss"
 	case "ws":
-		slog.Warn("Using plaintext WebSocket (ws://) — connection is not encrypted and is vulnerable to interception")
+		return nil, fmt.Errorf("plaintext WebSocket (ws://) is not allowed by default; use wss://")
 	default:
 		return nil, fmt.Errorf("unsupported URL scheme: %s", u.Scheme)
 	}
@@ -94,6 +98,7 @@ func dialSignaling(ctx context.Context, serverURL string, pinnedFingerprint stri
 	if err != nil {
 		return nil, fmt.Errorf("WebSocket dial on %s: %w", wsURL, err)
 	}
+	conn.SetReadLimit(maxMessageSize)
 	return &SignalingClient{conn: conn, ctx: ctx, done: make(chan struct{})}, nil
 }
 
@@ -156,7 +161,13 @@ func (c *SignalingClient) Send(msg server.Message) error {
 func (c *SignalingClient) Recv() (server.Message, error) {
 	var msg server.Message
 	err := c.conn.ReadJSON(&msg)
-	return msg, c.ctxErr(err)
+	if err != nil {
+		return msg, c.ctxErr(err)
+	}
+	if len(msg.Payload) > maxMessageSize {
+		return msg, fmt.Errorf("server message payload exceeds maximum size (%d bytes)", maxMessageSize)
+	}
+	return msg, nil
 }
 
 // Allocate sends an allocate request for channelID.

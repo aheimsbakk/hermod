@@ -90,7 +90,7 @@ func (r *RateLimiter) rotateSaltIfNeeded(now time.Time) {
 	if today.After(r.saltDate) {
 		newSalt := make([]byte, 32)
 		if _, err := rand.Read(newSalt); err != nil {
-			// Log the failure (M-04). The existing salt continues to be used;
+			// Log the failure. The existing salt continues to be used;
 			// rotation is retried on the next Allow call.
 			slog.Warn("Rate limiter key rotation failed — keeping existing key", "err", err)
 			return
