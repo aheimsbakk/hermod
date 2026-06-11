@@ -125,7 +125,7 @@ Returns the local address of a bound UDP connection.
 ```go
 func NewPacketMux(conn net.PacketConn) *packetMux
 ```
-Wraps a UDP socket and demultiplexes incoming packets into two channels: one for probe packets (first byte `0x01`) and one for QUIC packets (everything else). The returned `*packetMux` is passed to `HolePunch`, `DialQUIC`, and `ListenQUIC`.
+Wraps a UDP socket and demultiplexes incoming packets into two channels: one for probe packets (first byte `0x01`) and one for QUIC packets (everything else). The returned `*packetMux` is passed to `HolePunch` and `RaceQUIC`.
 
 ```go
 func (m *packetMux) Close()
@@ -175,14 +175,9 @@ Classifies a bare IP string into a `"host:port"` string for the correct address 
 ### QUIC
 
 ```go
-func DialQUIC(ctx context.Context, mux *packetMux, peerAddr *net.UDPAddr, baseTLS *tls.Config, peerCertHash string) (*quic.Conn, error)
+func RaceQUIC(ctx context.Context, mux *packetMux, peerAddr *net.UDPAddr, baseTLS *tls.Config, cert tls.Certificate, peerCertHash string) (*quic.Conn, error)
 ```
-Dials a QUIC connection to `peerAddr` over the muxed UDP socket. Pins the peer certificate to `peerCertHash` (64-char hex SHA-256).
-
-```go
-func ListenQUIC(mux *packetMux, cert tls.Certificate, baseTLS *tls.Config, peerCertHash string) (*quic.Listener, error)
-```
-Listens for incoming QUIC connections over the muxed UDP socket. Uses `cert` as the server certificate. Pins the connecting client's certificate to `peerCertHash`.
+Races a QUIC dial and accept on the same muxed UDP socket. Returns the first connection that completes the handshake. Sets up mutual TLS (`RequireAnyClientCert`), pins the peer certificate to `peerCertHash`, and uses ALPN `hermod-p2p`. The losing goroutine is cancelled via context. This is the only QUIC connection function — both `tx` and `rx` use it.
 
 ```go
 func CertFingerprint(certDER []byte) string
@@ -317,7 +312,7 @@ Loads from `~/.config/hermod/config.yaml`. `Default()` returns a zero-value conf
 ```go
 func GenerateServerCert(cfg *Config) error
 ```
-Generates a self-signed RSA-2048 certificate and stores the PEM in `cfg`. Does not write to disk — call `Save` after.
+Generates a self-signed ECDSA P-256 certificate and stores the PEM in `cfg`. Does not write to disk — call `Save` after.
 
 ```go
 func LoadServerTLSCert(cfg *Config) (tls.Certificate, error)
@@ -327,7 +322,7 @@ Parses the PEM certificate and key stored in `cfg`.
 ```go
 func BuildTLSConfig(cfg *Config) *tls.Config
 ```
-Returns a `*tls.Config` with TLS 1.3 minimum version and curve/cipher preferences from `cfg`. ALPN (`hermod-p2p`) is set separately by `DialQUIC` and `ListenQUIC` in `internal/network`.
+Returns a `*tls.Config` with TLS 1.3 minimum version and curve/cipher preferences from `cfg`. ALPN (`hermod-p2p`) is set separately by `RaceQUIC` in `internal/network`.
 
 ```go
 func CertFingerprint(certDER []byte) string

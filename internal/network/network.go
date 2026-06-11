@@ -3,6 +3,7 @@ package network
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
 	"crypto/tls"
@@ -250,29 +251,25 @@ func HolePunch(ctx context.Context, probeCtx context.Context, mux *packetMux, ca
 	}
 }
 
-// DialQUIC establishes a QUIC connection to peerAddr using the muxed conn.
-// peerCertHash is the expected SHA-256 fingerprint (hex) of the peer's TLS certificate.
-func DialQUIC(ctx context.Context, mux *packetMux, peerAddr *net.UDPAddr, baseTLS *tls.Config, peerCertHash string) (*quic.Conn, error) {
-	tlsCfg := baseTLS.Clone()
-	tlsCfg.InsecureSkipVerify = true
-	tlsCfg.VerifyPeerCertificate = makeCertPinner(peerCertHash)
-	tlsCfg.NextProtos = []string{"hermod-p2p"}
-
-	transport := &quic.Transport{
-		Conn: &muxedConn{mux: mux},
-	}
-	conn, err := transport.Dial(ctx, peerAddr, tlsCfg, &quic.Config{
-		MaxIdleTimeout:  30 * time.Second,
-		KeepAlivePeriod: 5 * time.Second,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("QUIC dial: %w", err)
-	}
-	return conn, nil
-}
-
-// ListenQUIC starts a QUIC listener on the muxed conn.
-func ListenQUIC(mux *packetMux, cert tls.Certificate, baseTLS *tls.Config, peerCertHash string) (*quic.Listener, error) {
+// RaceQUIC races dial and accept on the same muxed connection, returning whichever
+// QUIC handshake succeeds first. This enables bidirectional QUIC initiation so the
+// connection succeeds even when only one direction traverses the NAT.
+//
+// The accept goroutine starts immediately (no delay). The dial goroutine adds a
+// random jitter (0-100ms) before starting, so on low-latency links (loopback)
+// one side's dial arrives before the other's, preventing two separate QUIC
+// connections from being established simultaneously.
+//
+// TLS config is set up internally:
+//   - Certificates from the cert parameter
+//   - ClientAuth = tls.RequireAnyClientCert (mutual TLS)
+//   - InsecureSkipVerify = true (peer pinned via VerifyPeerCertificate)
+//   - VerifyPeerCertificate pins peerCertHash
+//   - NextProtos = []string{"hermod-p2p"}
+//
+// QUIC config: MaxIdleTimeout 30s, KeepAlivePeriod 5s.
+// The losing goroutine is cancelled via context when the winner returns.
+func RaceQUIC(ctx context.Context, mux *packetMux, peerAddr *net.UDPAddr, baseTLS *tls.Config, cert tls.Certificate, peerCertHash string) (*quic.Conn, error) {
 	tlsCfg := baseTLS.Clone()
 	tlsCfg.Certificates = []tls.Certificate{cert}
 	tlsCfg.ClientAuth = tls.RequireAnyClientCert
@@ -280,17 +277,65 @@ func ListenQUIC(mux *packetMux, cert tls.Certificate, baseTLS *tls.Config, peerC
 	tlsCfg.VerifyPeerCertificate = makeCertPinner(peerCertHash)
 	tlsCfg.NextProtos = []string{"hermod-p2p"}
 
+	quicCfg := &quic.Config{
+		MaxIdleTimeout:  30 * time.Second,
+		KeepAlivePeriod: 5 * time.Second,
+	}
+
 	transport := &quic.Transport{
 		Conn: &muxedConn{mux: mux},
 	}
-	ln, err := transport.Listen(tlsCfg, &quic.Config{
-		MaxIdleTimeout:  30 * time.Second,
-		KeepAlivePeriod: 5 * time.Second,
-	})
+
+	ln, err := transport.Listen(tlsCfg, quicCfg)
 	if err != nil {
-		return nil, fmt.Errorf("QUIC listen: %w", err)
+		return nil, fmt.Errorf("QUIC race listen: %w", err)
 	}
-	return ln, nil
+
+	// Sub-context so we can cancel the losing goroutine.
+	raceCtx, raceCancel := context.WithCancel(ctx)
+	defer raceCancel()
+
+	type quicResult struct {
+		conn *quic.Conn
+		err  error
+	}
+	resultCh := make(chan quicResult, 2)
+
+	// Accept goroutine — starts immediately so the listener is always ready.
+	go func() {
+		conn, err := ln.Accept(raceCtx)
+		resultCh <- quicResult{conn: conn, err: err}
+	}()
+
+	// Dial goroutine — adds random jitter (0-100ms) to break symmetry on
+	// low-latency links, preventing simultaneous dial collisions that would
+	// create two separate QUIC connections.
+	go func() {
+		// crypto/rand jitter — negligible delay in real NAT scenarios.
+		jitterBuf := make([]byte, 1)
+		rand.Read(jitterBuf) //nolint:errcheck
+		jitter := time.Duration(jitterBuf[0]) * time.Millisecond
+
+		select {
+		case <-raceCtx.Done():
+			resultCh <- quicResult{err: raceCtx.Err()}
+			return
+		case <-time.After(jitter):
+		}
+
+		conn, err := transport.Dial(raceCtx, peerAddr, tlsCfg, quicCfg)
+		resultCh <- quicResult{conn: conn, err: err}
+	}()
+
+	// Wait for whichever succeeds first.
+	result := <-resultCh
+	raceCancel() // cancel the loser
+	ln.Close()
+
+	if result.err != nil {
+		return nil, fmt.Errorf("QUIC race: %w", result.err)
+	}
+	return result.conn, nil
 }
 
 // HolePunchDual performs two-phase NAT hole punching: IPv6 first (preferred),

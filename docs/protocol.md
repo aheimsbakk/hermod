@@ -8,6 +8,81 @@ This document describes the Hermod wire protocol: how two peers establish a shar
 - **Receiver (rx)** — joins the channel using the transfer code
 - **Signaling server** — relays handshake messages only; never sees payload data
 
+## Connection flow overview
+
+### Phase 1 — Signaling
+
+```
+Sender (tx)             Signaling server        Receiver (rx)
+     |                        |                        |
+     |--- allocate(id) -----> |                        |
+     |<-- ok(public_ipv4/v6)- |                        |
+     |                        | <-- join(id) --------- |
+     |<-- ready ------------- |                        |
+     |                        | --> ok(public_ipv4/v6) |
+```
+
+### Phase 2 — CPace PAKE (blobs relayed via server)
+
+```
+Sender (tx)             Signaling server        Receiver (rx)
+     |                        |                        |
+     |--- blob(cpace_msg) --> | --> blob(cpace_msg) -> |
+     |<-- blob(cpace_msg) --- | <-- blob(cpace_msg) -- |
+```
+
+### Phase 3 — Endpoint exchange (blobs relayed via server, AES-256-GCM)
+
+```
+Sender (tx)             Signaling server        Receiver (rx)
+     |                        |                        |
+     |--- blob(enc_bundle) -> | --> blob(enc_bundle) -> |
+     |<-- blob(enc_bundle) -- | <-- blob(enc_bundle) -- |
+```
+
+Signaling connection is no longer used after this point.
+
+### Phase 4 — UDP hole punch (direct, server not involved)
+
+Both peers probe each other's candidates concurrently in two phases:
+
+- **IPv6 first (preferred)** — 5 s timeout; skips to IPv4 on timeout or if no IPv6 candidates exist. Skipped entirely with `-4`.
+- **IPv4 fallback** — uses the remaining context timeout (10 s total). Skipped entirely with `-6`.
+
+The first candidate address from which a valid ack is received wins. That address is used for the QUIC connection.
+
+### Phase 5 — QUIC connection (bidirectional race)
+
+Both peers simultaneously dial and accept on the same muxed UDP socket. The first completed TLS 1.3 handshake wins. This ensures the connection succeeds even if only one direction traverses the NAT.
+
+- ALPN: `hermod-p2p`
+- Both sides present ephemeral ECDSA P-256 self-signed certs (valid 24 h)
+- Each side pins the peer's cert fingerprint from the endpoint bundle
+- Idle timeout: 30 s, keep-alive: 5 s
+
+### Phase 6 — Payload transfer (QUIC streams, sender-opened unless noted)
+
+Without `--verify`, stream 0 (SAS) is skipped and all subsequent streams are renumbered by subtracting 1.
+
+| Stream (with verify) | Stream (without verify) | Opened by | Content                                     |
+|----------------------|-------------------------|-----------|---------------------------------------------|
+| 0 — SAS              | (skipped)               | sender    | 1-byte confirm/reject; only when `--verify` |
+| 1 — Metadata         | 0                       | sender    | 4-byte-prefixed JSON: kind, name, size      |
+| 2 — Payload          | 1                       | sender    | raw bytes; SHA-256 computed in parallel     |
+| 3 — Trailing hash    | 2                       | sender    | 4-byte-prefixed hex SHA-256 of payload      |
+| 4 — Completion ack   | 3                       | receiver  | empty stream; sender waits before closing   |
+
+### Security properties
+
+- Signaling server sees only AES-256-GCM ciphertext after `allocate`/`join`
+- CPace PAKE derives shared key K from the transfer code without exposing it
+- Endpoint bundles: AES-256-GCM(K), channel ID bound as AAD
+- QUIC: TLS 1.3, ephemeral self-signed certs, fingerprint-pinned (no CA)
+- Payload integrity: trailing SHA-256 hash stream verified end-to-end
+- Payload never touches the signaling server
+
+Each phase is described in detail in the sections below.
+
 ## Transfer code
 
 The transfer code encodes the channel ID and the PAKE passphrase.
@@ -146,14 +221,18 @@ Both peers run the hole punch concurrently. The typical completion time on symme
 
 ## QUIC connection
 
-After hole punching, the receiver acts as the QUIC server and the sender as the client.
+After hole punching, both peers race a QUIC dial and accept simultaneously on the
+same muxed UDP socket. The first handshake to complete wins. This bidirectional
+initiation means the connection succeeds even when only one direction traverses
+the NAT (e.g. one peer is behind a more restrictive firewall).
 
-Each peer generates an ephemeral RSA-2048 self-signed X.509 certificate for this connection. The certificate fingerprint was exchanged in the endpoint bundle (above). Both peers pin the peer's fingerprint in their TLS `VerifyPeerCertificate` callback, replacing normal CA-chain verification.
+Each peer generates an ephemeral ECDSA P-256 self-signed X.509 certificate for this connection. The certificate fingerprint was exchanged in the endpoint bundle (above). Both peers pin the peer's fingerprint in their TLS `VerifyPeerCertificate` callback, replacing normal CA-chain verification. The TLS config uses `RequireAnyClientCert` for mutual authentication — both sides present and verify certificates. ECDSA P-256 is chosen for fast key generation and smaller signatures (L-02).
 
 QUIC configuration:
 - TLS 1.3 (enforced by quic-go)
 - ALPN: `hermod-p2p`
 - Idle timeout: 30 seconds
+- Keep-alive period: 5 seconds
 
 ## Payload transfer
 
@@ -248,5 +327,5 @@ Both sides exit with a non-zero status code after cancellation.
 - Client IP addresses are never stored in plaintext. The rate-limiter bucket key is `HMAC-SHA256(dailySalt, ipPrefix)`. The salt is replaced every UTC calendar day and all buckets are cleared on rotation. Stale buckets are also evicted every 10 minutes to bound memory usage.
 - Endpoint bundles are encrypted with `AES-256-GCM(K, channelID_as_AAD, bundle)`. The channel ID bound as AAD prevents a captured bundle from being replayed in a different session.
 - The CPace implementation uses the `P256_XMD:SHA-256_SSWU_RO_` suite (RFC 9380) to hash passwords to P-256 curve points. SSWU always produces a valid point in a single, fixed-length computation with no data-dependent loop iterations, eliminating the loop-count timing side channel of the former try-and-increment method.
-- Ephemeral QUIC certificates use RSA-2048. They are valid for 24 hours and are never stored.
+- Ephemeral QUIC certificates use ECDSA P-256. They are valid for 24 hours and are never stored.
 - Payload integrity is verified end-to-end via a trailing hash stream. The sender computes SHA-256 in parallel during transfer and sends the digest after the payload stream closes. The receiver computes SHA-256 in parallel during receipt and verifies against the sender's trailing digest. No pre-buffering of large inputs is required.
