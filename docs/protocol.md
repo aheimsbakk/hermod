@@ -105,7 +105,7 @@ After hole punching, the sender dials and the receiver listens on the same muxed
 - ALPN: `hermod-p2p`
 - Both sides present ephemeral ECDSA P-256 self-signed certs (valid 2 h)
 - Receiver enforces mutual TLS (`RequireAnyClientCert`) — the sender presents a cert and the receiver verifies its fingerprint
-- Each side pins the peer's cert fingerprint from the endpoint bundle
+- Each side pins the peer's public key fingerprint (SPKI) from the endpoint bundle
 - Idle timeout: 30 s, keep-alive: 5 s
 
 ### Phase 6 — Payload transfer (QUIC streams, sender-opened unless noted)
@@ -147,9 +147,9 @@ verifies a different property and a failure in any layer aborts the transfer.
 | **X25519 ECDH** | Classical key agreement (defense-in-depth) | `ssX25519` derived from ephemeral key exchange; bound into hybrid key alongside CPace and ML-KEM |
 | **ML-KEM-768** | Post-quantum key agreement | `ssMLKEM` encapsulated by sender, decapsulated by receiver; bound into hybrid key. Protects endpoint bundles even if P-256/X25519 are broken by quantum computer |
 | **HybridBlobKey** | All three pillars combined | `SHA-256(kClassical \|\| ssX25519 \|\| ssMLKEM)`. Security is at least as strong as the strongest pillar |
-| **Endpoint bundle** | Peer identity (IPs, cert fingerprint) | AES-256-GCM encrypted with HybridBlobKey + channel ID as AAD. Contains peer's UDP candidates + ephemeral TLS cert fingerprint |
+| **Endpoint bundle** | Peer identity (IPs, public key fingerprint) | AES-256-GCM encrypted with HybridBlobKey + channel ID as AAD. Contains peer's UDP candidates + ephemeral TLS public key fingerprint (SPKI) |
 | **UDP hole punch** | Both peers are reachable at their claimed addresses | Probe/ack exchange using nonce derived from `hybridKey` (CPace + X25519 + ML-KEM-768). Hole punch fails if no peer responds |
-| **QUIC/TLS 1.3** | Peer certificate matches the bundle | Mutual TLS with fingerprint pinning: each side verifies the peer's ephemeral cert fingerprint against the value received in the encrypted endpoint bundle |
+| **QUIC/TLS 1.3** | Peer certificate matches the bundle | Mutual TLS with SPKI pinning: each side verifies the peer's ephemeral public key fingerprint against the value received in the encrypted endpoint bundle |
 | **SAS (optional)** | No MitM in the QUIC handshake | Human compares 6-word SAS + identicon out-of-band (voice, Signal, etc.) derived from TLS ExportKeyingMaterial |
 | **Trailing SHA-256** | Payload integrity | Sender computes hash while streaming; receiver verifies after receipt. Mismatch → file deleted |
 
@@ -263,7 +263,7 @@ Plaintext endpoint bundle (JSON before encryption):
   "local_endpoints_v6": ["[fe80::1]:51234", "[2001:db8::1]:51234"],
   "public_endpoint_v4": "203.0.113.7:51234",
   "public_endpoint_v6": "2001:db8::1:51234",
-  "cert_fingerprint": "a3f9...64 hex chars...",
+  "public_key_fingerprint": "a3f9...64 hex chars...",
   "require_verify": false
 }
 ```
@@ -309,7 +309,7 @@ on the hole-punched address. The receiver opens a QUIC listener before the sende
 begins dialing — a 200 ms delay after hole punch on the sender side ensures the
 listener is ready.
 
-Each peer generates an ephemeral ECDSA P-256 self-signed X.509 certificate for this connection. The certificate fingerprint was exchanged in the endpoint bundle (above). Both peers pin the peer's fingerprint in their TLS `VerifyPeerCertificate` callback, replacing normal CA-chain verification. The receiver's TLS config uses `RequireAnyClientCert` for mutual authentication — the sender presents its certificate and the receiver verifies its fingerprint. ECDSA P-256 is chosen for fast key generation and smaller signatures.
+Each peer generates an ephemeral ECDSA P-256 self-signed X.509 certificate for this connection. The public key fingerprint (SPKI hash) was exchanged in the endpoint bundle (above). Both peers pin the peer's SPKI fingerprint in their TLS `VerifyPeerCertificate` callback, replacing normal CA-chain verification. SPKI pinning is used instead of certificate DER pinning so the pin survives certificate renewal with the same key. The receiver's TLS config uses `RequireAnyClientCert` for mutual authentication — the sender presents its certificate and the receiver verifies its public key fingerprint. ECDSA P-256 is chosen for fast key generation and smaller signatures.
 
 QUIC configuration:
 - TLS 1.3 (enforced by quic-go)

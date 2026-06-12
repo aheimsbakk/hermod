@@ -251,28 +251,33 @@ Classifies a bare IP string into a `"host:port"` string for the correct address 
 ```go
 func DialQUIC(ctx context.Context, mux *packetMux, peerAddr *net.UDPAddr, baseTLS *tls.Config, peerCertHash string) (*quic.Conn, error)
 ```
-Establishes a QUIC connection to `peerAddr`. Pins the peer certificate to `peerCertHash`, uses ALPN `hermod-p2p`. The caller must set `baseTLS.Certificates` before calling. Used by `tx` (sender = QUIC client).
+Establishes a QUIC connection to `peerAddr`. Pins the peer's public key to the SPKI fingerprint `peerCertHash`, uses ALPN `hermod-p2p`. The caller must set `baseTLS.Certificates` before calling. Used by `tx` (sender = QUIC client). SPKI pinning survives certificate renewal with the same key.
 
 ```go
 func ListenQUIC(mux *packetMux, cert tls.Certificate, baseTLS *tls.Config, peerCertHash string) (*quic.Listener, error)
 ```
-Starts a QUIC listener on the muxed socket. Sets up mutual TLS (`RequireAnyClientCert`), presents `cert` to the dialing peer, pins the peer certificate to `peerCertHash`, and uses ALPN `hermod-p2p`. Used by `rx` (receiver = QUIC server).
+Starts a QUIC listener on the muxed socket. Sets up mutual TLS (`RequireAnyClientCert`), presents `cert` to the dialing peer, pins the peer's public key to the SPKI fingerprint `peerCertHash`, and uses ALPN `hermod-p2p`. Used by `rx` (receiver = QUIC server).
 
 ```go
 func CertFingerprint(certDER []byte) string
 ```
-Returns the SHA-256 fingerprint of a DER-encoded certificate as a 64-character hex string.
+Returns the SHA-256 fingerprint of a DER-encoded certificate as a 64-character hex string. Note: this changes on every certificate renewal. For a persistent identifier, use `PubKeyFingerprint`.
+
+```go
+func PubKeyFingerprint(certDER []byte) string
+```
+Returns the SHA-256 fingerprint of the Subject Public Key Info (SPKI) of a DER-encoded certificate. Unlike `CertFingerprint`, this stays the same when the certificate is renewed with the same key pair.
 
 ### Endpoint bundle
 
 ```go
 type EndpointBundle struct {
-    LocalEndpointsV4 []string
-    LocalEndpointsV6 []string
-    PublicEndpointV4 string
-    PublicEndpointV6 string
-    CertFingerprint  string
-    RequireVerify    bool
+    LocalEndpointsV4 []string `json:"local_endpoints_v4,omitempty"`
+    LocalEndpointsV6 []string `json:"local_endpoints_v6,omitempty"`
+    PublicEndpointV4 string   `json:"public_endpoint_v4,omitempty"`
+    PublicEndpointV6 string   `json:"public_endpoint_v6,omitempty"`
+    PubKeyFingerprint string  `json:"public_key_fingerprint"`
+    RequireVerify     bool    `json:"require_verify"`
 }
 
 func EncodeEndpointBundle(b EndpointBundle) ([]byte, error)
@@ -281,7 +286,7 @@ func DecodeEndpointBundle(data []byte) (EndpointBundle, error)
 func (b *EndpointBundle) CandidatesV4() []string
 func (b *EndpointBundle) CandidatesV6() []string
 ```
-JSON serialisation for the encrypted endpoint exchange. Endpoints are split by address family. `CandidatesV4` / `CandidatesV6` return the public endpoint first, then local endpoints, as a flat string slice. `RequireVerify` is `true` when the local peer was started with `--verify`. After decoding the peer bundle, the caller merges the flags: `verify = local || peer.RequireVerify`.
+JSON serialisation for the encrypted endpoint exchange. Endpoints are split by address family. `CandidatesV4` / `CandidatesV6` return the public endpoint first, then local endpoints, as a flat string slice. `PubKeyFingerprint` contains the SPKI fingerprint (SHA-256 of the public key) of the peer's ephemeral TLS certificate — this survives certificate renewal with the same key. `RequireVerify` is `true` when the local peer was started with `--verify`. After decoding the peer bundle, the caller merges the flags: `verify = local || peer.RequireVerify`.
 
 ### Hybrid handshake blob serialisation
 
@@ -353,7 +358,7 @@ func (c *SignalingClient) WaitReady() error
 ```go
 func FetchServerFingerprint(ctx context.Context, serverURL string, pinnedFingerprint string, family IPFamily) (string, error)
 ```
-Fetches the server's TLS certificate via the HTTPS `/cert` endpoint, decodes the PEM block, and returns the SHA-256 fingerprint of the DER certificate. When `pinnedFingerprint` is non-empty, the certificate is verified against this value during the TLS handshake. When empty (TOFU mode), only use over a trusted network (VPN, LAN, or out-of-band fingerprint verification). `family` restricts DNS and TCP to the given IP family (`IPFamilyAny`, `IPFamilyV4`, `IPFamilyV6`). The request is cancelled when `ctx` is done. Used by `hermod trust`.
+Fetches the server's TLS certificate via the HTTPS `/cert` endpoint, decodes the PEM block, and returns the SHA-256 SPKI fingerprint (public key hash). SPKI fingerprints persist across certificate renewals with the same key pair. When `pinnedFingerprint` is non-empty, the SPKI fingerprint is verified against this value during the TLS handshake. When empty (TOFU mode), only use over a trusted network (VPN, LAN, or out-of-band fingerprint verification). `family` restricts DNS and TCP to the given IP family (`IPFamilyAny`, `IPFamilyV4`, `IPFamilyV6`). The request is cancelled when `ctx` is done. Used by `hermod trust`.
 
 ---
 
@@ -459,12 +464,22 @@ Returns a `*tls.Config` with TLS 1.3 minimum version and curve/cipher preference
 ```go
 func CertFingerprint(certDER []byte) string
 ```
-Returns the SHA-256 fingerprint of a DER-encoded certificate as a 64-character lowercase hex string.
+Returns the SHA-256 fingerprint of a DER-encoded certificate as a 64-character lowercase hex string. Note: this changes on every certificate renewal. For a persistent identifier, use `PubKeyFingerprint`.
+
+```go
+func PubKeyFingerprint(certDER []byte) string
+```
+Returns the SHA-256 fingerprint of the Subject Public Key Info (SPKI) of a DER-encoded certificate. Unlike `CertFingerprint`, this stays the same when the certificate is renewed with the same key pair.
+
+```go
+func RenewServerCert(cfg *Config) error
+```
+Creates a new self-signed certificate using the existing private key in `cfg` and updates `cfg.ServerCertPEM`. The key PEM is left unchanged so the SPKI fingerprint stays the same — clients that pinned the server's public key do not need to re-run `hermod trust`. Call `Save` after to persist.
 
 ```go
 func PinServer(cfg *Config, serverURL, fingerprint string)
 ```
-Stores `fingerprint` in `cfg.TrustedServers[serverURL]`. Does not write to disk — call `Save` after.
+Stores `fingerprint` (SPKI fingerprint) in `cfg.TrustedServers[serverURL]`. Does not write to disk — call `Save` after.
 
 ```go
 func SetDefaultServer(cfg *Config, serverURL string)
