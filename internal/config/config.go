@@ -181,14 +181,66 @@ func LoadServerTLSCert(cfg *Config) (tls.Certificate, error) {
 	return tls.X509KeyPair([]byte(cfg.ServerCertPEM), []byte(cfg.ServerKeyPEM))
 }
 
+// RenewServerCert creates a new self-signed certificate using the existing
+// private key in cfg and updates the certificate PEM in cfg. The key PEM is
+// left unchanged so the SPKI fingerprint stays the same — clients that pinned
+// the server's public key do not need to re-run 'hermod trust'.
+func RenewServerCert(cfg *Config) error {
+	tlsCert, err := LoadServerTLSCert(cfg)
+	if err != nil {
+		return fmt.Errorf("load existing cert: %w", err)
+	}
+	key, ok := tlsCert.PrivateKey.(*ecdsa.PrivateKey)
+	if !ok {
+		return fmt.Errorf("existing private key is not an ECDSA key")
+	}
+	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	if err != nil {
+		return fmt.Errorf("generate serial: %w", err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber: serial,
+		Subject:      pkix.Name{CommonName: "hermod-server"},
+		NotBefore:    time.Now().Add(-time.Minute),
+		NotAfter:     time.Now().Add(365 * 24 * time.Hour), // 1 year
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		IsCA:         false,
+	}
+	certDER, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, key.Public(), key)
+	if err != nil {
+		return fmt.Errorf("create certificate: %w", err)
+	}
+	cfg.ServerCertPEM = string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER}))
+	return nil
+}
+
 // CertFingerprint computes the SHA-256 fingerprint of a DER-encoded certificate
 // and returns it as a lowercase hex string.
+// Note: this fingerprint changes on every certificate renewal. For a persistent
+// identifier that survives key-renewal, use PubKeyFingerprint.
 func CertFingerprint(certDER []byte) string {
 	sum := sha256.Sum256(certDER)
 	return hex.EncodeToString(sum[:])
 }
 
-// PinServer stores the server's certificate fingerprint in cfg.
+// PubKeyFingerprint computes the SHA-256 fingerprint of the Subject Public Key
+// Info (SPKI) of a DER-encoded X.509 certificate. Unlike CertFingerprint, this
+// value stays the same when the certificate is renewed with the same key pair.
+func PubKeyFingerprint(certDER []byte) string {
+	cert, err := x509.ParseCertificate(certDER)
+	if err != nil {
+		return ""
+	}
+	spki, err := x509.MarshalPKIXPublicKey(cert.PublicKey)
+	if err != nil {
+		return ""
+	}
+	sum := sha256.Sum256(spki)
+	return hex.EncodeToString(sum[:])
+}
+
+// PinServer stores the server's SPKI fingerprint in cfg.
+// Use PubKeyFingerprint to compute this value.
 func PinServer(cfg *Config, serverURL, fingerprint string) {
 	if cfg.TrustedServers == nil {
 		cfg.TrustedServers = map[string]string{}

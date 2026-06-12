@@ -1,9 +1,16 @@
 package network_test
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/json"
+	"math/big"
 	"net"
 	"testing"
+	"time"
 
 	"github.com/hermod/hermod/internal/network"
 )
@@ -30,9 +37,9 @@ func TestLocalEndpoints(t *testing.T) {
 
 func TestEncodeDecodeEndpointBundle(t *testing.T) {
 	bundle := network.EndpointBundle{
-		LocalEndpointsV4: []string{"192.168.1.1:4376", "10.0.0.1:4376"},
-		PublicEndpointV4: "1.2.3.4:4376",
-		CertFingerprint:  "aabbccdd",
+		LocalEndpointsV4:  []string{"192.168.1.1:4376", "10.0.0.1:4376"},
+		PublicEndpointV4:  "1.2.3.4:4376",
+		PubKeyFingerprint: "aabbccdd",
 	}
 	data, err := network.EncodeEndpointBundle(bundle)
 	if err != nil {
@@ -45,7 +52,7 @@ func TestEncodeDecodeEndpointBundle(t *testing.T) {
 	if decoded.PublicEndpointV4 != bundle.PublicEndpointV4 {
 		t.Fatalf("public endpoint mismatch")
 	}
-	if decoded.CertFingerprint != bundle.CertFingerprint {
+	if decoded.PubKeyFingerprint != bundle.PubKeyFingerprint {
 		t.Fatal("fingerprint mismatch")
 	}
 	if len(decoded.LocalEndpointsV4) != len(bundle.LocalEndpointsV4) {
@@ -71,15 +78,44 @@ func TestParseCandidatesInvalid(t *testing.T) {
 	}
 }
 
-func TestCertFingerprint(t *testing.T) {
-	// Generate a fake DER certificate (just bytes for hash purposes)
-	fakeData := make([]byte, 512)
-	for i := range fakeData {
-		fakeData[i] = byte(i)
+func TestPubKeyFingerprint(t *testing.T) {
+	// Generate a real certificate and verify the SPKI fingerprint length.
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
 	}
-	fp := network.CertFingerprint(fakeData)
-	if len(fp) != 64 {
-		t.Fatalf("expected 64-char fingerprint, got %d", len(fp))
+	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber: serial,
+		Subject:      pkix.Name{CommonName: "test"},
+		NotBefore:    time.Now().Add(-time.Minute),
+		NotAfter:     time.Now().Add(time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+	}
+	certDER, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := network.PubKeyFingerprint(certDER)
+	if len(got) != 64 {
+		t.Fatalf("expected 64-char SPKI fingerprint, got %d", len(got))
+	}
+	// For the same cert, CertFingerprint (cert DER hash) and PubKeyFingerprint
+	// (SPKI hash) must differ because they hash different data.
+	certFP := network.CertFingerprint(certDER)
+	if got == certFP {
+		t.Fatal("SPKI fingerprint must differ from cert fingerprint")
+	}
+}
+
+func TestPubKeyFingerprint_Invalid(t *testing.T) {
+	fp := network.PubKeyFingerprint([]byte("not-a-valid-cert-der"))
+	if fp != "" {
+		t.Fatalf("expected empty string for invalid DER, got %q", fp)
 	}
 }
 
@@ -146,10 +182,10 @@ func TestPacketMuxMethods(t *testing.T) {
 // TestEndpointBundleRequireVerify ensures RequireVerify round-trips through JSON.
 func TestEndpointBundleRequireVerify(t *testing.T) {
 	bundle := network.EndpointBundle{
-		LocalEndpointsV4: []string{"192.168.1.1:4376"},
-		PublicEndpointV4: "1.2.3.4:4376",
-		CertFingerprint:  "aabbccdd",
-		RequireVerify:    true,
+		LocalEndpointsV4:  []string{"192.168.1.1:4376"},
+		PublicEndpointV4:  "1.2.3.4:4376",
+		PubKeyFingerprint: "aabbccdd",
+		RequireVerify:     true,
 	}
 	data, err := network.EncodeEndpointBundle(bundle)
 	if err != nil {
@@ -165,9 +201,9 @@ func TestEndpointBundleRequireVerify(t *testing.T) {
 
 	// A bundle without RequireVerify should default to false
 	bundleNoVerify := network.EndpointBundle{
-		LocalEndpointsV4: []string{"192.168.1.1:4376"},
-		PublicEndpointV4: "1.2.3.4:4376",
-		CertFingerprint:  "aabbccdd",
+		LocalEndpointsV4:  []string{"192.168.1.1:4376"},
+		PublicEndpointV4:  "1.2.3.4:4376",
+		PubKeyFingerprint: "aabbccdd",
 	}
 	data2, err := network.EncodeEndpointBundle(bundleNoVerify)
 	if err != nil {
@@ -186,12 +222,12 @@ func TestEndpointBundleRequireVerify(t *testing.T) {
 
 func TestEndpointBundle_RoundTripDual(t *testing.T) {
 	bundle := network.EndpointBundle{
-		LocalEndpointsV4: []string{"192.168.1.1:4376", "10.0.0.1:4376"},
-		LocalEndpointsV6: []string{"[2001:db8::1]:4376", "[fe80::1]:4376"},
-		PublicEndpointV4: "1.2.3.4:4376",
-		PublicEndpointV6: "[2001:db8::1]:4376",
-		CertFingerprint:  "aabbccdd",
-		RequireVerify:    true,
+		LocalEndpointsV4:  []string{"192.168.1.1:4376", "10.0.0.1:4376"},
+		LocalEndpointsV6:  []string{"[2001:db8::1]:4376", "[fe80::1]:4376"},
+		PublicEndpointV4:  "1.2.3.4:4376",
+		PublicEndpointV6:  "[2001:db8::1]:4376",
+		PubKeyFingerprint: "aabbccdd",
+		RequireVerify:     true,
 	}
 	data, err := network.EncodeEndpointBundle(bundle)
 	if err != nil {

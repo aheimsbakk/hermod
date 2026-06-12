@@ -94,7 +94,7 @@ func cmdStartServer(ts *testscript.TestScript, neg bool, _ []string) {
 	}
 
 	serverURL := "wss://" + addr
-	fingerprint := config.CertFingerprint(tlsCert.Certificate[0])
+	fingerprint := config.PubKeyFingerprint(tlsCert.Certificate[0])
 
 	// Write a trusted-server config so that cli.ExecuteArgs calls (both
 	// in-process via tx-background and subprocess via exec) accept this server.

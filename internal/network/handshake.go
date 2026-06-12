@@ -28,8 +28,8 @@ type EndpointBundle struct {
 	PublicEndpointV4 string   `json:"public_endpoint_v4,omitempty"` // server-reflexive IPv4 host:port
 	PublicEndpointV6 string   `json:"public_endpoint_v6,omitempty"` // server-reflexive IPv6 host:port
 
-	CertFingerprint string `json:"cert_fingerprint"` // SHA-256 hex of ephemeral TLS cert
-	RequireVerify   bool   `json:"require_verify"`   // true if this side requires SAS verification
+	PubKeyFingerprint string `json:"public_key_fingerprint"` // SHA-256 SPKI hex of ephemeral TLS cert's public key
+	RequireVerify     bool   `json:"require_verify"`         // true if this side requires SAS verification
 }
 
 // EncodeEndpointBundle serializes an EndpointBundle to JSON.

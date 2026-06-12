@@ -85,7 +85,7 @@ func runRx(code, destination, serverURL string, verify bool, listenUDP string, s
 	if err != nil {
 		return fmt.Errorf("generate ephemeral certificate: %w", err)
 	}
-	myFP := network.CertFingerprint(epCertDER)
+	myFP := network.PubKeyFingerprint(epCertDER)
 	logDebug("ephemeral certificate generated", "fingerprint", myFP)
 
 	// Enforce server trust — abort before any network call if the server
@@ -291,12 +291,12 @@ func runRx(code, destination, serverURL string, verify bool, listenUDP string, s
 	logDebug("local endpoints collected", "local_v4", localV4, "local_v6", localV6, "public_v4", publicEPV4, "public_v6", publicEPV6)
 
 	myBundle := network.EndpointBundle{
-		LocalEndpointsV4: localV4,
-		LocalEndpointsV6: localV6,
-		PublicEndpointV4: publicEPV4,
-		PublicEndpointV6: publicEPV6,
-		CertFingerprint:  myFP,
-		RequireVerify:    verify,
+		LocalEndpointsV4:  localV4,
+		LocalEndpointsV6:  localV6,
+		PublicEndpointV4:  publicEPV4,
+		PublicEndpointV6:  publicEPV6,
+		PubKeyFingerprint: myFP,
+		RequireVerify:     verify,
 	}
 	myBundleBytes, err := network.EncodeEndpointBundle(myBundle)
 	if err != nil {
@@ -348,7 +348,7 @@ func runRx(code, destination, serverURL string, verify bool, listenUDP string, s
 	logDebug("starting QUIC listener for incoming sender connection")
 	tlsCert := buildTLSCert(epCertDER, epKey, epCert)
 	baseTLS := config.BuildTLSConfig(cfg)
-	ln, err := network.ListenQUIC(mux, tlsCert, baseTLS, senderBundle.CertFingerprint)
+	ln, err := network.ListenQUIC(mux, tlsCert, baseTLS, senderBundle.PubKeyFingerprint)
 	if err != nil {
 		return fmt.Errorf("QUIC listen: %w", err)
 	}

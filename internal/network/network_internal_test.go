@@ -365,23 +365,21 @@ func TestMakeCertPinner_NoCerts(t *testing.T) {
 // TestMakeCertPinner_HashMismatch verifies the fingerprint mismatch error path.
 func TestMakeCertPinner_HashMismatch(t *testing.T) {
 	pinner := makeCertPinner("0000000000000000000000000000000000000000000000000000000000000000")
-	fakeCert := make([]byte, 64) // sha256 won't match the zero hex
-	for i := range fakeCert {
-		fakeCert[i] = 0xFF
-	}
-	err := pinner([][]byte{fakeCert}, nil)
+	// Generate a real cert (fake bytes won't parse for SPKI extraction).
+	_, certDER := generateTestCert(t)
+	err := pinner([][]byte{certDER}, nil)
 	if err == nil {
 		t.Fatal("expected fingerprint mismatch error")
 	}
-	if !strings.Contains(err.Error(), "certificate fingerprint mismatch") {
+	if !strings.Contains(err.Error(), "peer identity verification failed") {
 		t.Errorf("unexpected error message: %v", err)
 	}
 }
 
-// TestMakeCertPinner_Match verifies that a matching fingerprint returns nil.
+// TestMakeCertPinner_Match verifies that a matching SPKI fingerprint returns nil.
 func TestMakeCertPinner_Match(t *testing.T) {
 	_, certDER := generateTestCert(t)
-	fp := CertFingerprint(certDER)
+	fp := PubKeyFingerprint(certDER)
 	pinner := makeCertPinner(fp)
 	if err := pinner([][]byte{certDER}, nil); err != nil {
 		t.Fatalf("expected nil for matching fingerprint: %v", err)
@@ -710,8 +708,8 @@ func TestDialAndListenQUIC(t *testing.T) {
 	dialerCert, dialerDER := generateTestCert(t)
 	listenerCert, listenerDER := generateTestCert(t)
 
-	dialerFP := CertFingerprint(dialerDER)
-	listenerFP := CertFingerprint(listenerDER)
+	dialerFP := PubKeyFingerprint(dialerDER)
+	listenerFP := PubKeyFingerprint(listenerDER)
 
 	// Bind two real UDP sockets on loopback.
 	inner1, err := BindUDP(":0")

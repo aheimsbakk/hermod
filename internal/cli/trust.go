@@ -21,7 +21,9 @@ func newTrustCmd() *cobra.Command {
 		Use:   "trust <server>",
 		Short: "Fetch and pin the public certificate of a signaling server",
 		Long: `Connects to the signaling server, fetches its TLS certificate,
-and pins the SHA-256 fingerprint in the local config.
+and pins the SHA-256 Subject Public Key Info (SPKI) fingerprint in the local
+config. SPKI pinning is used instead of certificate DER pinning so that the
+pin remains valid across certificate renewals that reuse the same key pair.
 
 Security note: the initial connection is made without certificate verification
 (TOFU — trust on first use). Run this command over a trusted network (VPN,

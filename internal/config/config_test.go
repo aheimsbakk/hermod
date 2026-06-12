@@ -139,6 +139,21 @@ func TestCertFingerprint(t *testing.T) {
 	if fp != fp2 {
 		t.Fatal("fingerprint not deterministic")
 	}
+	// PubKeyFingerprint should differ from CertFingerprint
+	pkfp := config.PubKeyFingerprint(tlsCert.Certificate[0])
+	if len(pkfp) != 64 {
+		t.Fatalf("expected 64-char hex SPKI fingerprint, got %q", pkfp)
+	}
+	if pkfp == fp {
+		t.Fatal("SPKI fingerprint must differ from cert DER fingerprint")
+	}
+}
+
+func TestPubKeyFingerprint_Invalid(t *testing.T) {
+	fp := config.PubKeyFingerprint([]byte("invalid"))
+	if fp != "" {
+		t.Fatalf("expected empty string for invalid DER, got %q", fp)
+	}
 }
 
 func TestPinServer(t *testing.T) {

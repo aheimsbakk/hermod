@@ -53,7 +53,7 @@ func startCLIServer(t *testing.T) (serverURL, fingerprint string) {
 		c, err2 := net.Dial("tcp", addr)
 		if err2 == nil {
 			c.Close()
-			fp := config.CertFingerprint(tlsCert.Certificate[0])
+			fp := config.PubKeyFingerprint(tlsCert.Certificate[0])
 			return "wss://" + addr, fp
 		}
 	}

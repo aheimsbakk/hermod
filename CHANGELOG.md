@@ -5,6 +5,33 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.19.0] - 2026-06-12
+
+- **why:** Switch from certificate DER pinning to SPKI (public key) pinning so certificate renewal with the same key does not break client trust; add automatic certificate renewal 14 days before expiry with key reuse
+- **model:** opencode/deepseek-v4-flash
+- **tags:** security, crypto, spki, pinning, certificate, auto-renewal
+
+### Added
+
+- `PubKeyFingerprint()` in `internal/network/network.go` and `internal/config/config.go` — computes SHA-256 of the Subject Public Key Info instead of the certificate DER, so the fingerprint survives certificate renewal with the same key pair
+- `RenewServerCert()` in `internal/config/config.go` — creates a new self-signed certificate that reuses the existing private key, keeping the SPKI fingerprint unchanged
+- Certificate auto-renewal: `hermod serve` automatically renews the certificate 14 days before the current one expires, reusing the existing key — clients never need to re-pin after automatic renewal (`internal/cli/serve.go`)
+- `TestRunServe_AutoRenewCert` — verifies auto-renewal extends `NotAfter` while the SPKI fingerprint stays identical (`internal/cli/unit_test.go`)
+- `TestPubKeyFingerprint` and `TestPubKeyFingerprint_Invalid` in both `internal/network/network_test.go` and `internal/config/config_test.go`
+
+### Changed
+
+- All certificate trust verification switched from certificate DER hash to SPKI (Subject Public Key Info) hash: `makeCertPinner`, `dialSignaling`, `FetchServerFingerprint` (`internal/network/network.go`, `internal/network/signaling.go`)
+- `EndpointBundle.CertFingerprint` renamed to `EndpointBundle.PubKeyFingerprint` with JSON tag `public_key_fingerprint` (`internal/network/handshake.go`; all callers updated across 15 files)
+- Server startup now prints "Server public key fingerprint" instead of "Server fingerprint" (`internal/cli/serve.go`)
+- `hermod trust` help text updated to describe SPKI pinning and its benefit during key-renewal (`internal/cli/trust.go`)
+- Fingerprint mismatch error messages rewritten with clear next steps — tell the user to verify the transfer code or run `hermod trust` to re-pin, instead of dumping hex values (`internal/network/network.go`, `internal/network/signaling.go`)
+- `BLUEPRINT.md` and `CONTEXT.md` updated to document SPKI pinning, auto-renewal, and key-reuse behavior
+
+### Security
+
+- Certificate auto-renewal reuses the existing private key — the SPKI fingerprint stays the same, so clients that pinned the server's public key continue to trust it without manual intervention
+
 ## [v0.18.0] - 2026-06-12
 
 - **why:** Add CGNAT UDP reflection for NAT traversal, remove dead code and legacy protocol compat, add lint checks to test suite, fix data races, document IPv4/IPv6 serve caveats

@@ -164,7 +164,7 @@ func TestMakeCertPinnerValid(t *testing.T) {
 	cfg := config.Default()
 	config.GenerateServerCert(cfg)
 	tlsCert, _ := config.LoadServerTLSCert(cfg)
-	fp := network.CertFingerprint(tlsCert.Certificate[0])
+	fp := network.PubKeyFingerprint(tlsCert.Certificate[0])
 
 	// Verify the fingerprint is 64 hex chars
 	if len(fp) != 64 {

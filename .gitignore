@@ -17,6 +17,9 @@ cover*.out
 .handoff/
 /tmp/
 
+# Security audit reports (one-off generated artifacts)
+audit-deepseek-*.md
+
 # OS
 .DS_Store
 

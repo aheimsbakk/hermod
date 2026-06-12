@@ -22,7 +22,7 @@ import (
 )
 
 // startLocalServer spins up a signaling server on a random port and returns
-// its wss:// URL and the SHA-256 certificate fingerprint.
+// its wss:// URL and the SHA-256 SPKI public key fingerprint.
 // The server is shut down via t.Cleanup.
 func startLocalServer(t *testing.T) (serverURL, fingerprint string) {
 	t.Helper()
@@ -59,7 +59,7 @@ func startLocalServer(t *testing.T) (serverURL, fingerprint string) {
 		c, err2 := net.Dial("tcp", addr)
 		if err2 == nil {
 			c.Close()
-			fp := config.CertFingerprint(tlsCert.Certificate[0])
+			fp := config.PubKeyFingerprint(tlsCert.Certificate[0])
 			return "wss://" + addr, fp
 		}
 	}
