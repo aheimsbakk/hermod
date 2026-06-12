@@ -189,6 +189,20 @@ func runTx(input, serverURL string, numWords int, verify bool, listenUDP string,
 	if err != nil {
 		return fmt.Errorf("bind UDP socket: %w", err)
 	}
+
+	// Discover external UDP address via the signaling server's reflection
+	// endpoint BEFORE wrapping the conn in the mux. This is critical for
+	// peers behind CGNAT where the UDP port assigned by the NAT differs
+	// from the TCP/WebSocket port. The mux's readLoop would consume the
+	// reflection response, so we must do this on the raw conn.
+	var discoveredAddr *net.UDPAddr
+	if discovered, err := discoverExternalAddr(ctx, serverURL, udpConn, 2*time.Second); err != nil {
+		logDebug("external UDP address discovery failed — using server-reported IP", "err", err)
+	} else {
+		discoveredAddr = discovered
+		logDebug("external UDP address discovered", "addr", discoveredAddr.String())
+	}
+
 	mux := network.NewPacketMux(udpConn)
 	defer mux.Close()
 
@@ -282,13 +296,23 @@ func runTx(input, serverURL string, numWords int, verify bool, listenUDP string,
 		localV4, localV6 = nil, nil
 		logWarn("could not enumerate local network interfaces — using public endpoint only", "err", err)
 	}
-	portStr := fmt.Sprintf("%d", localAddr.Port)
 	var publicEPV4, publicEPV6 string
-	if publicIPV4 != "" && ipFamily != network.IPFamilyV6 {
-		publicEPV4 = net.JoinHostPort(publicIPV4, portStr)
-	}
-	if publicIPV6 != "" && ipFamily != network.IPFamilyV4 {
-		publicEPV6 = net.JoinHostPort(publicIPV6, portStr)
+	if discoveredAddr != nil {
+		// Use the discovered external UDP address (CGNAT-aware).
+		if discoveredAddr.IP.To4() != nil && ipFamily != network.IPFamilyV6 {
+			publicEPV4 = discoveredAddr.String()
+		} else if ipFamily != network.IPFamilyV4 {
+			publicEPV6 = discoveredAddr.String()
+		}
+	} else {
+		// Fall back to server-reported IP + local port.
+		portStr := fmt.Sprintf("%d", localAddr.Port)
+		if publicIPV4 != "" && ipFamily != network.IPFamilyV6 {
+			publicEPV4 = net.JoinHostPort(publicIPV4, portStr)
+		}
+		if publicIPV6 != "" && ipFamily != network.IPFamilyV4 {
+			publicEPV6 = net.JoinHostPort(publicIPV6, portStr)
+		}
 	}
 	logDebug("local endpoints collected", "local_v4", localV4, "local_v6", localV6, "public_v4", publicEPV4, "public_v6", publicEPV6)
 
@@ -841,3 +865,14 @@ func buildTLSCert(certDER []byte, key interface{}, leaf *x509.Certificate) tls.C
 
 // jsonPayload is used for text metadata exchange.
 type jsonPayload = json.RawMessage
+
+// discoverExternalAddr tries to discover the peer's external UDP address using
+// the signaling server's UDP reflection endpoint. Returns the discovered address
+// or an error (callers should fall back gracefully).
+func discoverExternalAddr(_ context.Context, serverURL string, conn net.PacketConn, timeout time.Duration) (*net.UDPAddr, error) {
+	serverUDP, err := network.ServerUDPAddr(serverURL)
+	if err != nil {
+		return nil, fmt.Errorf("server UDP addr: %w", err)
+	}
+	return network.DiscoverViaReflector(conn, serverUDP, timeout)
+}

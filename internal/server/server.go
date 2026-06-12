@@ -66,8 +66,9 @@ type Server struct {
 	httpServer         *http.Server
 	logger             *slog.Logger
 
-	mu      sync.Mutex
-	waiters map[uint16][]*wsConn // pending peer connections
+	mu         sync.Mutex
+	waiters    map[uint16][]*wsConn // pending peer connections
+	udpReflect *udpReflector        // UDP reflection for CGNAT address discovery; nil if unavailable
 }
 
 type wsConn struct {
@@ -134,6 +135,21 @@ func (s *Server) Serve(ctx context.Context, ln net.Listener, tlsCfg *tls.Config)
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      30 * time.Second,
 		IdleTimeout:       120 * time.Second,
+	}
+
+	// Start UDP reflection on the same port for CGNAT address discovery.
+	// This allows peers behind CGNAT to learn their external UDP address
+	// from the server. If the UDP bind fails (e.g. port unavailable), the
+	// reflector is nil and clients will fall back to the current behaviour.
+	s.udpReflect = startUDPReflector(ctx, ln.Addr().String())
+	defer func() {
+		if s.udpReflect != nil {
+			s.udpReflect.Close()
+		}
+	}()
+
+	if s.udpReflect != nil {
+		s.logger.Info("UDP reflection enabled for CGNAT address discovery", "addr", ln.Addr().String())
 	}
 
 	s.logger.Info("Signaling server ready", "addr", ln.Addr().String())

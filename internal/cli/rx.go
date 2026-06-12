@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/mattn/go-isatty"
 	"github.com/spf13/cobra"
@@ -133,6 +134,19 @@ func runRx(code, destination, serverURL string, verify bool, listenUDP string, s
 	if err != nil {
 		return fmt.Errorf("bind UDP socket: %w", err)
 	}
+
+	// Discover external UDP address via the signaling server's reflection
+	// endpoint BEFORE wrapping the conn in the mux. The mux's readLoop
+	// would consume the reflection response, so we must do this on the
+	// raw conn.
+	var discoveredAddr *net.UDPAddr
+	if discovered, err := discoverExternalAddr(ctx, serverURL, udpConn, 2*time.Second); err != nil {
+		logDebug("external UDP address discovery failed — using server-reported IP", "err", err)
+	} else {
+		discoveredAddr = discovered
+		logDebug("external UDP address discovered", "addr", discoveredAddr.String())
+	}
+
 	mux := network.NewPacketMux(udpConn)
 	defer mux.Close()
 
@@ -256,13 +270,23 @@ func runRx(code, destination, serverURL string, verify bool, listenUDP string, s
 		localV4, localV6 = nil, nil
 		logWarn("could not enumerate local network interfaces — using public endpoint only", "err", err)
 	}
-	portStr := fmt.Sprintf("%d", localAddr.Port)
 	var publicEPV4, publicEPV6 string
-	if publicIPV4 != "" && ipFamily != network.IPFamilyV6 {
-		publicEPV4 = net.JoinHostPort(publicIPV4, portStr)
-	}
-	if publicIPV6 != "" && ipFamily != network.IPFamilyV4 {
-		publicEPV6 = net.JoinHostPort(publicIPV6, portStr)
+	if discoveredAddr != nil {
+		// Use the discovered external UDP address (CGNAT-aware).
+		if discoveredAddr.IP.To4() != nil && ipFamily != network.IPFamilyV6 {
+			publicEPV4 = discoveredAddr.String()
+		} else if ipFamily != network.IPFamilyV4 {
+			publicEPV6 = discoveredAddr.String()
+		}
+	} else {
+		// Fall back to server-reported IP + local port.
+		portStr := fmt.Sprintf("%d", localAddr.Port)
+		if publicIPV4 != "" && ipFamily != network.IPFamilyV6 {
+			publicEPV4 = net.JoinHostPort(publicIPV4, portStr)
+		}
+		if publicIPV6 != "" && ipFamily != network.IPFamilyV4 {
+			publicEPV6 = net.JoinHostPort(publicIPV6, portStr)
+		}
 	}
 	logDebug("local endpoints collected", "local_v4", localV4, "local_v6", localV6, "public_v4", publicEPV4, "public_v6", publicEPV6)
 

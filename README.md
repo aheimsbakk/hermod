@@ -208,11 +208,12 @@ No environment variables are required for normal use. Supported env vars:
 1. The sender connects to the signaling server and allocates a channel, receiving a numeric channel ID.
 2. The transfer code encodes the channel ID plus a random word passphrase.
 3. The receiver connects to the signaling server using the code and joins the channel.
-4. Both peers run a CPace PAKE handshake over the signaling channel to establish a shared key, authenticated by the passphrase.
-5. Both peers exchange X25519 public keys and ML-KEM-768 (post-quantum) keys, deriving a hybrid key from CPace + X25519 + ML-KEM-768. UDP endpoints are encrypted with this hybrid key and exchanged through the signaling relay. Even if the CPace key is broken by a quantum computer, the ML-KEM component protects the endpoint data.
-6. Both peers punch through NAT using a two-phase holepunch: IPv6 first (5 s), then IPv4 (10 s). Use `-4` or `-6` to enforce a single protocol.
-7. A QUIC connection is established directly between the peers — the sender dials, the receiver listens. Each side pins the other's ephemeral certificate fingerprint (mutual TLS).
-8. File metadata and payload stream over QUIC. The receiver verifies the SHA-256 hash on arrival.
+4. Both peers discover their external UDP address via the signaling server's built-in UDP reflection port. This is critical behind **CGNAT (Carrier-Grade NAT)** where the UDP port differs from the TCP port used for the WebSocket. The discovered address replaces the WebSocket IP + local port in the encrypted endpoint bundle. A two-phase HMAC cookie handshake prevents UDP amplification attacks.
+5. Both peers run a CPace PAKE handshake over the signaling channel to establish a shared key, authenticated by the passphrase.
+6. Both peers exchange X25519 public keys and ML-KEM-768 (post-quantum) keys, deriving a hybrid key from CPace + X25519 + ML-KEM-768. UDP endpoints are encrypted with this hybrid key and exchanged through the signaling relay. Even if the CPace key is broken by a quantum computer, the ML-KEM component protects the endpoint data.
+7. Both peers punch through NAT using a two-phase holepunch: IPv6 first (5 s), then IPv4 (10 s). Use `-4` or `-6` to enforce a single protocol.
+8. A QUIC connection is established directly between the peers — the sender dials, the receiver listens. Each side pins the other's ephemeral certificate fingerprint (mutual TLS).
+9. File metadata and payload stream over QUIC. The receiver verifies the SHA-256 hash on arrival.
 
 See [docs/protocol.md](docs/protocol.md) for the full protocol specification.
 

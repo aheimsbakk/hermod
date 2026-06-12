@@ -22,6 +22,29 @@ Sender (tx)             Signaling server        Receiver (rx)
      |                        | --> ok(public_ipv4/v6) |
 ```
 
+### Phase 1.5 — External UDP address discovery (UDP reflector)
+
+Before the CPace handshake, each peer discovers its external UDP address using
+the signaling server's built-in UDP reflection port:
+
+```
+Peer                                Signaling server (UDP)
+  |--- [0x10] cookie request (1B) → |
+  |← [0x10][HMAC(secret,IP)[:8]] -- |  cookie response (9B)
+  |--- [0x10][cookie] echo (9B) ---→ |  verified by HMAC
+  |← [family(1)][IP(variable)][port(2)] |  external address (7-19B)
+```
+
+This happens **before** the packet mux wraps the UDP socket and **before**
+any QUIC traffic starts. The two-phase HMAC cookie handshake prevents UDP
+reflection amplification: the external address is only sent to a peer that
+proves it can receive packets at the claimed source address.
+
+If the server does not support UDP reflection, or if the discovery times
+out, the peer falls back to the server-reported WebSocket IP combined with
+its local UDP port (the current behaviour). Peers behind the same NAT still
+find each other via local endpoint candidates.
+
 ### Phase 2 — CPace PAKE (blobs relayed via server)
 
 ```
@@ -388,5 +411,11 @@ Both sides exit with a non-zero status code after cancellation.
 - Client IP addresses are never stored in plaintext. The rate-limiter bucket key is `HMAC-SHA256(dailySalt, ipPrefix)`. The salt is replaced every UTC calendar day and all buckets are cleared on rotation. Stale buckets are also evicted every 10 minutes to bound memory usage.
 - Endpoint bundles are encrypted with `AES-256-GCM(hybridKey, channelID_as_AAD, bundle)`. The key `hybridKey = SHA-256(kClassical || ssX25519 || ssMLKEM)` combines three pillars: CPace (P-256 PAKE), X25519 ECDH, and ML-KEM-768 (post-quantum KEM). A quantum adversary who breaks P-256 to recover `kClassical` still cannot decrypt the bundles without the ML-KEM-768 shared secret.
 - The CPace implementation uses the `P256_XMD:SHA-256_SSWU_RO_` suite (RFC 9380) to hash passwords to P-256 curve points. SSWU always produces a valid point in a single, fixed-length computation with no data-dependent loop iterations, eliminating the loop-count timing side channel of the former try-and-increment method.
-- Ephemeral QUIC certificates use ECDSA P-256. They are valid for 24 hours and are never stored.
+- Ephemeral QUIC certificates use ECDSA P-256. They are valid for 2 hours and are never stored.
 - Payload integrity is verified end-to-end via a trailing hash stream. The sender computes SHA-256 in parallel during transfer and sends the digest after the payload stream closes. The receiver computes SHA-256 in parallel during receipt and verifies against the sender's trailing digest. No pre-buffering of large inputs is required.
+- **CGNAT (Carrier-Grade NAT)**: The signaling server runs a UDP reflection port
+  on the same port as the TLS listener. Peers discover their external UDP address
+  before the endpoint bundle exchange, so the correct UDP port (not the WebSocket
+  port) is advertised. The reflection uses a two-phase HMAC cookie handshake to
+  prevent amplification attacks. If the server's UDP port is unreachable, peers
+  fall back to the current behaviour (WebSocket IP + local port).

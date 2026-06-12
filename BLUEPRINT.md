@@ -11,8 +11,8 @@ internal/cli/tty_windows.go — CONIN$ open helper (Windows)
 internal/cli/verbosity.go   — --verbose flag parsing, slog/stdlog wiring, log helpers
 internal/config/            — YAML config load/save, TLS helpers, cert generation (1-year self-signed ECDSA P-256, IsCA=false), cert expiry warning helper
 internal/crypto/            — CPace PAKE (P-256), AES-256-GCM, SAS, identicon, transfer codes
-internal/server/            — MemoryStore SignalingStore, WebSocket relay (rejects browser cross-origin connections), HMAC-SHA256 IP-hashing rate limiter with 10-min cleanup ticker, per-channel blob/CPace-failure limits, single-receiver enforcement, TTL GC, /cert endpoint serving DER certificate
-internal/network/           — UDP mux (SO_REUSEADDR/REUSEPORT), hole punching (session-unique nonce derived from CPace key), QUIC transport (DialQUIC, ListenQUIC), signaling client (WithContext goroutine lifecycle managed via done channel)
+internal/server/            — MemoryStore SignalingStore, WebSocket relay (rejects browser cross-origin connections), HMAC-SHA256 IP-hashing rate limiter with 10-min cleanup ticker, per-channel blob/CPace-failure limits, single-receiver enforcement, TTL GC, /cert endpoint serving DER certificate, UDP reflection endpoint for CGNAT address discovery (two-phase HMAC cookie handshake)
+internal/network/           — UDP mux (SO_REUSEADDR/REUSEPORT), hole punching (session-unique nonce derived from CPace key), QUIC transport (DialQUIC, ListenQUIC), signaling client (WithContext goroutine lifecycle managed via done channel), external UDP address discovery via server reflection (CGNAT)
 pkg/transfer/               — payload metadata, stream classification, SHA-256 integrity
 README.md                   — user-facing documentation
 docs/protocol.md            — wire protocol specification
@@ -104,13 +104,19 @@ Final key: `SHA-256(kClassical || ssX25519 || ssMLKEM)`
 
 1. Sender allocates channel on signaling server → gets channel ID + public IP
 2. Receiver joins channel (server validates channel exists) → sender receives `ready`
-3. Hybrid handshake over signaling relay:
+3. External UDP address discovery: both peers send a cookie-mode probe to the
+   signaling server's UDP reflection port. Server responds with HMAC cookie;
+   peer echoes cookie to prove address ownership, receives external UDP address.
+   Used as `PublicEndpointV4`/`V6` in the bundle (critical for CGNAT where UDP
+   port differs from WebSocket TCP port). Falls back to WebSocket IP + local
+   port if discovery fails.
+4. Hybrid handshake over signaling relay:
    a. CPace public messages exchanged (P-256, password = transfer code words)
    b. X25519 public keys + ML-KEM-768 encapsulation keys exchanged in same blobs
    c. Sender encapsulates ML-KEM → ciphertext sent alongside encrypted bundle
-4. Endpoint bundles encrypted with HybridBlobKey (AES-256-GCM, channel ID as AAD). HybridBlobKey = SHA-256(kClassical || ssX25519 || ssMLKEM)
-5. UDP hole punch to peer candidates (two-phase: IPv6 preferred, IPv4 fallback; 5s/10s timeouts; `-4`/`-6` flags enforce single family)
-6. QUIC connection (TLS 1.3, sender dials / receiver listens, ephemeral ECDSA P-256 certs, fingerprint-pinned mutual TLS)
-7. Stream 0 (SAS coordination, only when verify active): 1-byte confirm/reject exchange; Stream 1 (or 0 without verify): 4-byte-prefixed JSON metadata (sha256 = ""); Stream 2 (or 1 without verify): raw payload bytes streamed while sender computes SHA-256 in parallel; Stream 3 (or 2 without verify): 4-byte-prefixed trailing hash (hex SHA-256 computed during send)
-8. Receiver computes SHA-256 in parallel while receiving payload, then verifies against trailing hash stream
-9. Receiver sends ack stream; sender waits before closing QUIC connection
+5. Endpoint bundles encrypted with HybridBlobKey (AES-256-GCM, channel ID as AAD). HybridBlobKey = SHA-256(kClassical || ssX25519 || ssMLKEM)
+6. UDP hole punch to peer candidates (two-phase: IPv6 preferred, IPv4 fallback; 5s/10s timeouts; `-4`/`-6` flags enforce single family)
+7. QUIC connection (TLS 1.3, sender dials / receiver listens, ephemeral ECDSA P-256 certs, fingerprint-pinned mutual TLS)
+8. Stream 0 (SAS coordination, only when verify active): 1-byte confirm/reject exchange; Stream 1 (or 0 without verify): 4-byte-prefixed JSON metadata (sha256 = ""); Stream 2 (or 1 without verify): raw payload bytes streamed while sender computes SHA-256 in parallel; Stream 3 (or 2 without verify): 4-byte-prefixed trailing hash (hex SHA-256 computed during send)
+9. Receiver computes SHA-256 in parallel while receiving payload, then verifies against trailing hash stream
+10. Receiver sends ack stream; sender waits before closing QUIC connection
