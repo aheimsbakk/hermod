@@ -157,12 +157,6 @@ func (s *CPaceSession) CPaceFinish(peerPub []byte) ([]byte, error) {
 	return k, nil
 }
 
-// SharedK returns the derived shared secret (nil before CPaceFinish is called).
-func (s *CPaceSession) SharedK() []byte { return s.sharedK }
-
-// PubMessage returns the 65-byte public message.
-func (s *CPaceSession) PubMessage() []byte { return s.pubMsg }
-
 // cpaceGenerator hashes the password + channelID to a P-256 point using
 // the P256_XMD:SHA-256_SSWU_RO_ suite (RFC 9380).
 // The domain separation tag embeds the combined role tag "sender:receiver"
@@ -219,9 +213,6 @@ func randScalar(n *big.Int) (*big.Int, error) {
 	}
 }
 
-// sharedK is a dummy field to satisfy interface (moved to CPaceSession)
-var _ = (*CPaceSession)(nil)
-
 // --- Hybrid KEM (X25519 + ML-KEM-768) ---
 
 // GenerateX25519KeyPair generates an ephemeral X25519 key pair.
@@ -237,11 +228,6 @@ func GenerateX25519KeyPair() (*ecdh.PrivateKey, []byte, error) {
 // ECDHX25519 computes the X25519 ECDH shared secret.
 func ECDHX25519(priv *ecdh.PrivateKey, pub *ecdh.PublicKey) ([]byte, error) {
 	return priv.ECDH(pub)
-}
-
-// X25519PubBytes returns the 32-byte public key encoding.
-func X25519PubBytes(pub *ecdh.PublicKey) []byte {
-	return pub.Bytes()
 }
 
 // NewX25519PubFromBytes parses a 32-byte X25519 public key.

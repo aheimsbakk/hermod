@@ -206,14 +206,6 @@ func (s *Server) Serve(ctx context.Context, ln net.Listener, tlsCfg *tls.Config)
 	}
 }
 
-// Addr returns the listening address. Must be called after the server is started.
-func (s *Server) Addr() string {
-	if s.httpServer != nil {
-		return s.httpServer.Addr
-	}
-	return ""
-}
-
 // handleCert serves the server's TLS certificate as PEM for client pinning.
 // Clients can hash the DER bytes inside the PEM block with SHA-256 to obtain
 // the fingerprint they should store via `hermod trust`.

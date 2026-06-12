@@ -11,8 +11,8 @@ internal/cli/tty_windows.go — CONIN$ open helper (Windows)
 internal/cli/verbosity.go   — --verbose flag parsing, slog/stdlog wiring, log helpers
 internal/config/            — YAML config load/save, TLS helpers, cert generation (1-year self-signed ECDSA P-256, IsCA=false), cert expiry warning helper
 internal/crypto/            — CPace PAKE (P-256), AES-256-GCM, SAS, identicon, transfer codes
-internal/server/            — MemoryStore SignalingStore, WebSocket relay (rejects browser cross-origin connections), HMAC-SHA256 IP-hashing rate limiter with 10-min cleanup ticker, per-channel blob/CPace-failure limits, single-receiver enforcement, TTL GC, /cert endpoint serving DER certificate, UDP reflection endpoint for CGNAT address discovery (two-phase HMAC cookie handshake)
-internal/network/           — UDP mux (SO_REUSEADDR/REUSEPORT), hole punching (session-unique nonce derived from CPace key), QUIC transport (DialQUIC, ListenQUIC), signaling client (WithContext goroutine lifecycle managed via done channel), external UDP address discovery via server reflection (CGNAT)
+internal/server/            — MemoryStore SignalingStore, WebSocket relay (rejects browser cross-origin connections), HMAC-SHA256 IP-hashing rate limiter with 10-min cleanup ticker, per-channel blob/CPace-failure limits, single-receiver enforcement, TTL GC, /cert endpoint serving DER certificate, UDP reflection endpoint for CGNAT address discovery (two-phase HMAC cookie handshake; no legacy 0x00 probe)
+internal/network/           — UDP mux (SO_REUSEADDR/REUSEPORT), hole punching (session-unique nonce derived from CPace key), QUIC transport (DialQUIC, ListenQUIC), signaling client (WithContext goroutine lifecycle managed via done channel), external UDP address discovery via server reflection (CGNAT; cookie protocol only)
 pkg/transfer/               — payload metadata, stream classification, SHA-256 integrity
 README.md                   — user-facing documentation
 docs/protocol.md            — wire protocol specification
@@ -108,8 +108,8 @@ Final key: `SHA-256(kClassical || ssX25519 || ssMLKEM)`
    signaling server's UDP reflection port. Server responds with HMAC cookie;
    peer echoes cookie to prove address ownership, receives external UDP address.
    Used as `PublicEndpointV4`/`V6` in the bundle (critical for CGNAT where UDP
-   port differs from WebSocket TCP port). Falls back to WebSocket IP + local
-   port if discovery fails.
+   port differs from WebSocket TCP port). Falls back to server-reported WebSocket
+   IP + local port if the server does not support reflection or discovery times out.
 4. Hybrid handshake over signaling relay:
    a. CPace public messages exchanged (P-256, password = transfer code words)
    b. X25519 public keys + ML-KEM-768 encapsulation keys exchanged in same blobs

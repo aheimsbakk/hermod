@@ -190,19 +190,9 @@ func ServerUDPAddr(serverURL string) (string, error)
 Extracts the UDP `host:port` from a `wss://` server URL, used for the server's UDP reflection endpoint.
 
 ```go
-var ReflectRequest = []byte{0x10}
-```
-One-byte cookie-mode probe sent to the signaling server's UDP reflector.
-
-```go
 func DiscoverViaReflector(conn net.PacketConn, serverAddr string, timeout time.Duration) (*net.UDPAddr, error)
 ```
-Discovers the external UDP address using the signaling server's UDP reflection port. Uses a two-phase HMAC cookie handshake to prevent amplification attacks. Falls back to legacy direct-address response for old servers. Called by `tx` and `rx` before the packet mux is created. If discovery fails (no UDP route, timeout, server without reflector), the caller falls back to the server-reported WebSocket IP + local port.
-
-```go
-func DiscoverExternalAddress(conn net.PacketConn, serverAddr string, timeout time.Duration) (*net.UDPAddr, error)
-```
-Standard STUN-based external address discovery using a public STUN server (e.g. `stun.l.google.com:19302`). Returns the external IP:port as seen by the STUN server.
+Discovers the external UDP address using the signaling server's UDP reflection port. Uses a two-phase HMAC cookie handshake to prevent amplification attacks. Called by `tx` and `rx` before the packet mux is created. If discovery fails (no UDP route, timeout), the caller falls back to the server-reported WebSocket IP + local port.
 
 ### Packet mux
 
@@ -419,7 +409,6 @@ Protocol:
 - Server responds: `[0x10][HMAC-SHA256(secret, clientIP)[:8]]` (9 bytes)
 - Phase 2 (cookie echo): client sends `[0x10][cookie]` (9 bytes)
 - Server verifies HMAC, responds with external address (7-19 bytes)
-- Legacy clients: `[0x00]` (1 byte) → server responds with address directly
 
 The HMAC secret key is 32 bytes generated at startup and rotated every UTC day. The previous key is accepted during a 5-minute grace period.
 

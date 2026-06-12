@@ -12,7 +12,6 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/binary"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -850,11 +849,6 @@ func promptSASVerificationFrom(ctx context.Context, tlsState tls.ConnectionState
 	}
 }
 
-// quicConnectionState is satisfied by *quic.Conn.
-type quicConnectionState interface {
-	ConnectionState() tls.ConnectionState
-}
-
 func buildTLSCert(certDER []byte, key interface{}, leaf *x509.Certificate) tls.Certificate {
 	return tls.Certificate{
 		Certificate: [][]byte{certDER},
@@ -862,9 +856,6 @@ func buildTLSCert(certDER []byte, key interface{}, leaf *x509.Certificate) tls.C
 		Leaf:        leaf,
 	}
 }
-
-// jsonPayload is used for text metadata exchange.
-type jsonPayload = json.RawMessage
 
 // discoverExternalAddr tries to discover the peer's external UDP address using
 // the signaling server's UDP reflection endpoint. Returns the discovered address

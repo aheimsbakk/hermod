@@ -16,10 +16,6 @@
 //   - Cannot complete phase 2 because they never received the cookie
 //   - The external address is NEVER sent to an unverified source
 //
-// Legacy clients send [0x00] and receive the address directly (7-19×
-// amplification, rate-limited). This is preserved for backward compat;
-// all new clients use the cookie protocol.
-//
 // The secret key is rotated every UTC calendar day. Old keys are accepted
 // for a 5-minute grace period to handle clock skew.
 package server
@@ -163,15 +159,6 @@ func (r *udpReflector) serve(ctx context.Context) {
 		firstByte := buf[0]
 
 		switch {
-		case firstByte == 0x00 && n == 1:
-			// Legacy probe — respond with address directly.
-			// Rate-limited to prevent amplification abuse.
-			if !r.rl.Allow(udpAddr.IP.String()) {
-				slog.Warn("UDP reflection rate-limited (legacy)", "remote_ip", udpAddr.IP)
-				continue
-			}
-			r.writeAddress(udpAddr)
-
 		case firstByte == reflectProbeMagic && n == 1:
 			// Cookie request — respond with HMAC cookie.
 			if !r.rl.Allow(udpAddr.IP.String()) {

@@ -40,10 +40,9 @@ any QUIC traffic starts. The two-phase HMAC cookie handshake prevents UDP
 reflection amplification: the external address is only sent to a peer that
 proves it can receive packets at the claimed source address.
 
-If the server does not support UDP reflection, or if the discovery times
-out, the peer falls back to the server-reported WebSocket IP combined with
-its local UDP port (the current behaviour). Peers behind the same NAT still
-find each other via local endpoint candidates.
+If the discovery times out, the peer falls back to the server-reported
+WebSocket IP combined with its local UDP port. Peers behind the same NAT
+still find each other via local endpoint candidates.
 
 ### Phase 2 — CPace PAKE (blobs relayed via server)
 
