@@ -69,11 +69,11 @@ All data is end-to-end encrypted and never passes through the signaling server.`
 	)
 	root.PersistentFlags().BoolVarP(
 		&localIPv4, "ipv4", "4", false,
-		`Use IPv4 only for hole punching. Cannot be combined with -6.`,
+		`Restrict to IPv4 only for listen address, signaling connection, and hole punching. Cannot be combined with -6.`,
 	)
 	root.PersistentFlags().BoolVarP(
 		&localIPv6, "ipv6", "6", false,
-		`Use IPv6 only for hole punching. Cannot be combined with -4.`,
+		`Restrict to IPv6 only for listen address, signaling connection, and hole punching. Cannot be combined with -4.`,
 	)
 
 	// Cobra auto-generates --version from cmd.Version. Add -V as short alias.

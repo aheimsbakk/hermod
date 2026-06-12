@@ -56,8 +56,8 @@ These flags apply to every command.
 |---|---|---|---|
 | `--verbose` | | `none` | Log verbosity: `none`, `error`, `warning`, `info`, `debug` |
 | `--quiet` | `-q` | off | Suppress status output. Errors are always shown. |
-| `--ipv4` | `-4` | off | Use IPv4 only for all network operations (listen, signaling, hole punching). Cannot be combined with `--ipv6`. |
-| `--ipv6` | `-6` | off | Use IPv6 only for all network operations (listen, signaling, hole punching). Cannot be combined with `--ipv4`. |
+| `--ipv4` | `-4` | off | Restrict to IPv4 only for listen address, signaling connection, and hole punching. Cannot be combined with `--ipv6`. |
+| `--ipv6` | `-6` | off | Restrict to IPv6 only for listen address, signaling connection, and hole punching. Cannot be combined with `--ipv4`. |
 | `--version` | `-V` | | Print the version and exit. |
 
 ### tx — send
@@ -147,6 +147,27 @@ firewall: for the default port 4376, allow `tcp/4376` and `udp/4376`.
 If the UDP port is blocked, peers behind CGNAT will fall back to
 WebSocket-based address detection, which reduces hole-punch success
 rates but does not prevent transfers on symmetric NATs.
+
+**IPv4/IPv6 notes for `serve`:**
+
+- **`-4` (IPv4-only):** The server listens on `0.0.0.0:PORT` and accepts
+  only IPv4 connections for both TCP and UDP. This provides true IPv4
+  isolation.
+- **`-6` (IPv6-only):** The server listens on `[::]:PORT`. On most Linux
+  systems, the kernel default (`net.ipv6.bindv6only=0`) means this socket
+  **still accepts IPv4 connections** via IPv4-mapped IPv6 addresses. To
+  achieve true IPv6-only isolation, configure `net.ipv6.bindv6only=1` on
+  your system or use a firewall rule. Only `-4` provides single-family
+  isolation without additional system configuration.
+- **Explicit `--listen` + `-4`/`-6`:** If you provide an explicit listen
+  address (e.g. `--listen 0.0.0.0:4376` or `--listen [::]:4376`)
+  or set `HERMOD_LISTEN` to a specific address, the `-4`/`-6` flags
+  have **no effect** on the listen address — they are silently ignored.
+  The override only applies when the address is in bare `:PORT` format.
+- The flag descriptions in help text refer to all subcommands. For `serve`,
+  these flags affect the listen address rather than hole punching.
+  The client-side behavior (`tx`/`rx`) also respects the same flags for
+  signaling connection and hole punching.
 
 ### trust — pin a server certificate
 
