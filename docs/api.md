@@ -384,8 +384,10 @@ Starts the HTTPS/WebSocket server. Blocks until `ctx` is cancelled.
 ### Store
 
 ```go
+const DefaultMaxChannelsPerIP = 100
+
 type SignalingStore interface {
-    AllocateChannel(id uint16, ttl time.Duration) error
+    AllocateChannel(id uint16, ttl time.Duration, remoteAddr string) error
     StoreBlob(id uint16, sender bool, blob []byte) error
     FetchBlob(id uint16, sender bool) ([]byte, error)
     RecordFailure(id uint16) (int, error)
@@ -394,9 +396,9 @@ type SignalingStore interface {
     Close() error
 }
 
-func NewMemoryStore() *MemoryStore
+func NewMemoryStore(maxChannelsPerIP int) *MemoryStore
 ```
-`MemoryStore` is the default store. It holds all state in memory and is suitable for single-process deployments.
+`MemoryStore` is the default store. It holds all state in memory and is suitable for single-process deployments. When `maxChannelsPerIP > 0`, the store limits concurrent channels per IP prefix (IPv4 /32, IPv6 /64) — the allocate call extracts the prefix from `remoteAddr` and rejects if the limit is hit. The channel owner count is decremented on `DeleteChannel` or `PurgeExpired`. Pass 0 for no limit.
 
 ### UDP reflection (CGNAT)
 

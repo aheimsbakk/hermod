@@ -134,6 +134,7 @@ hermod serve [flags]
 | `--rate-burst` | | `15` | Burst capacity per IP prefix (applies to both the WebSocket `/ws` and the `/cert` endpoint) |
 | `--max-blobs-per-channel` | | `10` | Hard cap on relayed blobs per channel |
 | `--max-cpace-failures` | | `3` | Max CPace failures before a channel is dropped |
+| `--max-channels-per-ip` | | `100` | Max active channels per IP prefix (IPv4 /32, IPv6 /64) |
 
 Global flags `--verbose`, `--quiet`, `--ipv4`, and `--ipv6` also apply.
 
@@ -207,6 +208,18 @@ If you already know the server's fingerprint (e.g., shared by the server operato
 ```
 
 The command will fail with an error if the server presents a different certificate.
+
+## Server key compromise recovery
+
+If you suspect the signaling server's private key has been compromised, the server's identity (the public key fingerprint that clients pin) is no longer trustworthy. Auto-renewal is not a defense — it reuses the same key pair, so an attacker with the private key can still impersonate the server.
+
+**Recovery steps:**
+
+1. **On the server:** Stop `hermod serve`. Delete both `server_cert_pem` and `server_key_pem` from the config file (`~/.config/hermod/config.yaml`). Restart `hermod serve` — it generates a new ECDSA P-256 key pair and a new self-signed certificate. Note the new public key fingerprint printed at startup.
+
+2. **On every client:** Run `hermod trust wss://your-server:4376` to fetch and pin the new server certificate. Until this is done, `tx` and `rx` will fail with fingerprint mismatch errors.
+
+The server certificate is ephemeral. If you cannot access the config file (e.g. containerized setup), delete the entire config and restart — a new one is created with a fresh key pair.
 
 ## SAS verification
 

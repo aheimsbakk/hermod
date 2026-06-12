@@ -56,7 +56,7 @@ func cmdStartServer(ts *testscript.TestScript, neg bool, _ []string) {
 	tlsCfg := config.BuildTLSConfig(cfg)
 	tlsCfg.Certificates = []tls.Certificate{tlsCert}
 
-	store := server.NewMemoryStore()
+	store := server.NewMemoryStore(0)
 	rl := server.NewRateLimiter(100, 1000)
 	srv := server.NewServer(
 		store, rl, rl, rl, 60*time.Second,

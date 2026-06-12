@@ -377,7 +377,6 @@ func runRx(code, destination, serverURL string, verify bool, listenUDP string, s
 		if err := performSASCoordinated(ctx, quicConn, quicState.TLS, false, channelIDAad(channelID)); err != nil {
 			return err
 		}
-		logInfo("SAS verification passed")
 	}
 
 	// Read metadata stream

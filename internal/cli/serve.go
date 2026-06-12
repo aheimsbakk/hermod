@@ -30,13 +30,14 @@ func newServeCmd() *cobra.Command {
 		rateBurst          float64
 		maxBlobsPerChannel int
 		maxCPaceFailures   int
+		maxChannelsPerIP   int
 	)
 
 	cmd := &cobra.Command{
 		Use:   "serve",
 		Short: "Start the signaling and NAT helper service",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runServe(listen, time.Duration(ttl)*time.Second, rateLimit, rateBurst, maxBlobsPerChannel, maxCPaceFailures)
+			return runServe(listen, time.Duration(ttl)*time.Second, rateLimit, rateBurst, maxBlobsPerChannel, maxCPaceFailures, maxChannelsPerIP)
 		},
 	}
 
@@ -46,11 +47,12 @@ func newServeCmd() *cobra.Command {
 	cmd.Flags().Float64Var(&rateBurst, "rate-burst", 15, "Token bucket burst capacity per IP prefix")
 	cmd.Flags().IntVar(&maxBlobsPerChannel, "max-blobs-per-channel", server.DefaultMaxBlobsPerChannel, "Hard cap on relayed blobs per signaling channel")
 	cmd.Flags().IntVar(&maxCPaceFailures, "max-cpace-failures", server.DefaultMaxCPaceFailures, "Max CPace handshake failures before a channel is invalidated")
+	cmd.Flags().IntVar(&maxChannelsPerIP, "max-channels-per-ip", server.DefaultMaxChannelsPerIP, "Max active channels per IP prefix (IPv4 /32, IPv6 /64)")
 
 	return cmd
 }
 
-func runServe(listenAddr string, ttl time.Duration, rateLimit, rateBurst float64, maxBlobsPerChannel, maxCPaceFailures int) error {
+func runServe(listenAddr string, ttl time.Duration, rateLimit, rateBurst float64, maxBlobsPerChannel, maxCPaceFailures, maxChannelsPerIP int) error {
 	// Override the listen address to enforce strict IP family when -4/-6 is set.
 	// Only override when bind addr has no explicit IP (e.g. ":4376"), which means
 	// net.Listen would bind dual-stack. Explicit addresses like "10.0.0.1:4376" are
@@ -138,7 +140,7 @@ func runServe(listenAddr string, ttl time.Duration, rateLimit, rateBurst float64
 		"cipher_suites", cfg.TLS.CipherSuites,
 	)
 
-	store := server.NewMemoryStore()
+	store := server.NewMemoryStore(maxChannelsPerIP)
 	defer store.Close()
 	logDebug("in-memory signaling store initialised")
 
