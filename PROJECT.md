@@ -46,9 +46,7 @@ The security model assumes the signaling server is untrusted. End-to-end encrypt
 # Auto-populated default structure in config.yaml upon first execution
 tls_configuration:
   prefer_curves:
-    - X25519MLKEM768
-    - X25519
-    - CurveP256
+    - X25519MLKEM768    # post-quantum hybrid only — no classical fallback
   cipher_suites:
     - TLS_AES_256_GCM_SHA384
     - TLS_CHACHA20_POLY1305_SHA256

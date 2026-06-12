@@ -50,7 +50,7 @@ Rules:
 server_url: wss://localhost:4376   # updated when trust is run or -s is used in tx/rx
 listen: :0
 tls_configuration:
-  prefer_curves: [X25519MLKEM768, X25519, CurveP256]
+  prefer_curves: [X25519MLKEM768]  # post-quantum hybrid only; no classical fallback
   cipher_suites: [TLS_AES_256_GCM_SHA384, TLS_CHACHA20_POLY1305_SHA256]
 server_cert_pem: ""          # serve: auto-generated self-signed PEM; auto-renewed 14 days before expiry with same key
 server_key_pem: ""           # serve: auto-generated private key PEM; unchanged on renewal (SPKI pin survives)

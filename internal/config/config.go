@@ -43,7 +43,7 @@ func Default() *Config {
 		ServerURL: "wss://localhost:4376",
 		Listen:    ":0",
 		TLS: TLSConfig{
-			PreferCurves: []string{"X25519MLKEM768", "X25519", "CurveP256"},
+			PreferCurves: []string{"X25519MLKEM768"},
 			CipherSuites: []string{"TLS_AES_256_GCM_SHA384", "TLS_CHACHA20_POLY1305_SHA256"},
 		},
 		TrustedServers: map[string]string{},
