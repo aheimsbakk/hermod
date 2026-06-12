@@ -137,6 +137,41 @@ func (c *muxedConn) Close() error { return nil } // managed by mux
 func (c *muxedConn) LocalAddr() net.Addr {
 	return c.mux.conn.LocalAddr()
 }
+
+// quic-go checks for these interfaces to increase UDP socket buffers.
+// Without them it logs a harmless warning and uses the OS default size.
+// We delegate to the underlying socket; if the underlying conn does not
+// support them (e.g. in tests), this is a no-op.
+type udpSetReadBuffer interface {
+	SetReadBuffer(int) error
+}
+type udpSetSendBuffer interface {
+	SetSendBuffer(int) error
+}
+type udpSetWriteBuffer interface {
+	SetWriteBuffer(int) error
+}
+
+func (c *muxedConn) SetReadBuffer(n int) error {
+	if sb, ok := c.mux.conn.(udpSetReadBuffer); ok {
+		return sb.SetReadBuffer(n)
+	}
+	return nil
+}
+
+func (c *muxedConn) SetSendBuffer(n int) error {
+	if sb, ok := c.mux.conn.(udpSetSendBuffer); ok {
+		return sb.SetSendBuffer(n)
+	}
+	return nil
+}
+
+func (c *muxedConn) SetWriteBuffer(n int) error {
+	if sb, ok := c.mux.conn.(udpSetWriteBuffer); ok {
+		return sb.SetWriteBuffer(n)
+	}
+	return nil
+}
 func (c *muxedConn) SetDeadline(t time.Time) error {
 	c.mu.Lock()
 	c.readDeadline = t
@@ -159,6 +194,11 @@ func (c *muxedConn) SetWriteDeadline(t time.Time) error {
 
 // BindUDP binds a UDP socket on the given address (":0" for OS-assigned port).
 // SO_REUSEADDR/SO_REUSEPORT are set via udpControl (platform-specific file).
+// The receive buffer is increased to 2 MiB so that quic-go does not log a
+// warning about the default OS buffer size. If the type assertion to
+// *net.UDPConn fails (very unlikely with stdlib sockets), the buffer stays
+// at the OS default — the connection still works, just potentially slower
+// on high-bandwidth links.
 func BindUDP(addr string) (net.PacketConn, error) {
 	lc := &net.ListenConfig{
 		Control: udpControl,
@@ -166,6 +206,12 @@ func BindUDP(addr string) (net.PacketConn, error) {
 	conn, err := lc.ListenPacket(context.Background(), "udp", addr)
 	if err != nil {
 		return nil, fmt.Errorf("bind UDP socket on %s: %w", addr, err)
+	}
+	if udpConn, ok := conn.(*net.UDPConn); ok {
+		// Ignore errors — the OS may enforce a system-wide maximum that is
+		// lower than 2 MiB (e.g. `net.core.rmem_max` sysctl on Linux).
+		_ = udpConn.SetReadBuffer(2 << 20)  // 2 MiB
+		_ = udpConn.SetWriteBuffer(2 << 20) // 2 MiB
 	}
 	return conn, nil
 }
