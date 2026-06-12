@@ -250,7 +250,7 @@ See [docs/protocol.md](docs/protocol.md) for the full protocol specification.
 ## Security properties
 
 | Property | Mechanism |
-|---|---|---|
+|---|---|
 | Confidentiality | TLS 1.3 over QUIC with X25519MLKEM768 key exchange (FIPS 203) — post-quantum secure by default, no classical-only fallback |
 | Authentication | CPace PAKE — only someone with the transfer code can connect. Combined with ML-KEM-768 in the hybrid handshake key |
 | Post-quantum handshake | Every channel uses post-quantum cryptography: signaling WebSocket and P2P QUIC both negotiate X25519MLKEM768 exclusively. The endpoint bundle key combines CPace + X25519 + ML-KEM-768 — breaking classical components alone is insufficient |
