@@ -28,11 +28,12 @@ Scripts: `scripts/build-release.sh`, `scripts/extract-changelog-entry.sh`.
 ## Security Model
 - Signaling server untrusted — payloads never routed through it
 - CPace PAKE over WebSocket yields K_classical
-- Ephemeral X.509 fingerprint commitment prevents MitM during QUIC handshake
+- Ephemeral X.509 SPKI fingerprint commitment prevents MitM during QUIC handshake. SPKI (Subject Public Key Info) pinning is used instead of certificate DER pinning so that certificate renewal with the same key pair does not require clients to re-pin.
 - TLS 1.3 only; prefer X25519MLKEM768 (post-quantum hybrid)
 - **Hybrid KEM blob encryption**: Endpoint bundles encrypted with three-pillar key — CPace (P-256) + X25519 ECDH + ML-KEM-768 (`crypto/mlkem` stdlib). Combined via SHA-256 concatenation combiner. Provides post-quantum security for the signaling relay phase.
 - Rate limiting: token bucket per /32 IPv4, /64 IPv6; bucket keys are HMAC-SHA256(daily-rotating salt, prefix) — raw IPs never stored; max 3 CPace failures and 10 blobs per channel
 - Server private key stored in `config.yaml` (PEM, file permission 0o600). This is intentional (H-04): a single config file avoids a separate keystore with its own permissions. The key is ephemeral — regenerated on `hermod serve` if missing. The 0o600 permission restricts access to the file owner. Users who need stronger isolation can restrict process access (containers, systemd `LoadCredential`, or a separate key file via bind mount).
+- **Auto-renewal**: `hermod serve` automatically renews the certificate 14 days before the current one expires, reusing the same private key. Because the server is pinned via SPKI (public key) fingerprint and the key does not change, the pin remains valid — clients do NOT need to re-run `hermod trust` after an automatic renewal.
 
 ## Config Locations
 - Linux/macOS: `~/.config/hermod/config.yaml`

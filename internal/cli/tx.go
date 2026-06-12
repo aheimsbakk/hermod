@@ -172,7 +172,7 @@ func runTx(input, serverURL string, numWords int, verify bool, listenUDP string,
 	if err != nil {
 		return fmt.Errorf("generate ephemeral certificate: %w", err)
 	}
-	myFP := network.CertFingerprint(epCertDER)
+	myFP := network.PubKeyFingerprint(epCertDER)
 	logDebug("ephemeral certificate generated", "fingerprint", myFP)
 
 	// Bind UDP socket
@@ -316,12 +316,12 @@ func runTx(input, serverURL string, numWords int, verify bool, listenUDP string,
 	logDebug("local endpoints collected", "local_v4", localV4, "local_v6", localV6, "public_v4", publicEPV4, "public_v6", publicEPV6)
 
 	bundle := network.EndpointBundle{
-		LocalEndpointsV4: localV4,
-		LocalEndpointsV6: localV6,
-		PublicEndpointV4: publicEPV4,
-		PublicEndpointV6: publicEPV6,
-		CertFingerprint:  myFP,
-		RequireVerify:    verify,
+		LocalEndpointsV4:  localV4,
+		LocalEndpointsV6:  localV6,
+		PublicEndpointV4:  publicEPV4,
+		PublicEndpointV6:  publicEPV6,
+		PubKeyFingerprint: myFP,
+		RequireVerify:     verify,
 	}
 	bundleBytes, err := network.EncodeEndpointBundle(bundle)
 	if err != nil {
@@ -407,7 +407,7 @@ func runTx(input, serverURL string, numWords int, verify bool, listenUDP string,
 		PrivateKey:  epKey,
 		Leaf:        epCert,
 	}}
-	quicConn, err := network.DialQUIC(ctx, mux, punchResult.PeerAddr, tlsCfg, peerBundle.CertFingerprint)
+	quicConn, err := network.DialQUIC(ctx, mux, punchResult.PeerAddr, tlsCfg, peerBundle.PubKeyFingerprint)
 	if err != nil {
 		return fmt.Errorf("QUIC dial: %w", err)
 	}

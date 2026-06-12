@@ -16,6 +16,12 @@ import (
 	"github.com/hermod/hermod/internal/server"
 )
 
+// certAutoRenewThreshold is how far before expiry the server replaces its
+// certificate automatically. Set to 14 days — long enough to cover holidays
+// or extended downtime, short enough that the renewed cert's expiry is not
+// pushed out unnecessarily far.
+const certAutoRenewThreshold = 14 * 24 * time.Hour
+
 func newServeCmd() *cobra.Command {
 	var (
 		listen             string
@@ -95,6 +101,30 @@ func runServe(listenAddr string, ttl time.Duration, rateLimit, rateBurst float64
 		}
 	})
 
+	// Auto-renew the certificate if it expires within the renewal threshold
+	// or is already expired. This prevents service disruption from expired
+	// certificates and ensures the /cert endpoint always serves a valid cert.
+	if notAfter, ok := config.CertExpiryInfo(cfg); ok {
+		timeUntilExpiry := time.Until(notAfter)
+		if timeUntilExpiry <= certAutoRenewThreshold {
+			logInfo("Server certificate expires soon — renewing automatically",
+				"days_until_expiry", fmt.Sprintf("%.0f", timeUntilExpiry.Hours()/24))
+			if err := config.RenewServerCert(cfg); err != nil {
+				return fmt.Errorf("renew certificate: %w", err)
+			}
+			if err := config.Save(cfg); err != nil {
+				return fmt.Errorf("save renewed certificate: %w", err)
+			}
+			// Reload the cert (the key is unchanged, so the SPKI fingerprint
+			// stays the same — clients do not need to re-pin).
+			cert, err = config.LoadServerTLSCert(cfg)
+			if err != nil {
+				return fmt.Errorf("load renewed certificate: %w", err)
+			}
+			logInfo("Server certificate renewed (public key unchanged)")
+		}
+	}
+
 	// Extract DER bytes for the /cert endpoint.
 	var certDER []byte
 	if len(cert.Certificate) > 0 {
@@ -131,9 +161,9 @@ func runServe(listenAddr string, ttl time.Duration, rateLimit, rateBurst float64
 		"rate_limit", rateLimit, "rate_burst", rateBurst,
 		"max_blobs_per_channel", maxBlobsPerChannel, "max_cpace_failures", maxCPaceFailures)
 
-	fingerprint := config.CertFingerprint(certDER)
+	fingerprint := config.PubKeyFingerprint(certDER)
 	printStatus("Listening on %s", listenAddr)
-	printStatus("Server fingerprint: %s", fingerprint)
+	printStatus("Server public key fingerprint: %s", fingerprint)
 
 	err = srv.ListenAndServe(ctx, listenAddr, tlsCfg)
 	if err != nil {

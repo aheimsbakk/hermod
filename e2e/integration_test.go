@@ -177,7 +177,7 @@ func runSender(serverURL string, channelID uint16, password string, kind transfe
 	if err != nil {
 		return fmt.Errorf("gen cert: %w", err)
 	}
-	myFP := network.CertFingerprint(epCertDER)
+	myFP := network.PubKeyFingerprint(epCertDER)
 
 	sig, err := network.DialSignaling(context.Background(), serverURL, "")
 	if err != nil {
@@ -261,11 +261,11 @@ func runSender(serverURL string, channelID uint16, password string, kind transfe
 		publicEPV6 = net.JoinHostPort(publicIPV6, portStr)
 	}
 	bundle := network.EndpointBundle{
-		LocalEndpointsV4: localV4,
-		LocalEndpointsV6: localV6,
-		PublicEndpointV4: publicEPV4,
-		PublicEndpointV6: publicEPV6,
-		CertFingerprint:  myFP,
+		LocalEndpointsV4:  localV4,
+		LocalEndpointsV6:  localV6,
+		PublicEndpointV4:  publicEPV4,
+		PublicEndpointV6:  publicEPV6,
+		PubKeyFingerprint: myFP,
 	}
 	bundleBytes, _ := network.EncodeEndpointBundle(bundle)
 	encBundle, _ := crypto.SealAAD(hybridKey, channelIDAad(channelID), bundleBytes)
@@ -303,7 +303,7 @@ func runSender(serverURL string, channelID uint16, password string, kind transfe
 	tlsCert := buildTLSCertFromDER(epCertDER, epKey, epLeaf)
 	tlsCfg.Certificates = []tls.Certificate{tlsCert}
 
-	quicConn, err := network.DialQUIC(ctx, mux, punchResult.PeerAddr, tlsCfg, peerBundle.CertFingerprint)
+	quicConn, err := network.DialQUIC(ctx, mux, punchResult.PeerAddr, tlsCfg, peerBundle.PubKeyFingerprint)
 	if err != nil {
 		return fmt.Errorf("QUIC dial: %w", err)
 	}
@@ -366,7 +366,7 @@ func runReceiver(serverURL, code string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	myFP := network.CertFingerprint(epCertDER)
+	myFP := network.PubKeyFingerprint(epCertDER)
 
 	// Retry join with backoff — the sender may not have allocated the
 	// channel yet (the 100ms sleep in testFullTransfer is not reliable).
@@ -454,11 +454,11 @@ func runReceiver(serverURL, code string) ([]byte, error) {
 		publicEPV6 = net.JoinHostPort(publicIPV6, portStr)
 	}
 	myBundle := network.EndpointBundle{
-		LocalEndpointsV4: localV4,
-		LocalEndpointsV6: localV6,
-		PublicEndpointV4: publicEPV4,
-		PublicEndpointV6: publicEPV6,
-		CertFingerprint:  myFP,
+		LocalEndpointsV4:  localV4,
+		LocalEndpointsV6:  localV6,
+		PublicEndpointV4:  publicEPV4,
+		PublicEndpointV6:  publicEPV6,
+		PubKeyFingerprint: myFP,
 	}
 	myBundleBytes, _ := network.EncodeEndpointBundle(myBundle)
 	encMyBundle, _ := crypto.SealAAD(hybridKey, channelIDAad(channelID), myBundleBytes)
@@ -474,7 +474,7 @@ func runReceiver(serverURL, code string) ([]byte, error) {
 	// QUIC listen
 	tlsCert := buildTLSCertFromDER(epCertDER, epKey, epLeaf)
 	baseTLS := config.BuildTLSConfig(cfg)
-	ln, err := network.ListenQUIC(mux, tlsCert, baseTLS, senderBundle.CertFingerprint)
+	ln, err := network.ListenQUIC(mux, tlsCert, baseTLS, senderBundle.PubKeyFingerprint)
 	if err != nil {
 		return nil, fmt.Errorf("QUIC listen: %w", err)
 	}

@@ -378,7 +378,26 @@ func HolePunchDual(ctx context.Context, probeCtx context.Context, mux *packetMux
 	return nil, fmt.Errorf("no candidates available (IPv4: %d, IPv6: %d)", len(candidatesV4), len(candidatesV6))
 }
 
-// makeCertPinner returns a VerifyPeerCertificate function that enforces cert hash pinning.
+// PubKeyFingerprint computes the SHA-256 fingerprint of the Subject Public Key
+// Info (SPKI) of a DER-encoded X.509 certificate. Unlike CertFingerprint, this
+// value stays the same when the certificate is renewed with the same key pair,
+// so clients do not need to re-pin after a cert rotation.
+func PubKeyFingerprint(certDER []byte) string {
+	cert, err := x509.ParseCertificate(certDER)
+	if err != nil {
+		return ""
+	}
+	spki, err := x509.MarshalPKIXPublicKey(cert.PublicKey)
+	if err != nil {
+		return ""
+	}
+	sum := sha256.Sum256(spki)
+	return hex.EncodeToString(sum[:])
+}
+
+// makeCertPinner returns a VerifyPeerCertificate function that enforces SPKI
+// (Subject Public Key Info) hash pinning. Unlike certificate DER pinning, SPKI
+// pinning survives certificate renewal with the same key pair.
 // The fingerprint comparison uses crypto/subtle.ConstantTimeCompare to prevent
 // timing side-channel attacks.
 func makeCertPinner(expectedHex string) func(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error {
@@ -386,10 +405,12 @@ func makeCertPinner(expectedHex string) func(rawCerts [][]byte, verifiedChains [
 		if len(rawCerts) == 0 {
 			return fmt.Errorf("peer did not present a TLS certificate")
 		}
-		sum := sha256.Sum256(rawCerts[0])
-		got := hex.EncodeToString(sum[:])
+		got := PubKeyFingerprint(rawCerts[0])
+		if got == "" {
+			return fmt.Errorf("could not read the peer certificate. The connection was aborted because the peer presented an invalid certificate")
+		}
 		if subtle.ConstantTimeCompare([]byte(got), []byte(expectedHex)) != 1 {
-			return fmt.Errorf("certificate fingerprint mismatch: got %s, expected %s", got, expectedHex)
+			return fmt.Errorf("peer identity verification failed: the public key does not match the expected fingerprint. This may mean the transfer code was used by someone else. Verify the code and try again")
 		}
 		return nil
 	}

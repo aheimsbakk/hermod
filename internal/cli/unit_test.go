@@ -4,10 +4,17 @@ package cli
 import (
 	"bytes"
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
 	"fmt"
 	"io"
 	"log/slog"
+	"math/big"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1344,4 +1351,112 @@ func TestRunServe_ExistingCert(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for invalid listen address on second runServe call")
 	}
+}
+
+// TestRunServe_AutoRenewCert verifies that a certificate expiring within the
+// auto-renew threshold is replaced on startup with the same public key.
+// It writes a cert that expires in 7 days, then calls runServe and checks
+// that the cert was renewed (NotAfter extended) but the SPKI fingerprint
+// stayed the same (same key reused — no client re-pin needed).
+func TestRunServe_AutoRenewCert(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	t.Setenv("APPDATA", dir)
+
+	// Create a config directory
+	cfgDir := filepath.Join(dir, ".config", "hermod")
+	if err := os.MkdirAll(cfgDir, 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	// Generate a certificate that expires in 7 days (within the 14-day threshold)
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber: serial,
+		Subject:      pkix.Name{CommonName: "hermod-server"},
+		NotBefore:    time.Now().Add(-time.Minute),
+		NotAfter:     time.Now().Add(7 * 24 * time.Hour), // 7 days
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		IsCA:         false,
+	}
+	origCertDER, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyDER, err := x509.MarshalPKCS8PrivateKey(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	certPEM := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: origCertDER}))
+	keyPEM := string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER}))
+
+	// Record the original SPKI fingerprint and NotAfter
+	origFingerprint := config.PubKeyFingerprint(origCertDER)
+	origNotAfter, _ := config.CertExpiryInfo(config.Default())
+	_ = origNotAfter // we'll rely on the parsing below instead
+
+	// Write config.yaml with the near-expiry cert
+	cfgContent := fmt.Sprintf(`server_url: wss://localhost:4376
+listen: ":0"
+tls_configuration:
+  prefer_curves: [X25519MLKEM768, X25519, CurveP256]
+  cipher_suites: [TLS_AES_256_GCM_SHA384, TLS_CHACHA20_POLY1305_SHA256]
+server_cert_pem: "%s"
+server_key_pem: "%s"
+trusted_servers: {}
+`, escapeYAMLString(certPEM), escapeYAMLString(keyPEM))
+
+	if err := os.WriteFile(filepath.Join(cfgDir, "config.yaml"), []byte(cfgContent), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	// Call runServe with an invalid address — it will fail on net.Listen but
+	// cert load + auto-renew happen before that.
+	err = runServe("notanaddress:x", 60*time.Second, 5, 15, server.DefaultMaxBlobsPerChannel, server.DefaultMaxCPaceFailures)
+	if err == nil {
+		t.Fatal("expected error for invalid listen address")
+	}
+
+	// Load the config back and verify the cert was renewed
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	reloadedCert, err := config.LoadServerTLSCert(cfg)
+	if err != nil {
+		t.Fatalf("load renewed cert: %v", err)
+	}
+
+	// The SPKI fingerprint must stay the same (same key reused)
+	newFingerprint := config.PubKeyFingerprint(reloadedCert.Certificate[0])
+	if newFingerprint != origFingerprint {
+		t.Fatal("certificate renewal changed the public key — clients would need to re-pin")
+	}
+
+	// The NotAfter time must have been extended (cert was actually renewed)
+	reloadedNotAfter, ok := config.CertExpiryInfo(cfg)
+	if !ok {
+		t.Fatal("could not read expiry from renewed cert")
+	}
+	if reloadedNotAfter.Before(time.Now().Add(360 * 24 * time.Hour)) {
+		t.Fatal("renewed certificate should be valid for ~1 year")
+	}
+	t.Logf("cert renewed with same key, expiry extended to %s", reloadedNotAfter.Format(time.RFC3339))
+}
+
+// escapeYAMLString escapes a PEM string for embedding in a YAML value.
+// PEM strings contain newlines and special characters that must be escaped.
+func escapeYAMLString(s string) string {
+	// Replace backslashes first, then newlines, then double quotes
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, `"`, `\"`)
+	s = strings.ReplaceAll(s, "\n", `\n`)
+	return s
 }

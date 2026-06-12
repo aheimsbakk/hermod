@@ -7,7 +7,7 @@ import (
 	"github.com/hermod/hermod/internal/config"
 )
 
-// requireTrustedServer returns the pinned certificate fingerprint for serverURL.
+// requireTrustedServer returns the pinned SPKI fingerprint for serverURL.
 // It returns an error if the server has no entry in cfg.TrustedServers, directing
 // the user to run 'hermod trust <server>' before using tx or rx.
 func requireTrustedServer(cfg *config.Config, serverURL string) (string, error) {

@@ -61,9 +61,12 @@ func dialSignaling(ctx context.Context, serverURL string, pinnedFingerprint stri
 			if len(rawCerts) == 0 {
 				return fmt.Errorf("server did not present a TLS certificate")
 			}
-			got := CertFingerprint(rawCerts[0])
+			got := PubKeyFingerprint(rawCerts[0])
+			if got == "" {
+				return fmt.Errorf("could not read the server certificate")
+			}
 			if subtle.ConstantTimeCompare([]byte(got), []byte(pinnedFingerprint)) != 1 {
-				return fmt.Errorf("server certificate fingerprint mismatch: got %s, expected %s", got, pinnedFingerprint)
+				return fmt.Errorf("the server's public key does not match the pinned fingerprint. The server may have been restarted with a new certificate. Run 'hermod trust %s' to update the fingerprint", u.Host)
 			}
 			return nil
 		}
@@ -264,11 +267,13 @@ func (c *SignalingClient) WaitReady() error {
 }
 
 // FetchServerFingerprint fetches the server's TLS certificate via the HTTPS
-// /cert endpoint and returns its SHA-256 fingerprint.
+// /cert endpoint and returns its SHA-256 Subject Public Key Info (SPKI)
+// fingerprint. SPKI fingerprints persist across certificate renewals with the
+// same key pair, so clients do not need to re-pin after a cert rotation.
 //
-// When pinnedFingerprint is non-empty, the certificate is verified against this
-// value during the TLS handshake. The connection fails if the fingerprint does
-// not match. When pinnedFingerprint is empty, the TLS connection is made
+// When pinnedFingerprint is non-empty, the SPKI fingerprint is verified against
+// this value during the TLS handshake. The connection fails if the fingerprint
+// does not match. When pinnedFingerprint is empty, the TLS connection is made
 // without certificate verification (TOFU). Only use this mode over a trusted
 // network (VPN, LAN, or when you can verify the fingerprint out-of-band).
 //
@@ -295,9 +300,12 @@ func FetchServerFingerprint(ctx context.Context, serverURL string, pinnedFingerp
 			if len(rawCerts) == 0 {
 				return fmt.Errorf("server did not present a TLS certificate")
 			}
-			got := CertFingerprint(rawCerts[0])
+			got := PubKeyFingerprint(rawCerts[0])
+			if got == "" {
+				return fmt.Errorf("could not read the server certificate")
+			}
 			if subtle.ConstantTimeCompare([]byte(got), []byte(pinnedFingerprint)) != 1 {
-				return fmt.Errorf("server certificate fingerprint mismatch: got %s, expected %s", got, pinnedFingerprint)
+				return fmt.Errorf("the server's public key does not match the pinned fingerprint. The server may have been restarted with a new certificate. Run 'hermod trust %s' to update the fingerprint", u.Host)
 			}
 			return nil
 		}
@@ -352,5 +360,5 @@ func FetchServerFingerprint(ctx context.Context, serverURL string, pinnedFingerp
 		return "", fmt.Errorf("certificate endpoint did not return a valid PEM certificate")
 	}
 
-	return CertFingerprint(block.Bytes), nil
+	return PubKeyFingerprint(block.Bytes), nil
 }

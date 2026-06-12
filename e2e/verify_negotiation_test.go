@@ -49,7 +49,7 @@ func runSenderVerify(serverURL string, channelID uint16, password string, payloa
 	if err != nil {
 		return verifyResult{err: fmt.Errorf("gen cert: %w", err)}
 	}
-	myFP := network.CertFingerprint(epCertDER)
+	myFP := network.PubKeyFingerprint(epCertDER)
 
 	sig, err := network.DialSignaling(context.Background(), serverURL, "")
 	if err != nil {
@@ -131,12 +131,12 @@ func runSenderVerify(serverURL string, channelID uint16, password string, payloa
 		publicEPV6 = net.JoinHostPort(publicIPV6, portStr)
 	}
 	bundle := network.EndpointBundle{
-		LocalEndpointsV4: localV4,
-		LocalEndpointsV6: localV6,
-		PublicEndpointV4: publicEPV4,
-		PublicEndpointV6: publicEPV6,
-		CertFingerprint:  myFP,
-		RequireVerify:    requireVerify,
+		LocalEndpointsV4:  localV4,
+		LocalEndpointsV6:  localV6,
+		PublicEndpointV4:  publicEPV4,
+		PublicEndpointV6:  publicEPV6,
+		PubKeyFingerprint: myFP,
+		RequireVerify:     requireVerify,
 	}
 	bundleBytes, _ := network.EncodeEndpointBundle(bundle)
 	encBundle, _ := crypto.SealAAD(hybridKey, channelIDAad(channelID), bundleBytes)
@@ -173,7 +173,7 @@ func runSenderVerify(serverURL string, channelID uint16, password string, payloa
 	tlsCert := buildTLSCertFromDER(epCertDER, epKey, epLeaf)
 	tlsCfg.Certificates = []tls.Certificate{tlsCert}
 
-	quicConn, err := network.DialQUIC(ctx, mux, punchResult.PeerAddr, tlsCfg, peerBundle.CertFingerprint)
+	quicConn, err := network.DialQUIC(ctx, mux, punchResult.PeerAddr, tlsCfg, peerBundle.PubKeyFingerprint)
 	if err != nil {
 		return verifyResult{err: fmt.Errorf("QUIC dial: %w", err)}
 	}
@@ -234,7 +234,7 @@ func runReceiverVerify(serverURL, code string, requireVerify bool) verifyResult 
 	if err != nil {
 		return verifyResult{err: err}
 	}
-	myFP := network.CertFingerprint(epCertDER)
+	myFP := network.PubKeyFingerprint(epCertDER)
 
 	sig, err := network.DialSignaling(context.Background(), serverURL, "")
 	if err != nil {
@@ -303,12 +303,12 @@ func runReceiverVerify(serverURL, code string, requireVerify bool) verifyResult 
 		publicEPV6 = net.JoinHostPort(publicIPV6, portStr)
 	}
 	myBundle := network.EndpointBundle{
-		LocalEndpointsV4: localV4,
-		LocalEndpointsV6: localV6,
-		PublicEndpointV4: publicEPV4,
-		PublicEndpointV6: publicEPV6,
-		CertFingerprint:  myFP,
-		RequireVerify:    mergedVerify,
+		LocalEndpointsV4:  localV4,
+		LocalEndpointsV6:  localV6,
+		PublicEndpointV4:  publicEPV4,
+		PublicEndpointV6:  publicEPV6,
+		PubKeyFingerprint: myFP,
+		RequireVerify:     mergedVerify,
 	}
 	myBundleBytes, _ := network.EncodeEndpointBundle(myBundle)
 	encMyBundle, _ := crypto.SealAAD(hybridKey, channelIDAad(channelID), myBundleBytes)
@@ -323,7 +323,7 @@ func runReceiverVerify(serverURL, code string, requireVerify bool) verifyResult 
 
 	tlsCert := buildTLSCertFromDER(epCertDER, epKey, epLeaf)
 	baseTLS := config.BuildTLSConfig(cfg)
-	ln, err := network.ListenQUIC(mux, tlsCert, baseTLS, senderBundle.CertFingerprint)
+	ln, err := network.ListenQUIC(mux, tlsCert, baseTLS, senderBundle.PubKeyFingerprint)
 	if err != nil {
 		return verifyResult{err: fmt.Errorf("quic listen: %w", err)}
 	}
