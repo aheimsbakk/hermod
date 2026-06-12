@@ -5,6 +5,35 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v1.0.0] - 2026-06-12
+
+- **why:** Address security audit findings — add per-IP channel cap, improve SAS verification logging, fix race-detector flakiness, remove stale docs. Bump to 1.0.0 for stable release.
+- **model:** opencode/deepseek-v4-flash
+- **tags:** audit, security, stability, release, 1.0.0
+
+### Added
+
+- Per-IP channel cap in MemoryStore — `NewMemoryStore(maxChannelsPerIP int)` constructor, `--max-channels-per-ip` flag (default 100) on `hermod serve`, IP grouping via same prefix rule as rate limiter (IPv4 /32, IPv6 /64) (`internal/server/store.go`, `internal/cli/serve.go`)
+- Server key compromise recovery section to README.md documenting manual procedure and auto-renewal limits
+- 7 unit tests for per-IP channel cap: blocking at limit, different-IP isolation, delete/purge decrement, unlimited mode, IPv6 prefix sharing, empty remote-addr skip (`internal/server/server_test.go`)
+- Security audit report `audit-deepseek-2026-06-12.md` — now at `docs/audits/audit-deepseek-2026-06-12.md`
+
+### Changed
+
+- SAS verification results logged at info level with structured `reason` key for all outcomes (confirmed, rejected, both rejected, cancelled by either side) — replaces silent rejection paths (`internal/cli/tx.go`)
+- All signaling test callers updated for new `NewMemoryStore(int)` constructor and `AllocateChannel(id, ttl, remoteAddr)` interface signature (`e2e/`, `internal/network/signaling_test.go`, `internal/cli/transfer_integration_test.go`, `internal/cli/unit_test.go`)
+- Updated BLUEPRINT.md, README.md flag table, and docs/api.md for the per-IP channel cap architecture and constant
+
+### Fixed
+
+- Race-detector flakiness in `TestServerCertRateLimitIsolation` and `TestServerJoinRateLimitBlocksEnumeration` — reduced burst rate from 100/s to 0.001/s so token bucket does not refill during test (`internal/server/server_ws_test.go`)
+- Column count in security properties table in README.md
+
+### Removed
+
+- Stale `PROJECT.md` — referenced SQLite, wrong import paths, outdated early-design content
+- Redundant caller-side `logInfo("SAS verification passed")` from `runTx`/`runRx` (now covered by unified SAS outcome logging)
+
 ## [v0.19.1] - 2026-06-12
 
 - **why:** Make X25519MLKEM768 the only default TLS curve for full post-quantum security; document quantum-safety claims in README
@@ -14,7 +43,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Default TLS curve preferences reduced to `["X25519MLKEM768"]` only — removes `X25519` and `CurveP256` fallbacks so every connection uses post-quantum hybrid key exchange (`internal/config/config.go`)
-- `BLUEPRINT.md`, `CONTEXT.md`, `PROJECT.md`, and `README.md` updated to document the PQ-only curve default
+- `BLUEPRINT.md`, `CONTEXT.md`, and `README.md` updated to document the PQ-only curve default
 
 ### Added
 

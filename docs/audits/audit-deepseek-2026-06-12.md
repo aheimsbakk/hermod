@@ -5,6 +5,16 @@
 **Scope:** Full source tree (`internal/`, `pkg/`, `cmd/`, scripts, config)
 **Methodology:** Manual code review, architecture analysis, dependency review
 
+**Revision history:**
+
+| Date | Change |
+|---|---|
+| 2026-06-12 | Audit conducted against v0.18.0 |
+| 2026-06-12 | Recommendation #3 (SAS logging) resolved — `[CLOSED]` |
+| 2026-06-12 | Recommendation #4 (recovery docs) resolved — `[CLOSED]` |
+| 2026-06-12 | Rate limiter tests hardened against race-detector slowdown — certRL and joinRL test burst rates lowered from 100/s to 0.001/s to prevent token bucket refill between consecutive requests under race detector overhead |
+| 2026-06-12 | Recommendation #2 (per-IP channel cap) resolved — `[CLOSED]` |
+
 ---
 
 ## 1. Executive Summary
@@ -489,13 +499,13 @@ The Go codebase has no `eval()`, `reflect.Call` on untrusted input, or any form 
 
 1. **Pin CI action versions to commit SHAs** in `.github/workflows/release.yml`. Currently `@v6`/`@v7`/`@v8` mutable tags are used for `actions/checkout`, `actions/setup-go`, etc. While low risk, this is a supply-chain hardening best practice.
 
-2. **Add a per-IP cap on active channels** to the `MemoryStore`. While the current rate limiting bounds allocation speed, an attacker with a botnet could still exhaust the 65535-channel ID space. A limit of ~100 active channels per /32 IPv4 would prevent this without impacting legitimate use.
+2. **Add a per-IP cap on active channels** to the `MemoryStore`. While the current rate limiting bounds allocation speed, an attacker with a botnet could still exhaust the 65535-channel ID space. A limit of ~100 active channels per /32 IPv4 would prevent this without impacting legitimate use. — **[CLOSED 2026-06-12]** Added `MemoryStore.maxChannelsPerIP` (default 100, configurable via `--max-channels-per-ip` flag on `hermod serve`). Per-IP enforcement uses the same `ipPrefix` helper as the rate limiter (IPv4 /32, IPv6 /64). Tracks ownership in `channelOwners` map, decremented on delete and purge. `AllocateChannel` signature extended with `remoteAddr string`. 7 unit tests added.
 
 ### Priority 2 (Next Milestone)
 
-3. **Add structured logging of SAS verification outcomes** (success/failure) at `info` level. This helps operators detect potential MitM attacks without needing to enable `debug` logging.
+3. **Add structured logging of SAS verification outcomes** (success/failure) at `info` level. This helps operators detect potential MitM attacks without needing to enable `debug` logging. — **[CLOSED 2026-06-12]** Added `logInfo`/`logError` calls for all SAS outcomes (confirmed, rejected, cancelled by each side) in `performSASCoordinatedWith` (`internal/cli/tx.go`). Removed redundant caller-side `logInfo("SAS verification passed")` from `runTx`/`runRx`.
 
-4. **Document the server key compromise recovery procedure** in README.md. Include steps for key rotation and client re-trust.
+4. **Document the server key compromise recovery procedure** in README.md. Include steps for key rotation and client re-trust. — **[CLOSED 2026-06-12]** Added "Server key compromise recovery" section in README.md documenting the procedure (delete cert+key from config, restart server, re-run `hermod trust` on all clients), with a note that auto-renewal does not protect against key compromise since it reuses the same key pair.
 
 ### Priority 3 (Nice to Have)
 

@@ -8,10 +8,10 @@ import (
 )
 
 func TestMemoryStoreAllocateAndFetch(t *testing.T) {
-	store := server.NewMemoryStore()
+	store := server.NewMemoryStore(0)
 	defer store.Close()
 
-	if err := store.AllocateChannel(42, time.Minute); err != nil {
+	if err := store.AllocateChannel(42, time.Minute, ""); err != nil {
 		t.Fatalf("allocate: %v", err)
 	}
 
@@ -30,7 +30,7 @@ func TestMemoryStoreAllocateAndFetch(t *testing.T) {
 }
 
 func TestMemoryStoreFetchMissing(t *testing.T) {
-	store := server.NewMemoryStore()
+	store := server.NewMemoryStore(0)
 	got, err := store.FetchBlob(99, true)
 	if err != nil {
 		t.Fatalf("fetch missing should not error: %v", err)
@@ -41,17 +41,17 @@ func TestMemoryStoreFetchMissing(t *testing.T) {
 }
 
 func TestMemoryStoreDuplicateAllocation(t *testing.T) {
-	store := server.NewMemoryStore()
-	store.AllocateChannel(1, time.Minute)
-	err := store.AllocateChannel(1, time.Minute)
+	store := server.NewMemoryStore(0)
+	store.AllocateChannel(1, time.Minute, "")
+	err := store.AllocateChannel(1, time.Minute, "")
 	if err == nil {
 		t.Fatal("expected error for duplicate channel allocation")
 	}
 }
 
 func TestMemoryStoreRecordFailure(t *testing.T) {
-	store := server.NewMemoryStore()
-	store.AllocateChannel(7, time.Minute)
+	store := server.NewMemoryStore(0)
+	store.AllocateChannel(7, time.Minute, "")
 
 	count, err := store.RecordFailure(7)
 	if err != nil {
@@ -68,7 +68,7 @@ func TestMemoryStoreRecordFailure(t *testing.T) {
 }
 
 func TestMemoryStoreRecordFailureMissing(t *testing.T) {
-	store := server.NewMemoryStore()
+	store := server.NewMemoryStore(0)
 	_, err := store.RecordFailure(999)
 	if err == nil {
 		t.Fatal("expected error for missing channel")
@@ -76,8 +76,8 @@ func TestMemoryStoreRecordFailureMissing(t *testing.T) {
 }
 
 func TestMemoryStoreDeleteChannel(t *testing.T) {
-	store := server.NewMemoryStore()
-	store.AllocateChannel(5, time.Minute)
+	store := server.NewMemoryStore(0)
+	store.AllocateChannel(5, time.Minute, "")
 	store.StoreBlob(5, true, []byte("data"))
 
 	if err := store.DeleteChannel(5); err != nil {
@@ -91,9 +91,9 @@ func TestMemoryStoreDeleteChannel(t *testing.T) {
 }
 
 func TestMemoryStorePurgeExpired(t *testing.T) {
-	store := server.NewMemoryStore()
-	store.AllocateChannel(10, -time.Second) // already expired
-	store.AllocateChannel(11, time.Minute)  // not expired
+	store := server.NewMemoryStore(0)
+	store.AllocateChannel(10, -time.Second, "") // already expired
+	store.AllocateChannel(11, time.Minute, "")  // not expired
 
 	if _, err := store.PurgeExpired(); err != nil {
 		t.Fatalf("purge: %v", err)
@@ -110,8 +110,8 @@ func TestMemoryStorePurgeExpired(t *testing.T) {
 }
 
 func TestMemoryStoreExpiredBlob(t *testing.T) {
-	store := server.NewMemoryStore()
-	store.AllocateChannel(42, -time.Second) // already expired
+	store := server.NewMemoryStore(0)
+	store.AllocateChannel(42, -time.Second, "") // already expired
 
 	// StoreBlob should reject expired channels
 	err := store.StoreBlob(42, true, []byte("data"))
@@ -127,8 +127,8 @@ func TestMemoryStoreExpiredBlob(t *testing.T) {
 }
 
 func TestMemoryStoreBothSides(t *testing.T) {
-	store := server.NewMemoryStore()
-	store.AllocateChannel(20, time.Minute)
+	store := server.NewMemoryStore(0)
+	store.AllocateChannel(20, time.Minute, "")
 
 	store.StoreBlob(20, true, []byte("from-sender"))
 	store.StoreBlob(20, false, []byte("from-receiver"))
@@ -196,3 +196,132 @@ func TestRateLimiterCleanup(t *testing.T) {
 // TestSQLiteStoreDeleteChannel is handled by TestMemoryStoreDeleteChannel above.
 // The remaining TestSQLiteStore* functions were removed — they were relics from
 // the SQLite storage backend and tested the same code paths as TestMemoryStore*.
+
+func TestMemoryStorePerIPCap_BlocksAtLimit(t *testing.T) {
+	store := server.NewMemoryStore(3) // max 3 channels per IP
+	defer store.Close()
+
+	// Allocate 3 channels from the same IP — all should succeed.
+	for i := 0; i < 3; i++ {
+		if err := store.AllocateChannel(uint16(100+i), time.Minute, "10.0.0.1:5000"); err != nil {
+			t.Fatalf("allocate %d: %v", i, err)
+		}
+	}
+
+	// 4th allocation from the same IP must fail.
+	if err := store.AllocateChannel(200, time.Minute, "10.0.0.1:5000"); err == nil {
+		t.Fatal("expected error when per-IP channel limit is exceeded")
+	}
+}
+
+func TestMemoryStorePerIPCap_DifferentIPs(t *testing.T) {
+	store := server.NewMemoryStore(2) // max 2 channels per IP
+	defer store.Close()
+
+	// Fill first IP to its limit.
+	if err := store.AllocateChannel(10, time.Minute, "10.0.0.1:5000"); err != nil {
+		t.Fatalf("allocate from first IP: %v", err)
+	}
+	if err := store.AllocateChannel(11, time.Minute, "10.0.0.1:5000"); err != nil {
+		t.Fatalf("allocate from first IP: %v", err)
+	}
+
+	// A different IP can still allocate.
+	if err := store.AllocateChannel(20, time.Minute, "10.0.0.2:5000"); err != nil {
+		t.Fatalf("allocate from second IP: %v", err)
+	}
+}
+
+func TestMemoryStorePerIPCap_DeleteDecrements(t *testing.T) {
+	store := server.NewMemoryStore(1)
+	defer store.Close()
+
+	if err := store.AllocateChannel(1, time.Minute, "10.0.0.1:5000"); err != nil {
+		t.Fatalf("first allocate: %v", err)
+	}
+
+	// Delete the channel — should free the slot.
+	if err := store.DeleteChannel(1); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+
+	// Same IP can allocate again.
+	if err := store.AllocateChannel(2, time.Minute, "10.0.0.1:5000"); err != nil {
+		t.Fatalf("allocate after delete: %v", err)
+	}
+}
+
+func TestMemoryStorePerIPCap_PurgeDecrements(t *testing.T) {
+	store := server.NewMemoryStore(1)
+	defer store.Close()
+
+	// Allocate an already-expired channel (TTL in the past).
+	if err := store.AllocateChannel(1, -time.Second, "10.0.0.1:5000"); err != nil {
+		t.Fatalf("allocate expired: %v", err)
+	}
+
+	// The channel is expired but still exists — a second allocation should fail.
+	if err := store.AllocateChannel(2, time.Minute, "10.0.0.1:5000"); err == nil {
+		t.Fatal("expected error — slot still occupied by expired channel")
+	}
+
+	// Purge expired channels.
+	if _, err := store.PurgeExpired(); err != nil {
+		t.Fatalf("purge: %v", err)
+	}
+
+	// Now the slot should be free.
+	if err := store.AllocateChannel(2, time.Minute, "10.0.0.1:5000"); err != nil {
+		t.Fatalf("allocate after purge: %v", err)
+	}
+}
+
+func TestMemoryStorePerIPCap_Unlimited(t *testing.T) {
+	store := server.NewMemoryStore(0) // unlimited
+	defer store.Close()
+
+	// Allocate many channels from the same IP — all must succeed.
+	for i := 0; i < 1000; i++ {
+		if err := store.AllocateChannel(uint16(i), time.Minute, "10.0.0.1:5000"); err != nil {
+			t.Fatalf("allocate %d with unlimited cap: %v", i, err)
+		}
+	}
+}
+
+func TestMemoryStorePerIPCap_IPv6Prefix(t *testing.T) {
+	store := server.NewMemoryStore(2) // max 2 per /64 prefix
+	defer store.Close()
+
+	// Allocate from two IPv6 addresses in the same /64 — both succeed.
+	if err := store.AllocateChannel(1, time.Minute, "[2001:db8::1]:5000"); err != nil {
+		t.Fatalf("allocate first IPv6: %v", err)
+	}
+	if err := store.AllocateChannel(2, time.Minute, "[2001:db8::2]:5000"); err != nil {
+		t.Fatalf("allocate second IPv6 (same /64): %v", err)
+	}
+
+	// Third allocation from the same /64 must fail.
+	if err := store.AllocateChannel(3, time.Minute, "[2001:db8::3]:5000"); err == nil {
+		t.Fatal("expected error for third IPv6 in same /64")
+	}
+
+	// A different /64 should still work.
+	if err := store.AllocateChannel(4, time.Minute, "[2001:db9::1]:5000"); err != nil {
+		t.Fatalf("allocate from different /64: %v", err)
+	}
+}
+
+func TestMemoryStorePerIPCap_NoRemoteAddr(t *testing.T) {
+	store := server.NewMemoryStore(1) // max 1 per IP
+	defer store.Close()
+
+	// Allocate without a remote address — no cap enforcement.
+	if err := store.AllocateChannel(1, time.Minute, ""); err != nil {
+		t.Fatalf("allocate without remote addr: %v", err)
+	}
+
+	// Second allocation without remote address should also succeed (no cap).
+	if err := store.AllocateChannel(2, time.Minute, ""); err != nil {
+		t.Fatalf("second allocate without remote addr: %v", err)
+	}
+}

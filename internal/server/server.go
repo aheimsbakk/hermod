@@ -281,7 +281,7 @@ func (s *Server) serveClient(conn *websocket.Conn, remoteAddr string) {
 // handleAllocate processes a sender's channel allocation request.
 func (s *Server) handleAllocate(conn *websocket.Conn, remoteAddr string, channelID uint16) {
 	s.logger.Debug("Allocating channel", "channel_id", channelID, "remote_addr", remoteAddr)
-	if err := s.store.AllocateChannel(channelID, s.ttl); err != nil {
+	if err := s.store.AllocateChannel(channelID, s.ttl, remoteAddr); err != nil {
 		s.logger.Warn("Channel allocation failed", "channel_id", channelID, "remote_addr", remoteAddr, "err", err)
 		writeError(conn, "could not allocate channel")
 		return

@@ -41,7 +41,7 @@ func startTestServerWithRL(t *testing.T, certRL, wsRL, joinRL *server.RateLimite
 	tlsCfg := config.BuildTLSConfig(cfg)
 	tlsCfg.Certificates = []tls.Certificate{tlsCert}
 
-	store := server.NewMemoryStore()
+	store := server.NewMemoryStore(0)
 	logger := slog.Default()
 	if certDER == nil {
 		certDER = tlsCert.Certificate[0]
@@ -260,8 +260,8 @@ func TestServerBlobRelay(t *testing.T) {
 }
 
 func TestRunGC(t *testing.T) {
-	store := server.NewMemoryStore()
-	store.AllocateChannel(99, -time.Second)
+	store := server.NewMemoryStore(0)
+	store.AllocateChannel(99, -time.Second, "")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
 	defer cancel()
@@ -449,8 +449,8 @@ func TestServerCertEndpoint(t *testing.T) {
 // TestServerCertRateLimitIsolation verifies that exhausting the /cert rate
 // limiter does not affect WebSocket connections (fix #6).
 func TestServerCertRateLimitIsolation(t *testing.T) {
-	// certRL: burst=1 (tight), wsRL: burst=1000 (generous).
-	certRL := server.NewRateLimiter(100, 1)
+	// certRL: burst=1 (tight), rate near-zero so tokens don't refill during test.
+	certRL := server.NewRateLimiter(0.001, 1)
 	wsRL := server.NewRateLimiter(100, 1000)
 	joinRL := server.NewRateLimiter(100, 1000)
 	addr, cancel := startTestServerWithRL(t, certRL, wsRL, joinRL,
@@ -497,10 +497,10 @@ func TestServerCertRateLimitIsolation(t *testing.T) {
 // TestServerJoinRateLimitBlocksEnumeration verifies that exhausting the join
 // rate limiter prevents further join attempts (fix #4 channel enumeration).
 func TestServerJoinRateLimitBlocksEnumeration(t *testing.T) {
-	// joinRL: burst=1 so the first join for each IP passes, the second is blocked.
+	// joinRL: burst=1, rate near-zero so tokens don't refill during test.
 	certRL := server.NewRateLimiter(100, 1000)
 	wsRL := server.NewRateLimiter(100, 1000)
-	joinRL := server.NewRateLimiter(100, 1)
+	joinRL := server.NewRateLimiter(0.001, 1)
 	addr, cancel := startTestServerWithRL(t, certRL, wsRL, joinRL,
 		server.DefaultMaxBlobsPerChannel, server.DefaultMaxCPaceFailures, nil)
 	defer cancel()

@@ -429,7 +429,6 @@ func runTx(input, serverURL string, numWords int, verify bool, listenUDP string,
 		if err := performSASCoordinated(ctx, quicConn, quicState.TLS, true, channelIDAad(channelID)); err != nil {
 			return err
 		}
-		logInfo("SAS verification passed")
 	}
 
 	// Build metadata
@@ -770,16 +769,22 @@ func performSASCoordinatedWith(ctx context.Context, conn sasStreamConn, tlsState
 
 	switch {
 	case cancelled && peerBuf[0] != 0x01:
+		logInfo("SAS verification failed", "reason", cancelMessage(ctx))
 		return errors.New(cancelMessage(ctx))
 	case cancelled:
+		logInfo("SAS verification failed", "reason", cancelMessage(ctx))
 		return errors.New(cancelMessage(ctx))
 	case !localOK && peerBuf[0] != 0x01:
+		logInfo("SAS verification failed", "reason", "both sides rejected")
 		return fmt.Errorf("Both sides rejected the out-of-band security verification — connection aborted. Retry and ensure the phrase matches on both ends.")
 	case !localOK:
+		logInfo("SAS verification failed", "reason", "local user rejected")
 		return fmt.Errorf("You rejected the out-of-band security verification — connection aborted.")
 	case peerBuf[0] != 0x01:
+		logInfo("SAS verification failed", "reason", "peer rejected")
 		return fmt.Errorf("The other side rejected the out-of-band security verification — connection aborted.")
 	}
+	logInfo("SAS verification confirmed")
 	return nil
 }
 

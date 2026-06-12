@@ -706,7 +706,7 @@ func TestRunServe_InvalidAddress(t *testing.T) {
 	t.Setenv("HOME", dir)
 	t.Setenv("APPDATA", dir)
 
-	err := runServe("not-an-address:xyz", 60*time.Second, 5, 15, server.DefaultMaxBlobsPerChannel, server.DefaultMaxCPaceFailures)
+	err := runServe("not-an-address:xyz", 60*time.Second, 5, 15, server.DefaultMaxBlobsPerChannel, server.DefaultMaxCPaceFailures, server.DefaultMaxChannelsPerIP)
 	if err == nil {
 		t.Fatal("expected error for invalid listen address")
 	}
@@ -1344,10 +1344,10 @@ func TestRunServe_ExistingCert(t *testing.T) {
 	t.Setenv("APPDATA", dir)
 
 	// First call: generates and persists the certificate.
-	_ = runServe("notanaddress:x", 60*time.Second, 5, 15, server.DefaultMaxBlobsPerChannel, server.DefaultMaxCPaceFailures)
+	_ = runServe("notanaddress:x", 60*time.Second, 5, 15, server.DefaultMaxBlobsPerChannel, server.DefaultMaxCPaceFailures, server.DefaultMaxChannelsPerIP)
 
 	// Second call: cert already exists → takes the else-branch.
-	err := runServe("notanaddress:x", 60*time.Second, 5, 15, server.DefaultMaxBlobsPerChannel, server.DefaultMaxCPaceFailures)
+	err := runServe("notanaddress:x", 60*time.Second, 5, 15, server.DefaultMaxBlobsPerChannel, server.DefaultMaxCPaceFailures, server.DefaultMaxChannelsPerIP)
 	if err == nil {
 		t.Fatal("expected error for invalid listen address on second runServe call")
 	}
@@ -1419,7 +1419,7 @@ trusted_servers: {}
 
 	// Call runServe with an invalid address — it will fail on net.Listen but
 	// cert load + auto-renew happen before that.
-	err = runServe("notanaddress:x", 60*time.Second, 5, 15, server.DefaultMaxBlobsPerChannel, server.DefaultMaxCPaceFailures)
+	err = runServe("notanaddress:x", 60*time.Second, 5, 15, server.DefaultMaxBlobsPerChannel, server.DefaultMaxCPaceFailures, server.DefaultMaxChannelsPerIP)
 	if err == nil {
 		t.Fatal("expected error for invalid listen address")
 	}

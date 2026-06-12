@@ -20,7 +20,7 @@ docs/api.md                 — internal package API reference
 docs/worklogs/              — session worklogs
 scripts/                    — bump-version.sh, build-release.sh, check-coverage.sh, extract-changelog-entry.sh, validate-changelog.sh
 .github/workflows/          — release.yml (GitHub Actions: cross-build + publish on tag push)
-VERSION                     — current version (0.19.1)
+VERSION                     — current version (1.0.0)
 ```
 
 ## Logging
@@ -59,7 +59,7 @@ trusted_servers:             # map[url]sha256fingerprint
 ```
 
 ### SignalingStore interface
-- AllocateChannel(id uint16, ttl time.Duration) error
+- AllocateChannel(id uint16, ttl time.Duration, remoteAddr string) error — `remoteAddr` enables per-IP cap enforcement; pass `""` to skip
 - ChannelExists(id uint16) bool
 - StoreBlob(id uint16, sender bool, blob []byte) error
 - FetchBlob(id uint16, sender bool) ([]byte, error)
@@ -68,7 +68,7 @@ trusted_servers:             # map[url]sha256fingerprint
 - PurgeExpired() error
 - Close() error
 
-Implementation: `MemoryStore` (default, in-process). SQLite removed.
+Implementation: `MemoryStore` (default, in-process). Optional per-IP channel cap (`maxChannelsPerIP`, default 100, configurable via `--max-channels-per-ip` on `hermod serve`). Tracks channel ownership by IP prefix (IPv4 /32, IPv6 /64) and rejects allocations when the limit is hit. Owner count is decremented on `DeleteChannel` or `PurgeExpired`.
 
 ### Metadata (JSON, 4-byte length-prefixed, QUIC stream 0)
 ```json
