@@ -295,12 +295,17 @@ func runSender(serverURL string, channelID uint16, password string, kind transfe
 		return fmt.Errorf("UDP hole punch: %w", err)
 	}
 
-	// Bidirectional QUIC initiation.
+	// Give receiver time to set up QUIC listener after hole punch.
+	time.Sleep(200 * time.Millisecond)
+
+	// Build TLS cert for QUIC
+	tlsCfg := config.BuildTLSConfig(cfg)
 	tlsCert := buildTLSCertFromDER(epCertDER, epKey, epLeaf)
-	baseTLS := config.BuildTLSConfig(cfg)
-	quicConn, err := network.RaceQUIC(ctx, mux, punchResult.PeerAddr, baseTLS, tlsCert, peerBundle.CertFingerprint)
+	tlsCfg.Certificates = []tls.Certificate{tlsCert}
+
+	quicConn, err := network.DialQUIC(ctx, mux, punchResult.PeerAddr, tlsCfg, peerBundle.CertFingerprint)
 	if err != nil {
-		return fmt.Errorf("QUIC connection: %w", err)
+		return fmt.Errorf("QUIC dial: %w", err)
 	}
 
 	// Build metadata
@@ -461,17 +466,23 @@ func runReceiver(serverURL, code string) ([]byte, error) {
 
 	candidatesV4, _ := network.ParseCandidates(senderBundle.CandidatesV4())
 	candidatesV6, _ := network.ParseCandidates(senderBundle.CandidatesV6())
-	punchResult, err := network.HolePunchDual(ctx, ctx, mux, candidatesV4, candidatesV6, [32]byte{})
+	_, err = network.HolePunchDual(ctx, ctx, mux, candidatesV4, candidatesV6, [32]byte{})
 	if err != nil {
 		return nil, fmt.Errorf("UDP hole punch: %w", err)
 	}
 
-	// Bidirectional QUIC initiation.
+	// QUIC listen
 	tlsCert := buildTLSCertFromDER(epCertDER, epKey, epLeaf)
 	baseTLS := config.BuildTLSConfig(cfg)
-	quicConn, err := network.RaceQUIC(ctx, mux, punchResult.PeerAddr, baseTLS, tlsCert, senderBundle.CertFingerprint)
+	ln, err := network.ListenQUIC(mux, tlsCert, baseTLS, senderBundle.CertFingerprint)
 	if err != nil {
-		return nil, fmt.Errorf("QUIC connection: %w", err)
+		return nil, fmt.Errorf("QUIC listen: %w", err)
+	}
+	defer ln.Close()
+
+	quicConn, err := ln.Accept(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("quic accept: %w", err)
 	}
 	defer quicConn.CloseWithError(0, "done")
 

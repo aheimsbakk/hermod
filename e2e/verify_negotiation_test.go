@@ -9,6 +9,7 @@ package e2e_test
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/binary"
 	"fmt"
 	"net"
@@ -166,9 +167,13 @@ func runSenderVerify(serverURL string, channelID uint16, password string, payloa
 		return verifyResult{err: fmt.Errorf("UDP hole punch: %w", err)}
 	}
 
+	time.Sleep(200 * time.Millisecond)
+
+	tlsCfg := config.BuildTLSConfig(cfg)
 	tlsCert := buildTLSCertFromDER(epCertDER, epKey, epLeaf)
-	baseTLS := config.BuildTLSConfig(cfg)
-	quicConn, err := network.RaceQUIC(ctx, mux, punchResult.PeerAddr, baseTLS, tlsCert, peerBundle.CertFingerprint)
+	tlsCfg.Certificates = []tls.Certificate{tlsCert}
+
+	quicConn, err := network.DialQUIC(ctx, mux, punchResult.PeerAddr, tlsCfg, peerBundle.CertFingerprint)
 	if err != nil {
 		return verifyResult{err: fmt.Errorf("QUIC dial: %w", err)}
 	}
@@ -311,16 +316,22 @@ func runReceiverVerify(serverURL, code string, requireVerify bool) verifyResult 
 
 	candidatesV4, _ := network.ParseCandidates(senderBundle.CandidatesV4())
 	candidatesV6, _ := network.ParseCandidates(senderBundle.CandidatesV6())
-	punchResult, err := network.HolePunchDual(ctx, ctx, mux, candidatesV4, candidatesV6, [32]byte{})
+	_, err = network.HolePunchDual(ctx, ctx, mux, candidatesV4, candidatesV6, [32]byte{})
 	if err != nil {
 		return verifyResult{err: fmt.Errorf("UDP hole punch: %w", err)}
 	}
 
 	tlsCert := buildTLSCertFromDER(epCertDER, epKey, epLeaf)
 	baseTLS := config.BuildTLSConfig(cfg)
-	quicConn, err := network.RaceQUIC(ctx, mux, punchResult.PeerAddr, baseTLS, tlsCert, senderBundle.CertFingerprint)
+	ln, err := network.ListenQUIC(mux, tlsCert, baseTLS, senderBundle.CertFingerprint)
 	if err != nil {
-		return verifyResult{err: fmt.Errorf("QUIC connection: %w", err)}
+		return verifyResult{err: fmt.Errorf("quic listen: %w", err)}
+	}
+	defer ln.Close()
+
+	quicConn, err := ln.Accept(ctx)
+	if err != nil {
+		return verifyResult{err: fmt.Errorf("quic accept: %w", err)}
 	}
 	defer quicConn.CloseWithError(0, "done")
 

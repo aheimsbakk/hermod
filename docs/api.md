@@ -187,7 +187,7 @@ Returns the local address of a bound UDP connection.
 ```go
 func NewPacketMux(conn net.PacketConn) *packetMux
 ```
-Wraps a UDP socket and demultiplexes incoming packets into two channels: one for probe packets (first byte `0x01`) and one for QUIC packets (everything else). The returned `*packetMux` is passed to `HolePunch` and `RaceQUIC`.
+Wraps a UDP socket and demultiplexes incoming packets into two channels: one for probe packets (first byte `0x01`) and one for QUIC packets (everything else). The returned `*packetMux` is passed to `HolePunch`, `DialQUIC`, and `ListenQUIC`.
 
 ```go
 func (m *packetMux) Close()
@@ -237,9 +237,14 @@ Classifies a bare IP string into a `"host:port"` string for the correct address 
 ### QUIC
 
 ```go
-func RaceQUIC(ctx context.Context, mux *packetMux, peerAddr *net.UDPAddr, baseTLS *tls.Config, cert tls.Certificate, peerCertHash string) (*quic.Conn, error)
+func DialQUIC(ctx context.Context, mux *packetMux, peerAddr *net.UDPAddr, baseTLS *tls.Config, peerCertHash string) (*quic.Conn, error)
 ```
-Races a QUIC dial and accept on the same muxed UDP socket. Returns the first connection that completes the handshake. Sets up mutual TLS (`RequireAnyClientCert`), pins the peer certificate to `peerCertHash`, and uses ALPN `hermod-p2p`. The losing goroutine is cancelled via context. This is the only QUIC connection function — both `tx` and `rx` use it.
+Establishes a QUIC connection to `peerAddr`. Pins the peer certificate to `peerCertHash`, uses ALPN `hermod-p2p`. The caller must set `baseTLS.Certificates` before calling. Used by `tx` (sender = QUIC client).
+
+```go
+func ListenQUIC(mux *packetMux, cert tls.Certificate, baseTLS *tls.Config, peerCertHash string) (*quic.Listener, error)
+```
+Starts a QUIC listener on the muxed socket. Sets up mutual TLS (`RequireAnyClientCert`), presents `cert` to the dialing peer, pins the peer certificate to `peerCertHash`, and uses ALPN `hermod-p2p`. Used by `rx` (receiver = QUIC server).
 
 ```go
 func CertFingerprint(certDER []byte) string
@@ -418,7 +423,7 @@ Parses the PEM certificate and key stored in `cfg`.
 ```go
 func BuildTLSConfig(cfg *Config) *tls.Config
 ```
-Returns a `*tls.Config` with TLS 1.3 minimum version and curve/cipher preferences from `cfg`. ALPN (`hermod-p2p`) is set separately by `RaceQUIC` in `internal/network`.
+Returns a `*tls.Config` with TLS 1.3 minimum version and curve/cipher preferences from `cfg`. ALPN (`hermod-p2p`) is set separately by `DialQUIC` and `ListenQUIC` in `internal/network`.
 
 ```go
 func CertFingerprint(certDER []byte) string

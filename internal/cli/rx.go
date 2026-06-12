@@ -320,19 +320,25 @@ func runRx(code, destination, serverURL string, verify bool, listenUDP string, s
 	}
 	logInfo("UDP hole punch succeeded", "peer_addr", punchResult.PeerAddr.String())
 
-	// Bidirectional QUIC initiation — both sides race dial and accept so the
-	// connection succeeds even if only one direction traverses the NAT.
-	logDebug("establishing QUIC connection to peer (bidirectional race)", "peer_addr", punchResult.PeerAddr.String())
+	// QUIC listen (receiver = QUIC server)
+	logDebug("starting QUIC listener for incoming sender connection")
 	tlsCert := buildTLSCert(epCertDER, epKey, epCert)
 	baseTLS := config.BuildTLSConfig(cfg)
-	quicConn, err := network.RaceQUIC(ctx, mux, punchResult.PeerAddr, baseTLS, tlsCert, senderBundle.CertFingerprint)
+	ln, err := network.ListenQUIC(mux, tlsCert, baseTLS, senderBundle.CertFingerprint)
 	if err != nil {
-		return fmt.Errorf("QUIC connection: %w", err)
+		return fmt.Errorf("QUIC listen: %w", err)
+	}
+	defer ln.Close()
+
+	logDebug("waiting for sender to establish QUIC connection")
+	quicConn, err := ln.Accept(ctx)
+	if err != nil {
+		return fmt.Errorf("QUIC accept: %w", err)
 	}
 	defer quicConn.CloseWithError(0, "done")
 	// Stop probing — QUIC keepalive will maintain the NAT mapping from now on.
 	probeCancel()
-	logInfo("QUIC connection established", "peer_addr", punchResult.PeerAddr.String())
+	logInfo("QUIC connection accepted from sender")
 
 	// Watch for Ctrl+C: close the connection so the sender is notified immediately.
 	go func() {

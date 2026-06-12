@@ -76,12 +76,13 @@ Both peers probe each other's candidates concurrently in two phases:
 
 The first candidate address from which a valid ack is received wins. That address is used for the QUIC connection.
 
-### Phase 5 — QUIC connection (bidirectional race)
+### Phase 5 — QUIC connection (sender dials, receiver listens)
 
-Both peers simultaneously dial and accept on the same muxed UDP socket. The first completed TLS 1.3 handshake wins. This ensures the connection succeeds even if only one direction traverses the NAT.
+After hole punching, the sender dials and the receiver listens on the same muxed UDP socket. The receiver starts a QUIC listener before the sender begins dialing (with a 200 ms delay after hole punch to ensure the listener is ready).
 
 - ALPN: `hermod-p2p`
-- Both sides present ephemeral ECDSA P-256 self-signed certs (valid 24 h)
+- Both sides present ephemeral ECDSA P-256 self-signed certs (valid 2 h)
+- Receiver enforces mutual TLS (`RequireAnyClientCert`) — the sender presents a cert and the receiver verifies its fingerprint
 - Each side pins the peer's cert fingerprint from the endpoint bundle
 - Idle timeout: 30 s, keep-alive: 5 s
 
@@ -281,12 +282,12 @@ Both peers run the hole punch concurrently. The typical completion time on symme
 
 ## QUIC connection
 
-After hole punching, both peers race a QUIC dial and accept simultaneously on the
-same muxed UDP socket. The first handshake to complete wins. This bidirectional
-initiation means the connection succeeds even when only one direction traverses
-the NAT (e.g. one peer is behind a more restrictive firewall).
+After hole punching, the sender (QUIC client) dials the receiver (QUIC server)
+on the hole-punched address. The receiver opens a QUIC listener before the sender
+begins dialing — a 200 ms delay after hole punch on the sender side ensures the
+listener is ready.
 
-Each peer generates an ephemeral ECDSA P-256 self-signed X.509 certificate for this connection. The certificate fingerprint was exchanged in the endpoint bundle (above). Both peers pin the peer's fingerprint in their TLS `VerifyPeerCertificate` callback, replacing normal CA-chain verification. The TLS config uses `RequireAnyClientCert` for mutual authentication — both sides present and verify certificates. ECDSA P-256 is chosen for fast key generation and smaller signatures (L-02).
+Each peer generates an ephemeral ECDSA P-256 self-signed X.509 certificate for this connection. The certificate fingerprint was exchanged in the endpoint bundle (above). Both peers pin the peer's fingerprint in their TLS `VerifyPeerCertificate` callback, replacing normal CA-chain verification. The receiver's TLS config uses `RequireAnyClientCert` for mutual authentication — the sender presents its certificate and the receiver verifies its fingerprint. ECDSA P-256 is chosen for fast key generation and smaller signatures.
 
 QUIC configuration:
 - TLS 1.3 (enforced by quic-go)
