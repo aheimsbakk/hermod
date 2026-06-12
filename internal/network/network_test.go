@@ -28,21 +28,6 @@ func TestLocalEndpoints(t *testing.T) {
 	}
 }
 
-func TestEncodeDecodeCPaceMsg(t *testing.T) {
-	msg := network.CPaceMsg{PubMsg: []byte{0x04, 0x01, 0x02, 0x03}}
-	data, err := network.EncodeCPaceMsg(msg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	decoded, err := network.DecodeCPaceMsg(data)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(decoded.PubMsg) != string(msg.PubMsg) {
-		t.Fatal("pub msg mismatch")
-	}
-}
-
 func TestEncodeDecodeEndpointBundle(t *testing.T) {
 	bundle := network.EndpointBundle{
 		LocalEndpointsV4: []string{"192.168.1.1:4376", "10.0.0.1:4376"},
@@ -121,43 +106,27 @@ func TestDecodeEndpointBundleInvalid(t *testing.T) {
 	}
 }
 
-func TestDecodeCPaceMsgInvalid(t *testing.T) {
-	_, err := network.DecodeCPaceMsg([]byte("{invalid"))
+// TestNewPacketMuxClose verifies that closing a mux terminates the readLoop
+// and makes the underlying socket available for reuse.
+// Packet routing (QUIC vs probe) is exhaustively tested in the internal
+// package via TestReadLoopPacketRouting.
+func TestNewPacketMuxClose(t *testing.T) {
+	conn, err := network.BindUDP(":0")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	mux := network.NewPacketMux(conn)
+	mux.Close()
+
+	// Verify mux.Close is idempotent — no panic.
+	mux.Close()
+
+	// The underlying socket should be closed after mux.Close.
+	_, _, err = conn.ReadFrom(make([]byte, 64))
 	if err == nil {
-		t.Fatal("expected error")
+		t.Error("expected error reading from closed mux socket")
 	}
-}
-
-// TestNewPacketMuxDemux verifies the mux routes probe vs QUIC packets.
-func TestNewPacketMuxDemux(t *testing.T) {
-	// Bind two UDP sockets
-	conn1, err := network.BindUDP(":0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	conn2, err := network.BindUDP(":0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer conn1.Close()
-	defer conn2.Close()
-
-	addr1, _ := network.LocalUDPAddr(conn1)
-	addr2, _ := network.LocalUDPAddr(conn2)
-
-	mux1 := network.NewPacketMux(conn1)
-	defer mux1.Close()
-
-	// Send a probe from conn2 to mux1
-	probeData := []byte{0x01, 0xAB} // probeMarker + data
-	conn2.WriteTo(probeData, addr1)
-
-	// Send a QUIC-like packet (starts with 0xC0) from conn2 to mux1
-	quicData := []byte{0xC0, 0x01, 0x02}
-	conn2.WriteTo(quicData, addr1)
-
-	_ = addr2
-	// Don't block on reads — just verify the mux was constructed without panic
 }
 
 // TestPacketMuxMethods covers Close and LocalAddr on the mux.

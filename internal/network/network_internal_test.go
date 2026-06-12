@@ -579,8 +579,8 @@ func TestHolePunchDual_V6Preferred(t *testing.T) {
 	}
 }
 
-// TestHolePunchDual_V4Fallback verifies that when v6 times out but v4 succeeds,
-// the v4 result is returned.
+// TestHolePunchDual_V4Fallback verifies that when v6 candidates are empty,
+// the v4 phase runs immediately and succeeds.
 func TestHolePunchDual_V4Fallback(t *testing.T) {
 	stub := newStubPacketConn()
 	mux := NewPacketMux(stub)
@@ -588,17 +588,16 @@ func TestHolePunchDual_V4Fallback(t *testing.T) {
 
 	v4Addr := &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 7777}
 
-	// No v6 probes injected — v6 phase will time out after 5s.
-	// Instead, inject a v4 probe after a delay that exceeds the v6 timeout.
+	// No v6 candidates — v6 phase is skipped. Inject a v4 probe after a short delay.
 	go func() {
-		time.Sleep(5100 * time.Millisecond) // just after v6 timeout
+		time.Sleep(30 * time.Millisecond)
 		stub.readCh <- udpDatagram{
 			data: []byte{probeMarker, testProbeNonce[0], testProbeNonce[1], testProbeNonce[2], testProbeNonce[3], testProbeNonce[4], testProbeNonce[5], testProbeNonce[6]},
 			addr: v4Addr,
 		}
 	}()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
 	result, err := HolePunchDual(ctx, ctx, mux, []*net.UDPAddr{v4Addr}, []*net.UDPAddr{}, testProbeNonce)

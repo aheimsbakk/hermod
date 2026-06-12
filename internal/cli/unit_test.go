@@ -586,12 +586,32 @@ func TestParseVerboseLevel_Invalid(t *testing.T) {
 	}
 }
 
-// TestLogWarnAndError verifies logWarn and logError do not panic.
+// TestLogWarnAndError verifies logWarn and logError write to the configured output.
 func TestLogWarnAndError(t *testing.T) {
-	applyVerbosity(VerboseWarning)
-	logWarn("test warning message")
-	logError("test error message")
-	applyVerbosity(VerboseNone) // restore
+	oldLogger := slog.Default()
+	defer slog.SetDefault(oldLogger)
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+
+	// Set a logger that writes to the pipe at Warning level.
+	slog.SetDefault(slog.New(slog.NewTextHandler(w, &slog.HandlerOptions{
+		Level: slog.LevelWarn,
+	})))
+
+	logWarn("test warning")
+	logError("test error")
+
+	w.Close()
+	got, _ := io.ReadAll(r)
+	if !strings.Contains(string(got), "test warning") {
+		t.Errorf("expected 'test warning' in log output, got: %q", string(got))
+	}
+	if !strings.Contains(string(got), "test error") {
+		t.Errorf("expected 'test error' in log output, got: %q", string(got))
+	}
 }
 
 // --- envOrDefault / configServerURL ---
@@ -731,7 +751,9 @@ func TestExecute_NoArgs(t *testing.T) {
 	oldArgs := os.Args
 	os.Args = []string{"hermod"}
 	defer func() { os.Args = oldArgs }()
-	_ = Execute()
+	if err := Execute(); err != nil {
+		t.Fatalf("Execute() with no args should return nil, got: %v", err)
+	}
 }
 
 // --- configServerURL ---
