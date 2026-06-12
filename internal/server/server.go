@@ -454,7 +454,7 @@ func (s *Server) relay(conn *websocket.Conn, channelID uint16, isSender bool) {
 	for {
 		var msg Message
 		if err := conn.ReadJSON(&msg); err != nil {
-			s.logger.Debug("Peer disconnected from relay", "channel_id", channelID, "role", role, "err", err)
+			s.logger.Debug("Relay connection closed", "channel_id", channelID, "role", role, "reason", "remote side closed the connection")
 			return
 		}
 
@@ -618,6 +618,6 @@ func publicIPResponse(host string) map[string]string {
 
 func writeError(conn *websocket.Conn, msg string) {
 	if err := conn.WriteJSON(Message{Type: MsgError, Error: msg}); err != nil {
-		slog.Debug("Failed to write error to client", "err", err)
+		slog.Debug("Could not send error response to WebSocket client — client may have disconnected", "err", err)
 	}
 }

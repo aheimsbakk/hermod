@@ -65,7 +65,7 @@ type udpReflector struct {
 func startUDPReflector(ctx context.Context, addr string) *udpReflector {
 	pc, err := net.ListenPacket("udp", addr)
 	if err != nil {
-		slog.Warn("UDP reflection not available — CGNAT clients may fail hole-punching",
+		slog.Warn("UDP reflection server failed to start — clients behind carrier-grade NAT may not establish peer-to-peer connections",
 			"addr", addr, "err", err)
 		return nil
 	}
@@ -162,7 +162,7 @@ func (r *udpReflector) serve(ctx context.Context) {
 		case firstByte == reflectProbeMagic && n == 1:
 			// Cookie request — respond with HMAC cookie.
 			if !r.rl.Allow(udpAddr.IP.String()) {
-				slog.Warn("UDP reflection rate-limited (cookie req)", "remote_ip", udpAddr.IP)
+				slog.Warn("Rate limit applied to UDP reflection probe", "remote_ip", udpAddr.IP)
 				continue
 			}
 			cookie := computeCookie(r.key, udpAddr.IP)

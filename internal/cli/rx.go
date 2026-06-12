@@ -268,7 +268,7 @@ func runRx(code, destination, serverURL string, verify bool, listenUDP string, s
 	localV4, localV6, err := network.LocalEndpoints(localAddr.Port, ipFamily)
 	if err != nil {
 		localV4, localV6 = nil, nil
-		logWarn("could not enumerate local network interfaces — using public endpoint only", "err", err)
+		logWarn("Could not enumerate local network interfaces — using public endpoint only", "err", err)
 	}
 	var publicEPV4, publicEPV6 string
 	if discoveredAddr != nil {
@@ -435,7 +435,7 @@ func runRx(code, destination, serverURL string, verify bool, listenUDP string, s
 	// Verify received byte count against metadata when size is known.
 	if meta.Size >= 0 && bytesReceived != meta.Size {
 		removeSavedFile()
-		logError("Received byte count mismatch",
+		logError("Downloaded byte count does not match expected — data may be incomplete or corrupted; retry the transfer",
 			"expected", meta.Size, "received", bytesReceived)
 		return fmt.Errorf("integrity check failed: expected %d bytes, received %d",
 			meta.Size, bytesReceived)
@@ -461,9 +461,9 @@ func runRx(code, destination, serverURL string, verify bool, listenUDP string, s
 	logDebug("trailing hash received", "sha256", senderHash)
 	if senderHash != computedHash {
 		removeSavedFile()
-		logError("Integrity check failed — sender hash does not match received data",
+		logError("Integrity check failed — sender's data fingerprint does not match the received data",
 			"sender_sha256", senderHash, "computed_sha256", computedHash)
-		fmt.Fprintf(os.Stderr, "Verification failed: received data does not match sender hash.\n")
+		fmt.Fprintf(os.Stderr, "Verification failed: the received data does not match what the sender transmitted. The transfer may have been corrupted — please retry.\n")
 		return fmt.Errorf("integrity check failed: received data hash (%s) does not match sender hash (%s)",
 			senderHash, computedHash)
 	}
@@ -490,7 +490,7 @@ func runRx(code, destination, serverURL string, verify bool, listenUDP string, s
 	}
 
 	logInfo("Transfer complete", "kind", meta.Kind, "size_bytes", meta.Size, "bytes_received", bytesReceived)
-	printStatus("Receive and verification complete.")
+	printStatus("Transfer complete.")
 	return nil
 }
 

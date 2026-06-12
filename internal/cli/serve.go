@@ -87,11 +87,11 @@ func runServe(listenAddr string, ttl time.Duration, rateLimit, rateBurst float64
 	config.LogCertExpiry(cfg, func(level, msg string, daysLeft int) {
 		switch level {
 		case "CRITICAL":
-			logError(fmt.Sprintf("[CERT EXPIRY CRITICAL] "+msg, daysLeft))
+			logError(fmt.Sprintf(msg, daysLeft), "days_left", daysLeft)
 		case "ERROR":
-			logError(fmt.Sprintf("[CERT EXPIRY] "+msg, daysLeft))
+			logError(fmt.Sprintf(msg, daysLeft), "days_left", daysLeft)
 		default:
-			logWarn(fmt.Sprintf("[CERT EXPIRY] "+msg, daysLeft))
+			logWarn(fmt.Sprintf(msg, daysLeft), "days_left", daysLeft)
 		}
 	})
 

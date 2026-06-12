@@ -5,6 +5,40 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.18.0] - 2026-06-12
+
+- **why:** Add CGNAT UDP reflection for NAT traversal, remove dead code and legacy protocol compat, add lint checks to test suite, fix data races, document IPv4/IPv6 serve caveats
+- **model:** opencode/deepseek-v4-flash
+- **tags:** network, cgnat, stun, cleanup, testing, docs
+
+### Added
+
+- CGNAT address discovery via server UDP reflection with two-phase HMAC cookie handshake — detects external UDP address before endpoint bundle exchange, critical for Carrier-Grade NAT where UDP port differs from WebSocket TCP port (`internal/server/udp_reflect.go`, `internal/network/stun.go`)
+- `DiscoverViaReflector()` client function to perform the cookie handshake, with fallback to server-reported WebSocket IP + local port on failure (`internal/network/stun.go`)
+- `lint_test.go` — runs `deadcode` and `staticcheck` (U1000) as part of `go test ./...`, skippable via `HERMOD_SKIP_LINT`
+- Re-exposed `DialQUIC()` and `ListenQUIC()` as exported API for direct use by tx/rx (replacing internal `RaceQUIC`)
+
+### Changed
+
+- `-4`/`-6` flag descriptions updated from "Use IPv4/IPv6 only for hole punching" to "Restrict to IPv4/IPv6 only for listen address, signaling connection, and hole punching" — accurate for all subcommands (`internal/cli/root.go`)
+- IPv4/IPv6 caveats documented in README under `serve`: `-6` does not isolate to IPv6 on default Linux (`IPV6_V6ONLY=0`); explicit `--listen` silently ignores `-4`/`-6`; cross-subcommand effect clarified
+- All log and user-facing messages reviewed for clear language: removed internal jargon ("cookie req", "SHA-256 mismatch", "sender hash"), removed `[CERT EXPIRY]` prefix noise, fixed inconsistent casing in `logWarn` calls, replaced `"day(s)"` with `"days"` in cert expiry warnings, clarified error messages with next steps (`internal/cli/rx.go`, `internal/cli/tx.go`, `internal/cli/serve.go`, `internal/server/server.go`, `internal/server/udp_reflect.go`, `internal/server/ratelimit.go`, `internal/config/config.go`, `pkg/transfer/transfer.go`)
+
+### Removed
+
+- Dead methods: `CPaceSession.SharedK()`, `CPaceSession.PubMessage()`, `X25519PubBytes()` (`internal/crypto/crypto.go`)
+- Dead variable `p256Two` (`internal/crypto/hash_to_curve.go`)
+- Dead STUN code: `DiscoverExternalAddress()`, `parseSTUNResponse()`, `parseXORMappedAddress()`, `xorMagicIP()`, `xorMagicPort()`, `decodeXORMappedAddress()`, `DefaultSTUNServer`, `ReflectRequest`, `stunTXID` type, and all STUN protocol constants (`internal/network/stun.go`)
+- Dead method `Server.Addr()` (`internal/server/server.go`)
+- Dead types `quicConnectionState` and `jsonPayload` (`internal/cli/tx.go`)
+- Legacy UDP reflection `0x00` single-byte probe handler — all clients now use the cookie protocol (`internal/server/udp_reflect.go`)
+- Legacy direct-address response parsing in `DiscoverViaReflector` — all servers now use the cookie protocol (`internal/network/stun.go`)
+
+### Fixed
+
+- Data races in e2e and unit tests resolved (concurrent map writes, shared state in `ExecuteArgs`)
+- quic-go UDP buffer size warnings silenced by delegating `SetReadBuffer`/`SetWriteBuffer` in `muxedConn`
+
 ## [v0.17.1] - 2026-06-11
 
 - **why:** Apply clear-language fixes to all user-facing strings and log messages

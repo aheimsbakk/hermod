@@ -293,7 +293,7 @@ func runTx(input, serverURL string, numWords int, verify bool, listenUDP string,
 	localV4, localV6, err := network.LocalEndpoints(localAddr.Port, ipFamily)
 	if err != nil {
 		localV4, localV6 = nil, nil
-		logWarn("could not enumerate local network interfaces — using public endpoint only", "err", err)
+		logWarn("Could not enumerate local network interfaces — using public endpoint only", "err", err)
 	}
 	var publicEPV4, publicEPV6 string
 	if discoveredAddr != nil {
@@ -533,7 +533,7 @@ func runTx(input, serverURL string, numWords int, verify bool, listenUDP string,
 			}
 			return peerErr
 		}
-		logWarn("did not receive acknowledgement from receiver — transfer may still have succeeded", "err", err)
+		logWarn("Did not receive acknowledgement from receiver — transfer may still have succeeded", "err", err)
 	}
 
 	logInfo("Transfer complete", "kind", meta.Kind, "size_bytes", meta.Size)
@@ -774,11 +774,11 @@ func performSASCoordinatedWith(ctx context.Context, conn sasStreamConn, tlsState
 	case cancelled:
 		return errors.New(cancelMessage(ctx))
 	case !localOK && peerBuf[0] != 0x01:
-		return fmt.Errorf("Both sides rejected SAS verification — connection aborted.")
+		return fmt.Errorf("Both sides rejected the out-of-band security verification — connection aborted. Retry and ensure the phrase matches on both ends.")
 	case !localOK:
-		return fmt.Errorf("You rejected SAS verification — connection aborted.")
+		return fmt.Errorf("You rejected the out-of-band security verification — connection aborted.")
 	case peerBuf[0] != 0x01:
-		return fmt.Errorf("The other side rejected SAS verification — connection aborted.")
+		return fmt.Errorf("The other side rejected the out-of-band security verification — connection aborted.")
 	}
 	return nil
 }
