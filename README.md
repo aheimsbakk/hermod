@@ -13,6 +13,7 @@ Hermod was inspired by [Magic Wormhole](https://github.com/magic-wormhole/magic-
 - Works through NAT via UDP hole punching
 - Transfers files, text snippets, or stdin
 - Self-hosted signaling server included
+- **Post-quantum secure by default** — all channels use X25519MLKEM768 (FIPS 203) hybrid key exchange with no classical fallback. An attacker with a quantum computer cannot decrypt recorded traffic or forge connections without also breaking ML-KEM-768.
 
 ## Quick start
 
@@ -249,10 +250,10 @@ See [docs/protocol.md](docs/protocol.md) for the full protocol specification.
 ## Security properties
 
 | Property | Mechanism |
-|---|---|
-| Confidentiality | TLS 1.3 over QUIC |
-| Authentication | CPace PAKE — only someone with the transfer code can connect |
-| Post-quantum handshake | Hybrid KEM (X25519 + ML-KEM-768) layered on CPace — endpoint bundles are secure even against quantum cryptanalysis |
+|---|---|---|
+| Confidentiality | TLS 1.3 over QUIC with X25519MLKEM768 key exchange (FIPS 203) — post-quantum secure by default, no classical-only fallback |
+| Authentication | CPace PAKE — only someone with the transfer code can connect. Combined with ML-KEM-768 in the hybrid handshake key |
+| Post-quantum handshake | Every channel uses post-quantum cryptography: signaling WebSocket and P2P QUIC both negotiate X25519MLKEM768 exclusively. The endpoint bundle key combines CPace + X25519 + ML-KEM-768 — breaking classical components alone is insufficient |
 | Integrity | SHA-256 hash verified on the received payload |
 | Server cannot read data | Payload never touches the signaling server |
 | Active MITM detection | Optional SAS out-of-band verification |

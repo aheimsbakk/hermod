@@ -5,6 +5,25 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.19.1] - 2026-06-12
+
+- **why:** Make X25519MLKEM768 the only default TLS curve for full post-quantum security; document quantum-safety claims in README
+- **model:** opencode/deepseek-v4-flash
+- **tags:** security, crypto, post-quantum, mlkem, tls
+
+### Changed
+
+- Default TLS curve preferences reduced to `["X25519MLKEM768"]` only — removes `X25519` and `CurveP256` fallbacks so every connection uses post-quantum hybrid key exchange (`internal/config/config.go`)
+- `BLUEPRINT.md`, `CONTEXT.md`, `PROJECT.md`, and `README.md` updated to document the PQ-only curve default
+
+### Added
+
+- Post-quantum security claim in README — documents that all channels use X25519MLKEM768 exclusively with no classical-only fallback
+
+### Security
+
+- All TLS connections now exclusively use X25519MLKEM768 (FIPS 203) hybrid key exchange — no classical-only fallback means an attacker with a quantum computer cannot decrypt recorded traffic without also breaking ML-KEM-768
+
 ## [v0.19.0] - 2026-06-12
 
 - **why:** Switch from certificate DER pinning to SPKI (public key) pinning so certificate renewal with the same key does not break client trust; add automatic certificate renewal 14 days before expiry with key reuse
