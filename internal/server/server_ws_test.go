@@ -269,9 +269,11 @@ func TestRunGC(t *testing.T) {
 	server.RunGC(ctx, store, 100*time.Millisecond)
 	<-ctx.Done()
 
-	// Channel should have been purged
+	// Channel 99 must have been purged by GC — the TTL was -1 second, and
+	// RunGC ran with a 100ms interval for up to 300ms, giving it at least 2
+	// opportunities to sweep.
 	if err := store.StoreBlob(99, true, []byte("x")); err == nil {
-		t.Log("Note: channel 99 still exists (GC may not have run yet)")
+		t.Error("channel 99 was not purged by GC — expired channel still accepts blobs")
 	}
 }
 

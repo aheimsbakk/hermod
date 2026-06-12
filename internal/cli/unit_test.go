@@ -586,12 +586,32 @@ func TestParseVerboseLevel_Invalid(t *testing.T) {
 	}
 }
 
-// TestLogWarnAndError verifies logWarn and logError do not panic.
+// TestLogWarnAndError verifies logWarn and logError write to the configured output.
 func TestLogWarnAndError(t *testing.T) {
-	applyVerbosity(VerboseWarning)
-	logWarn("test warning message")
-	logError("test error message")
-	applyVerbosity(VerboseNone) // restore
+	oldLogger := slog.Default()
+	defer slog.SetDefault(oldLogger)
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+
+	// Set a logger that writes to the pipe at Warning level.
+	slog.SetDefault(slog.New(slog.NewTextHandler(w, &slog.HandlerOptions{
+		Level: slog.LevelWarn,
+	})))
+
+	logWarn("test warning")
+	logError("test error")
+
+	w.Close()
+	got, _ := io.ReadAll(r)
+	if !strings.Contains(string(got), "test warning") {
+		t.Errorf("expected 'test warning' in log output, got: %q", string(got))
+	}
+	if !strings.Contains(string(got), "test error") {
+		t.Errorf("expected 'test error' in log output, got: %q", string(got))
+	}
 }
 
 // --- envOrDefault / configServerURL ---
@@ -731,7 +751,9 @@ func TestExecute_NoArgs(t *testing.T) {
 	oldArgs := os.Args
 	os.Args = []string{"hermod"}
 	defer func() { os.Args = oldArgs }()
-	_ = Execute()
+	if err := Execute(); err != nil {
+		t.Fatalf("Execute() with no args should return nil, got: %v", err)
+	}
 }
 
 // --- configServerURL ---
@@ -1095,8 +1117,8 @@ func TestQuietMode_ReceivePayload_Text(t *testing.T) {
 // --- IPv4/IPv6 enforcement flags ---
 
 func resetIPFlags() {
-	ipv4Only = false
-	ipv6Only = false
+	ipv4Only.Store(false)
+	ipv6Only.Store(false)
 }
 
 // TestExecuteArgs_IPv4Flag verifies -4 is accepted and sets ipv4Only.
@@ -1109,10 +1131,10 @@ func TestExecuteArgs_IPv4Flag(t *testing.T) {
 
 	// runTx will fail fast (no trusted server) but PersistentPreRunE still runs.
 	_ = ExecuteArgs([]string{"hermod", "-4", "tx", "hello"})
-	if !ipv4Only {
+	if !ipv4Only.Load() {
 		t.Fatal("expected ipv4Only=true after -4 flag")
 	}
-	if ipv6Only {
+	if ipv6Only.Load() {
 		t.Fatal("expected ipv6Only=false after -4 flag")
 	}
 }
@@ -1126,10 +1148,10 @@ func TestExecuteArgs_IPv6Flag(t *testing.T) {
 	t.Setenv("HERMOD_SERVER", "")
 
 	_ = ExecuteArgs([]string{"hermod", "-6", "tx", "hello"})
-	if !ipv6Only {
+	if !ipv6Only.Load() {
 		t.Fatal("expected ipv6Only=true after -6 flag")
 	}
-	if ipv4Only {
+	if ipv4Only.Load() {
 		t.Fatal("expected ipv4Only=false after -6 flag")
 	}
 }
@@ -1160,7 +1182,7 @@ func TestExecuteArgs_IPv4LongFlag(t *testing.T) {
 	t.Setenv("HERMOD_SERVER", "")
 
 	_ = ExecuteArgs([]string{"hermod", "--ipv4", "tx", "hello"})
-	if !ipv4Only {
+	if !ipv4Only.Load() {
 		t.Fatal("expected ipv4Only=true after --ipv4 flag")
 	}
 }
@@ -1174,7 +1196,7 @@ func TestExecuteArgs_IPv6LongFlag(t *testing.T) {
 	t.Setenv("HERMOD_SERVER", "")
 
 	_ = ExecuteArgs([]string{"hermod", "--ipv6", "tx", "hello"})
-	if !ipv6Only {
+	if !ipv6Only.Load() {
 		t.Fatal("expected ipv6Only=true after --ipv6 flag")
 	}
 }
@@ -1190,10 +1212,10 @@ func TestServeIPv4FlagPropagation(t *testing.T) {
 
 	// rx fails fast ("not trusted") before any network — fast enough to test flags.
 	_ = ExecuteArgs([]string{"hermod", "-4", "rx", "dummy-code-xyz"})
-	if !ipv4Only {
+	if !ipv4Only.Load() {
 		t.Fatal("expected ipv4Only=true after -4 flag with rx (persistent flag)")
 	}
-	if ipv6Only {
+	if ipv6Only.Load() {
 		t.Fatal("expected ipv6Only=false after -4 flag with rx")
 	}
 }
@@ -1207,10 +1229,10 @@ func TestServeIPv6FlagPropagation(t *testing.T) {
 	t.Setenv("APPDATA", dir)
 
 	_ = ExecuteArgs([]string{"hermod", "-6", "rx", "dummy-code-xyz"})
-	if !ipv6Only {
+	if !ipv6Only.Load() {
 		t.Fatal("expected ipv6Only=true after -6 flag with rx")
 	}
-	if ipv4Only {
+	if ipv4Only.Load() {
 		t.Fatal("expected ipv4Only=false after -6 flag with rx")
 	}
 }
@@ -1231,7 +1253,7 @@ func TestServeIPv4FlagWithServe(t *testing.T) {
 	if !strings.Contains(err.Error(), "listen") {
 		t.Errorf("expected 'listen' error, got: %v", err)
 	}
-	if !ipv4Only {
+	if !ipv4Only.Load() {
 		t.Fatal("expected ipv4Only=true after -4 with serve")
 	}
 }
@@ -1241,10 +1263,10 @@ func TestServeIPv4FlagWithServe(t *testing.T) {
 // that happens inside runServe.
 func TestServeListenAddrOverrideV4(t *testing.T) {
 	addr := ":4376"
-	if ipv4Only && addr[0] == ':' {
+	if ipv4Only.Load() && addr[0] == ':' {
 		addr = "0.0.0.0" + addr
 	}
-	if ipv6Only && addr[0] == ':' {
+	if ipv6Only.Load() && addr[0] == ':' {
 		addr = "[::]" + addr
 	}
 	// Without -4 or -6, addr stays ":4376"
@@ -1253,58 +1275,58 @@ func TestServeListenAddrOverrideV4(t *testing.T) {
 	}
 
 	// With -4, addr becomes "0.0.0.0:4376"
-	ipv4Only = true
+	ipv4Only.Store(true)
 	addr = ":4376"
-	if ipv4Only && addr[0] == ':' {
+	if ipv4Only.Load() && addr[0] == ':' {
 		addr = "0.0.0.0" + addr
 	}
 	if addr != "0.0.0.0:4376" {
 		t.Fatalf("expected 0.0.0.0:4376, got %q", addr)
 	}
-	ipv4Only = false
+	ipv4Only.Store(false)
 }
 
 // TestServeListenAddrOverrideV6 verifies runServe overrides ":PORT" to
 // "[::]:PORT" when -6 is active.
 func TestServeListenAddrOverrideV6(t *testing.T) {
-	ipv6Only = true
+	ipv6Only.Store(true)
 	addr := ":4376"
-	if ipv4Only && addr[0] == ':' {
+	if ipv4Only.Load() && addr[0] == ':' {
 		addr = "0.0.0.0" + addr
 	}
-	if ipv6Only && addr[0] == ':' {
+	if ipv6Only.Load() && addr[0] == ':' {
 		addr = "[::]" + addr
 	}
 	if addr != "[::]:4376" {
 		t.Fatalf("expected [::]:4376, got %q", addr)
 	}
-	ipv6Only = false
+	ipv6Only.Store(false)
 }
 
 // TestServeListenAddrOverrideExplicitHost verifies the override does NOT fire
 // when an explicit host is provided, even with -4/-6 set.
 func TestServeListenAddrOverrideExplicitHost(t *testing.T) {
-	ipv4Only = true
+	ipv4Only.Store(true)
 	addr := "127.0.0.1:4376"
-	if ipv4Only && addr[0] == ':' {
+	if ipv4Only.Load() && addr[0] == ':' {
 		addr = "0.0.0.0" + addr
 	}
 	// Should NOT override because addr does not start with ':'
 	if addr != "127.0.0.1:4376" {
 		t.Fatalf("expected no override for explicit host, got %q", addr)
 	}
-	ipv4Only = false
+	ipv4Only.Store(false)
 
-	ipv6Only = true
+	ipv6Only.Store(true)
 	addr = "[::1]:4376"
-	if ipv6Only && addr[0] == ':' {
+	if ipv6Only.Load() && addr[0] == ':' {
 		addr = "[::]" + addr
 	}
 	// Should NOT override because addr starts with '[' not ':'
 	if addr != "[::1]:4376" {
 		t.Fatalf("expected no override for explicit IPv6 host, got %q", addr)
 	}
-	ipv6Only = false
+	ipv6Only.Store(false)
 }
 
 // TestRunServe_ExistingCert verifies the else-branch of the cert-generation block

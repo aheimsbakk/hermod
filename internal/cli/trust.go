@@ -68,9 +68,9 @@ func runTrust(serverArg, knownFingerprint string) error {
 
 	sigFamily := network.IPFamilyAny
 	switch {
-	case ipv4Only:
+	case ipv4Only.Load():
 		sigFamily = network.IPFamilyV4
-	case ipv6Only:
+	case ipv6Only.Load():
 		sigFamily = network.IPFamilyV6
 	}
 	fp, err := network.FetchServerFingerprint(ctx, serverURL, knownFingerprint, sigFamily)

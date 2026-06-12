@@ -4,6 +4,7 @@ package cli
 import (
 	"fmt"
 	"os"
+	"sync/atomic"
 
 	"github.com/spf13/cobra"
 )
@@ -16,12 +17,18 @@ var Version = appVersion
 // IP version enforcement flags. Set by -4/--ipv4 and -6/--ipv6 flags.
 // Both default to false, meaning both families are used with IPv6 preferred.
 // The flags are mutually exclusive.
-var ipv4Only bool
-var ipv6Only bool
+// Use atomic.Bool because ExecuteArgs can be called concurrently from multiple
+// goroutines in tests. Binding pflag.BoolVarP directly to an atomic.Bool is
+// not possible (it requires *bool), so newRootCmd binds to local variables and
+// copies the parsed values to these atomics in PersistentPreRunE.
+var ipv4Only atomic.Bool
+var ipv6Only atomic.Bool
 
 func newRootCmd() *cobra.Command {
 	var verboseStr string
 	var quiet bool
+	var localIPv4 bool
+	var localIPv6 bool
 
 	root := &cobra.Command{
 		Use:     "hermod",
@@ -39,8 +46,13 @@ All data is end-to-end encrypted and never passes through the signaling server.`
 			applyVerbosity(level)
 			quietMode = quiet
 
+			// Copy parsed values to atomics so that runTx, runRx, etc. can
+			// read them without racing with the next newRootCmd / BoolVarP call.
+			ipv4Only.Store(localIPv4)
+			ipv6Only.Store(localIPv6)
+
 			// Validate -4 and -6 are mutually exclusive.
-			if ipv4Only && ipv6Only {
+			if ipv4Only.Load() && ipv6Only.Load() {
 				return fmt.Errorf("flags -4/--ipv4 and -6/--ipv6 are mutually exclusive")
 			}
 			return nil
@@ -56,12 +68,12 @@ All data is end-to-end encrypted and never passes through the signaling server.`
 		`Suppress status output. Errors are always shown. Compatible with --verbose.`,
 	)
 	root.PersistentFlags().BoolVarP(
-		&ipv4Only, "ipv4", "4", false,
-		`Use IPv4 only for hole punching. Cannot be combined with -6.`,
+		&localIPv4, "ipv4", "4", false,
+		`Restrict to IPv4 only for listen address, signaling connection, and hole punching. Cannot be combined with -6.`,
 	)
 	root.PersistentFlags().BoolVarP(
-		&ipv6Only, "ipv6", "6", false,
-		`Use IPv6 only for hole punching. Cannot be combined with -4.`,
+		&localIPv6, "ipv6", "6", false,
+		`Restrict to IPv6 only for listen address, signaling connection, and hole punching. Cannot be combined with -4.`,
 	)
 
 	// Cobra auto-generates --version from cmd.Version. Add -V as short alias.

@@ -252,14 +252,22 @@ func TestDialSignalingAllocateJoinErrorBranch(t *testing.T) {
 	ctx := context.Background()
 
 	// Allocate channel
-	c1, _ := network.DialSignaling(ctx, serverURL, "")
+	c1, err := network.DialSignaling(ctx, serverURL, "")
+	if err != nil {
+		t.Fatalf("dial sender: %v", err)
+	}
 	defer c1.Close()
-	c1.Allocate(6666)
+	if _, _, err := c1.Allocate(6666); err != nil {
+		t.Fatalf("allocate: %v", err)
+	}
 
 	// Join as receiver
-	c2, _ := network.DialSignaling(ctx, serverURL, "")
+	c2, err := network.DialSignaling(ctx, serverURL, "")
+	if err != nil {
+		t.Fatalf("dial receiver: %v", err)
+	}
 	defer c2.Close()
-	_, _, err := c2.Join(6666)
+	_, _, err = c2.Join(6666)
 	if err != nil {
 		t.Fatalf("join: %v", err)
 	}

@@ -141,11 +141,11 @@ func cliTransfer(t *testing.T, serverURL, fingerprint string, txArgs []string, s
 	os.Stdout = stdoutW
 	os.Stderr = stdoutW
 	go func() {
-		allArgs := append([]string{"hermod", "tx", "--server", serverURL, "--words", "3"}, txArgs...)
-		txErrCh <- cli.ExecuteArgs(allArgs)
+		err := cli.ExecuteArgs(append([]string{"hermod", "tx", "--server", serverURL, "--words", "3"}, txArgs...))
 		stdoutW.Close()
 		os.Stdout = oldStdout
 		os.Stderr = oldStderr
+		txErrCh <- err
 	}()
 
 	// Wait for the transfer code (with timeout).

@@ -129,7 +129,7 @@ func VerifyStream(r io.Reader, w io.Writer, expected string) error {
 	}
 	got := fmt.Sprintf("%x", h.Sum(nil))
 	if got != expected {
-		return fmt.Errorf("SHA-256 mismatch: computed %s, expected %s", got, expected)
+		return fmt.Errorf("integrity check failed: computed data fingerprint (%s) does not match expected fingerprint (%s)", got, expected)
 	}
 	return nil
 }

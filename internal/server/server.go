@@ -66,8 +66,9 @@ type Server struct {
 	httpServer         *http.Server
 	logger             *slog.Logger
 
-	mu      sync.Mutex
-	waiters map[uint16][]*wsConn // pending peer connections
+	mu         sync.Mutex
+	waiters    map[uint16][]*wsConn // pending peer connections
+	udpReflect *udpReflector        // UDP reflection for CGNAT address discovery; nil if unavailable
 }
 
 type wsConn struct {
@@ -136,6 +137,21 @@ func (s *Server) Serve(ctx context.Context, ln net.Listener, tlsCfg *tls.Config)
 		IdleTimeout:       120 * time.Second,
 	}
 
+	// Start UDP reflection on the same port for CGNAT address discovery.
+	// This allows peers behind CGNAT to learn their external UDP address
+	// from the server. If the UDP bind fails (e.g. port unavailable), the
+	// reflector is nil and clients will fall back to the current behaviour.
+	s.udpReflect = startUDPReflector(ctx, ln.Addr().String())
+	defer func() {
+		if s.udpReflect != nil {
+			s.udpReflect.Close()
+		}
+	}()
+
+	if s.udpReflect != nil {
+		s.logger.Info("UDP reflection enabled for CGNAT address discovery", "addr", ln.Addr().String())
+	}
+
 	s.logger.Info("Signaling server ready", "addr", ln.Addr().String())
 
 	// Start background goroutine to evict stale rate-limit buckets.
@@ -188,14 +204,6 @@ func (s *Server) Serve(ctx context.Context, ln net.Listener, tlsCfg *tls.Config)
 		}
 		return err
 	}
-}
-
-// Addr returns the listening address. Must be called after the server is started.
-func (s *Server) Addr() string {
-	if s.httpServer != nil {
-		return s.httpServer.Addr
-	}
-	return ""
 }
 
 // handleCert serves the server's TLS certificate as PEM for client pinning.
@@ -446,7 +454,7 @@ func (s *Server) relay(conn *websocket.Conn, channelID uint16, isSender bool) {
 	for {
 		var msg Message
 		if err := conn.ReadJSON(&msg); err != nil {
-			s.logger.Debug("Peer disconnected from relay", "channel_id", channelID, "role", role, "err", err)
+			s.logger.Debug("Relay connection closed", "channel_id", channelID, "role", role, "reason", "remote side closed the connection")
 			return
 		}
 
@@ -610,6 +618,6 @@ func publicIPResponse(host string) map[string]string {
 
 func writeError(conn *websocket.Conn, msg string) {
 	if err := conn.WriteJSON(Message{Type: MsgError, Error: msg}); err != nil {
-		slog.Debug("Failed to write error to client", "err", err)
+		slog.Debug("Could not send error response to WebSocket client — client may have disconnected", "err", err)
 	}
 }

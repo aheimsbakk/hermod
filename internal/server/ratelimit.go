@@ -92,7 +92,7 @@ func (r *RateLimiter) rotateSaltIfNeeded(now time.Time) {
 		if _, err := rand.Read(newSalt); err != nil {
 			// Log the failure. The existing salt continues to be used;
 			// rotation is retried on the next Allow call.
-			slog.Warn("Rate limiter key rotation failed — keeping existing key", "err", err)
+			slog.Warn("Rate limiter HMAC salt rotation failed — reusing previous salt; will retry on next request", "err", err)
 			return
 		}
 		r.salt = newSalt

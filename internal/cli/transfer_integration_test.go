@@ -26,7 +26,7 @@ import (
 // The server is shut down via t.Cleanup.
 func startLocalServer(t *testing.T) (serverURL, fingerprint string) {
 	t.Helper()
-	t.Cleanup(func() { ipv4Only = false; ipv6Only = false; quietMode = false })
+	t.Cleanup(func() { ipv4Only.Store(false); ipv6Only.Store(false); quietMode = false })
 	cfg := config.Default()
 	if err := config.GenerateServerCert(cfg); err != nil {
 		t.Fatalf("gen cert: %v", err)
@@ -140,11 +140,11 @@ func cliTransferInternal(t *testing.T, serverURL, fingerprint string, txArgs []s
 	os.Stdout = stdoutW
 	os.Stderr = stdoutW
 	go func() {
-		allArgs := append([]string{"hermod", "tx", "--server", serverURL, "--words", "3"}, txArgs...)
-		txErrCh <- ExecuteArgs(allArgs)
+		err := ExecuteArgs(append([]string{"hermod", "tx", "--server", serverURL, "--words", "3"}, txArgs...))
 		stdoutW.Close()
 		os.Stdout = oldStdout
 		os.Stderr = oldStderr
+		txErrCh <- err
 	}()
 
 	var code string
@@ -225,9 +225,9 @@ func TestTransfer_Stdin_Internal(t *testing.T) {
 // TestTransfer_IPv4Flag_Internal verifies file transfer works with -4 flag.
 func TestTransfer_IPv4Flag_Internal(t *testing.T) {
 	// Reset ipv4Only before and after to avoid leaking state into other tests.
-	ipv4Only = false
-	ipv6Only = false
-	defer func() { ipv4Only = false; ipv6Only = false }()
+	ipv4Only.Store(false)
+	ipv6Only.Store(false)
+	defer func() { ipv4Only.Store(false); ipv6Only.Store(false) }()
 
 	serverURL, fp := startLocalServer(t)
 	trustServerInTempHome(t, serverURL, fp)
@@ -267,11 +267,11 @@ func TestTransfer_IPv4Flag_Internal(t *testing.T) {
 	os.Stdout = stdoutW
 	os.Stderr = stdoutW
 	go func() {
-		allArgs := []string{"hermod", "-4", "tx", "--server", serverURL, "--words", "3", srcPath}
-		txErrCh <- ExecuteArgs(allArgs)
+		err := ExecuteArgs([]string{"hermod", "-4", "tx", "--server", serverURL, "--words", "3", srcPath})
 		stdoutW.Close()
 		os.Stdout = oldStdout
 		os.Stderr = oldStderr
+		txErrCh <- err
 	}()
 
 	var code string
@@ -365,11 +365,11 @@ func TestTransfer_SASVerify_Internal(t *testing.T) {
 	os.Stdout = stdoutW
 	os.Stderr = stdoutW
 	go func() {
-		allArgs := []string{"hermod", "tx", "--server", serverURL, "--words", "3", "--verify", want}
-		txErrCh <- ExecuteArgs(allArgs)
+		err := ExecuteArgs([]string{"hermod", "tx", "--server", serverURL, "--words", "3", "--verify", want})
 		stdoutW.Close()
 		os.Stdout = oldStdout
 		os.Stderr = oldStderr
+		txErrCh <- err
 	}()
 
 	var code string

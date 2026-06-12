@@ -33,8 +33,7 @@ var (
 	// c1 = (p - 3) / 4, used for sqrt in p ≡ 3 (mod 4).
 	p256C1 = new(big.Int).Rsh(new(big.Int).Sub(p256P, big.NewInt(3)), 2)
 
-	// p256Two = 2, used for sgn0.
-	p256Two = big.NewInt(2)
+	// (p256Two reserved for sgn0 if needed in future)
 )
 
 // hashToCurveP256 hashes msg to a P-256 point using the

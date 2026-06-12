@@ -21,12 +21,7 @@ const (
 	IPFamilyV6
 )
 
-// CPaceMsg carries one side's CPace public message.
-type CPaceMsg struct {
-	PubMsg []byte `json:"pub_msg"` // 65-byte uncompressed P-256 point
-}
-
-// EndpointBundle is encrypted with K_classical and exchanged over the relay.
+// EndpointBundle is encrypted with HybridBlobKey and exchanged over the relay.
 type EndpointBundle struct {
 	LocalEndpointsV4 []string `json:"local_endpoints_v4,omitempty"` // IPv4 host:port candidates
 	LocalEndpointsV6 []string `json:"local_endpoints_v6,omitempty"` // IPv6 host:port candidates
@@ -35,18 +30,6 @@ type EndpointBundle struct {
 
 	CertFingerprint string `json:"cert_fingerprint"` // SHA-256 hex of ephemeral TLS cert
 	RequireVerify   bool   `json:"require_verify"`   // true if this side requires SAS verification
-}
-
-// EncodeCPaceMsg serializes a CPaceMsg to JSON.
-func EncodeCPaceMsg(msg CPaceMsg) ([]byte, error) {
-	return json.Marshal(msg)
-}
-
-// DecodeCPaceMsg deserializes a CPaceMsg from JSON.
-func DecodeCPaceMsg(data []byte) (CPaceMsg, error) {
-	var m CPaceMsg
-	err := json.Unmarshal(data, &m)
-	return m, err
 }
 
 // EncodeEndpointBundle serializes an EndpointBundle to JSON.

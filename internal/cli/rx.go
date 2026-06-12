@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/mattn/go-isatty"
 	"github.com/spf13/cobra"
@@ -98,9 +99,9 @@ func runRx(code, destination, serverURL string, verify bool, listenUDP string, s
 	// Connect to signaling server
 	sigFamily := network.IPFamilyAny
 	switch {
-	case ipv4Only:
+	case ipv4Only.Load():
 		sigFamily = network.IPFamilyV4
-	case ipv6Only:
+	case ipv6Only.Load():
 		sigFamily = network.IPFamilyV6
 	}
 	logInfo("Connecting to signaling server", "server", serverURL)
@@ -123,9 +124,9 @@ func runRx(code, destination, serverURL string, verify bool, listenUDP string, s
 	// Bind UDP socket
 	// Override the listen address to enforce strict IP family when -4/-6 is set.
 	bindAddr := listenUDP
-	if ipv4Only && listenUDP == ":0" {
+	if ipv4Only.Load() && listenUDP == ":0" {
 		bindAddr = "0.0.0.0:0"
-	} else if ipv6Only && listenUDP == ":0" {
+	} else if ipv6Only.Load() && listenUDP == ":0" {
 		bindAddr = "[::]:0"
 	}
 	logDebug("binding UDP socket", "addr", bindAddr)
@@ -133,6 +134,19 @@ func runRx(code, destination, serverURL string, verify bool, listenUDP string, s
 	if err != nil {
 		return fmt.Errorf("bind UDP socket: %w", err)
 	}
+
+	// Discover external UDP address via the signaling server's reflection
+	// endpoint BEFORE wrapping the conn in the mux. The mux's readLoop
+	// would consume the reflection response, so we must do this on the
+	// raw conn.
+	var discoveredAddr *net.UDPAddr
+	if discovered, err := discoverExternalAddr(ctx, serverURL, udpConn, 2*time.Second); err != nil {
+		logDebug("external UDP address discovery failed — using server-reported IP", "err", err)
+	} else {
+		discoveredAddr = discovered
+		logDebug("external UDP address discovered", "addr", discoveredAddr.String())
+	}
+
 	mux := network.NewPacketMux(udpConn)
 	defer mux.Close()
 
@@ -246,23 +260,33 @@ func runRx(code, destination, serverURL string, verify bool, listenUDP string, s
 	// Send our bundle (dual-stack)
 	ipFamily := network.IPFamilyAny
 	switch {
-	case ipv4Only:
+	case ipv4Only.Load():
 		ipFamily = network.IPFamilyV4
-	case ipv6Only:
+	case ipv6Only.Load():
 		ipFamily = network.IPFamilyV6
 	}
 	localV4, localV6, err := network.LocalEndpoints(localAddr.Port, ipFamily)
 	if err != nil {
 		localV4, localV6 = nil, nil
-		logWarn("could not enumerate local network interfaces — using public endpoint only", "err", err)
+		logWarn("Could not enumerate local network interfaces — using public endpoint only", "err", err)
 	}
-	portStr := fmt.Sprintf("%d", localAddr.Port)
 	var publicEPV4, publicEPV6 string
-	if publicIPV4 != "" && ipFamily != network.IPFamilyV6 {
-		publicEPV4 = net.JoinHostPort(publicIPV4, portStr)
-	}
-	if publicIPV6 != "" && ipFamily != network.IPFamilyV4 {
-		publicEPV6 = net.JoinHostPort(publicIPV6, portStr)
+	if discoveredAddr != nil {
+		// Use the discovered external UDP address (CGNAT-aware).
+		if discoveredAddr.IP.To4() != nil && ipFamily != network.IPFamilyV6 {
+			publicEPV4 = discoveredAddr.String()
+		} else if ipFamily != network.IPFamilyV4 {
+			publicEPV6 = discoveredAddr.String()
+		}
+	} else {
+		// Fall back to server-reported IP + local port.
+		portStr := fmt.Sprintf("%d", localAddr.Port)
+		if publicIPV4 != "" && ipFamily != network.IPFamilyV6 {
+			publicEPV4 = net.JoinHostPort(publicIPV4, portStr)
+		}
+		if publicIPV6 != "" && ipFamily != network.IPFamilyV4 {
+			publicEPV6 = net.JoinHostPort(publicIPV6, portStr)
+		}
 	}
 	logDebug("local endpoints collected", "local_v4", localV4, "local_v6", localV6, "public_v4", publicEPV4, "public_v6", publicEPV6)
 
@@ -320,19 +344,25 @@ func runRx(code, destination, serverURL string, verify bool, listenUDP string, s
 	}
 	logInfo("UDP hole punch succeeded", "peer_addr", punchResult.PeerAddr.String())
 
-	// Bidirectional QUIC initiation — both sides race dial and accept so the
-	// connection succeeds even if only one direction traverses the NAT.
-	logDebug("establishing QUIC connection to peer (bidirectional race)", "peer_addr", punchResult.PeerAddr.String())
+	// QUIC listen (receiver = QUIC server)
+	logDebug("starting QUIC listener for incoming sender connection")
 	tlsCert := buildTLSCert(epCertDER, epKey, epCert)
 	baseTLS := config.BuildTLSConfig(cfg)
-	quicConn, err := network.RaceQUIC(ctx, mux, punchResult.PeerAddr, baseTLS, tlsCert, senderBundle.CertFingerprint)
+	ln, err := network.ListenQUIC(mux, tlsCert, baseTLS, senderBundle.CertFingerprint)
 	if err != nil {
-		return fmt.Errorf("QUIC connection: %w", err)
+		return fmt.Errorf("QUIC listen: %w", err)
+	}
+	defer ln.Close()
+
+	logDebug("waiting for sender to establish QUIC connection")
+	quicConn, err := ln.Accept(ctx)
+	if err != nil {
+		return fmt.Errorf("QUIC accept: %w", err)
 	}
 	defer quicConn.CloseWithError(0, "done")
 	// Stop probing — QUIC keepalive will maintain the NAT mapping from now on.
 	probeCancel()
-	logInfo("QUIC connection established", "peer_addr", punchResult.PeerAddr.String())
+	logInfo("QUIC connection accepted from sender")
 
 	// Watch for Ctrl+C: close the connection so the sender is notified immediately.
 	go func() {
@@ -405,7 +435,7 @@ func runRx(code, destination, serverURL string, verify bool, listenUDP string, s
 	// Verify received byte count against metadata when size is known.
 	if meta.Size >= 0 && bytesReceived != meta.Size {
 		removeSavedFile()
-		logError("Received byte count mismatch",
+		logError("Downloaded byte count does not match expected — data may be incomplete or corrupted; retry the transfer",
 			"expected", meta.Size, "received", bytesReceived)
 		return fmt.Errorf("integrity check failed: expected %d bytes, received %d",
 			meta.Size, bytesReceived)
@@ -431,9 +461,9 @@ func runRx(code, destination, serverURL string, verify bool, listenUDP string, s
 	logDebug("trailing hash received", "sha256", senderHash)
 	if senderHash != computedHash {
 		removeSavedFile()
-		logError("Integrity check failed — sender hash does not match received data",
+		logError("Integrity check failed — sender's data fingerprint does not match the received data",
 			"sender_sha256", senderHash, "computed_sha256", computedHash)
-		fmt.Fprintf(os.Stderr, "Verification failed: received data does not match sender hash.\n")
+		fmt.Fprintf(os.Stderr, "Verification failed: the received data does not match what the sender transmitted. The transfer may have been corrupted — please retry.\n")
 		return fmt.Errorf("integrity check failed: received data hash (%s) does not match sender hash (%s)",
 			senderHash, computedHash)
 	}
@@ -460,7 +490,7 @@ func runRx(code, destination, serverURL string, verify bool, listenUDP string, s
 	}
 
 	logInfo("Transfer complete", "kind", meta.Kind, "size_bytes", meta.Size, "bytes_received", bytesReceived)
-	printStatus("Receive and verification complete.")
+	printStatus("Transfer complete.")
 	return nil
 }
 

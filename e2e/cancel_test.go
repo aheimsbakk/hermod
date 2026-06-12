@@ -64,11 +64,11 @@ func TestRxCancelCleansUpTempFile(t *testing.T) {
 	os.Stdout = stdoutW
 	os.Stderr = stdoutW
 	go func() {
-		args := []string{"hermod", "tx", "--server", serverURL, "--words", "3", srcPath}
-		txErrCh <- cli.ExecuteArgs(args)
+		err := cli.ExecuteArgs([]string{"hermod", "tx", "--server", serverURL, "--words", "3", srcPath})
 		stdoutW.Close()
 		os.Stdout = oldStdout
 		os.Stderr = oldStderr
+		txErrCh <- err
 	}()
 
 	// Wait for transfer code.

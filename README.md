@@ -56,8 +56,8 @@ These flags apply to every command.
 |---|---|---|---|
 | `--verbose` | | `none` | Log verbosity: `none`, `error`, `warning`, `info`, `debug` |
 | `--quiet` | `-q` | off | Suppress status output. Errors are always shown. |
-| `--ipv4` | `-4` | off | Use IPv4 only for all network operations (listen, signaling, hole punching). Cannot be combined with `--ipv6`. |
-| `--ipv6` | `-6` | off | Use IPv6 only for all network operations (listen, signaling, hole punching). Cannot be combined with `--ipv4`. |
+| `--ipv4` | `-4` | off | Restrict to IPv4 only for listen address, signaling connection, and hole punching. Cannot be combined with `--ipv6`. |
+| `--ipv6` | `-6` | off | Restrict to IPv6 only for listen address, signaling connection, and hole punching. Cannot be combined with `--ipv4`. |
 | `--version` | `-V` | | Print the version and exit. |
 
 ### tx — send
@@ -127,7 +127,7 @@ hermod serve [flags]
 
 | Flag | Short | Default | Description |
 |---|---|---|---|
-| `--listen` | `-l` | `:4376` | Bind address (default is dual-stack — both IPv4 and IPv6) |
+| `--listen` | `-l` | `:4376` | Bind address for TCP (TLS/WebSocket) and UDP (NAT reflection). Both protocols use the same port number. |
 | `--ttl` | `-T` | `600` | Channel TTL in seconds |
 | `--rate-limit` | | `5` | Requests per second per IP prefix (applies to both the WebSocket `/ws` and the `/cert` endpoint) |
 | `--rate-burst` | | `15` | Burst capacity per IP prefix (applies to both the WebSocket `/ws` and the `/cert` endpoint) |
@@ -139,6 +139,35 @@ Global flags `--verbose`, `--quiet`, `--ipv4`, and `--ipv6` also apply.
 The server generates a self-signed TLS certificate on first run and saves it to the config directory (`~/.config/hermod/` on Linux).
 
 You can also set the bind address via the `HERMOD_LISTEN` environment variable.
+
+**Firewall:** The server listens on both TCP and UDP on the same port.
+TCP carries the TLS/WebSocket signaling; UDP carries the NAT reflection
+endpoint for CGNAT address discovery. Open both protocols in your
+firewall: for the default port 4376, allow `tcp/4376` and `udp/4376`.
+If the UDP port is blocked, peers behind CGNAT will fall back to
+WebSocket-based address detection, which reduces hole-punch success
+rates but does not prevent transfers on symmetric NATs.
+
+**IPv4/IPv6 notes for `serve`:**
+
+- **`-4` (IPv4-only):** The server listens on `0.0.0.0:PORT` and accepts
+  only IPv4 connections for both TCP and UDP. This provides true IPv4
+  isolation.
+- **`-6` (IPv6-only):** The server listens on `[::]:PORT`. On most Linux
+  systems, the kernel default (`net.ipv6.bindv6only=0`) means this socket
+  **still accepts IPv4 connections** via IPv4-mapped IPv6 addresses. To
+  achieve true IPv6-only isolation, configure `net.ipv6.bindv6only=1` on
+  your system or use a firewall rule. Only `-4` provides single-family
+  isolation without additional system configuration.
+- **Explicit `--listen` + `-4`/`-6`:** If you provide an explicit listen
+  address (e.g. `--listen 0.0.0.0:4376` or `--listen [::]:4376`)
+  or set `HERMOD_LISTEN` to a specific address, the `-4`/`-6` flags
+  have **no effect** on the listen address — they are silently ignored.
+  The override only applies when the address is in bare `:PORT` format.
+- The flag descriptions in help text refer to all subcommands. For `serve`,
+  these flags affect the listen address rather than hole punching.
+  The client-side behavior (`tx`/`rx`) also respects the same flags for
+  signaling connection and hole punching.
 
 ### trust — pin a server certificate
 
@@ -200,7 +229,7 @@ No environment variables are required for normal use. Supported env vars:
 | Variable | Commands | Description |
 |---|---|---|
 | `HERMOD_SERVER` | `tx`, `rx` | Default signaling server URL |
-| `HERMOD_LISTEN` | `tx`, `rx`, `serve` | Default UDP / TCP bind address |
+| `HERMOD_LISTEN` | `tx`, `rx`, `serve` | Default bind address. For `serve`: both TCP and UDP on this port. For `tx`/`rx`: UDP only. |
 | `HERMOD_DEST_DIR` | `rx` | Default output directory |
 
 ## How it works
@@ -208,11 +237,12 @@ No environment variables are required for normal use. Supported env vars:
 1. The sender connects to the signaling server and allocates a channel, receiving a numeric channel ID.
 2. The transfer code encodes the channel ID plus a random word passphrase.
 3. The receiver connects to the signaling server using the code and joins the channel.
-4. Both peers run a CPace PAKE handshake over the signaling channel to establish a shared key, authenticated by the passphrase.
-5. Both peers exchange X25519 public keys and ML-KEM-768 (post-quantum) keys, deriving a hybrid key from CPace + X25519 + ML-KEM-768. UDP endpoints are encrypted with this hybrid key and exchanged through the signaling relay. Even if the CPace key is broken by a quantum computer, the ML-KEM component protects the endpoint data.
-6. Both peers punch through NAT using a two-phase holepunch: IPv6 first (5 s), then IPv4 (10 s). Use `-4` or `-6` to enforce a single protocol.
-7. A QUIC connection is established directly between the peers, with the server certificate pinned to each side's ephemeral cert.
-8. File metadata and payload stream over QUIC. The receiver verifies the SHA-256 hash on arrival.
+4. Both peers discover their external UDP address via the signaling server's built-in UDP reflection port. This is critical behind **CGNAT (Carrier-Grade NAT)** where the UDP port differs from the TCP port used for the WebSocket. The discovered address replaces the WebSocket IP + local port in the encrypted endpoint bundle. A two-phase HMAC cookie handshake prevents UDP amplification attacks.
+5. Both peers run a CPace PAKE handshake over the signaling channel to establish a shared key, authenticated by the passphrase.
+6. Both peers exchange X25519 public keys and ML-KEM-768 (post-quantum) keys, deriving a hybrid key from CPace + X25519 + ML-KEM-768. UDP endpoints are encrypted with this hybrid key and exchanged through the signaling relay. Even if the CPace key is broken by a quantum computer, the ML-KEM component protects the endpoint data.
+7. Both peers punch through NAT using a two-phase holepunch: IPv6 first (5 s), then IPv4 (10 s). Use `-4` or `-6` to enforce a single protocol.
+8. A QUIC connection is established directly between the peers — the sender dials, the receiver listens. Each side pins the other's ephemeral certificate fingerprint (mutual TLS).
+9. File metadata and payload stream over QUIC. The receiver verifies the SHA-256 hash on arrival.
 
 See [docs/protocol.md](docs/protocol.md) for the full protocol specification.
 

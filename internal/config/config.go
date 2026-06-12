@@ -228,9 +228,9 @@ var certExpiryThresholds = []struct {
 	level string
 	msg   string
 }{
-	{7, "CRITICAL", "Server certificate expires in %d day(s) — renew immediately to avoid outages"},
-	{30, "ERROR", "Server certificate expires in %d day(s) — schedule renewal soon"},
-	{90, "WARN", "Server certificate expires in %d day(s) — consider renewing"},
+	{7, "CRITICAL", "Server certificate expires in %d days — renew immediately to avoid outages"},
+	{30, "ERROR", "Server certificate expires in %d days — schedule renewal soon"},
+	{90, "WARN", "Server certificate expires in %d days — consider renewing"},
 }
 
 // LogCertExpiry logs a warning (or critical) message if the server certificate

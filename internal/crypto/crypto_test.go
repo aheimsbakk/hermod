@@ -237,27 +237,45 @@ func TestCPaceExchange(t *testing.T) {
 func TestCPaceWrongPassword(t *testing.T) {
 	var channelID uint16 = 42
 
-	senderSession, _, err := crypto.CPaceInit("correct-horse", channelID, "sender")
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, wrongPub, err := crypto.CPaceInit("wrong-battery", channelID, "receiver")
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, receiverWrong, err := crypto.CPaceInit("correct-horse", channelID, "receiver")
+	// Sender uses the correct password.
+	correctSender, correctSenderPub, err := crypto.CPaceInit("correct-horse", channelID, "sender")
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	senderK, err := senderSession.CPaceFinish(wrongPub)
+	// Receiver with a wrong password — produces a different generator point.
+	_, wrongPub, err := crypto.CPaceInit("wrong-battery", channelID, "receiver")
 	if err != nil {
 		t.Fatal(err)
 	}
-	_ = receiverWrong
-	_ = senderK
-	// Note: ECDH will succeed but produce a different key — this is the correct behavior
-	// since the generator points differ; the attacker cannot derive the same K
+
+	// Receiver with the correct password — normal path.
+	correctReceiver, _, err := crypto.CPaceInit("correct-horse", channelID, "receiver")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Correct-horse sender finishes with wrong-battery receiver's pub → wrong key.
+	wrongK, err := correctSender.CPaceFinish(wrongPub)
+	if err != nil {
+		t.Fatalf("CPaceFinish with wrong password should still succeed: %v", err)
+	}
+
+	// Correct-horse receiver finishes with correct-horse sender's pub → correct key.
+	referenceK, err := correctReceiver.CPaceFinish(correctSenderPub)
+	if err != nil {
+		t.Fatalf("CPaceFinish with correct password: %v", err)
+	}
+
+	if len(wrongK) == 0 {
+		t.Fatal("wrong-password key should not be empty")
+	}
+	if len(referenceK) == 0 {
+		t.Fatal("reference key should not be empty")
+	}
+	if string(wrongK) == string(referenceK) {
+		t.Fatal("wrong password must produce a different key than the correct password")
+	}
 }
 
 func TestCPaceFinishInvalidPubMsg(t *testing.T) {

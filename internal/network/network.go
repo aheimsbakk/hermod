@@ -3,7 +3,6 @@ package network
 
 import (
 	"context"
-	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
 	"crypto/tls"
@@ -138,6 +137,41 @@ func (c *muxedConn) Close() error { return nil } // managed by mux
 func (c *muxedConn) LocalAddr() net.Addr {
 	return c.mux.conn.LocalAddr()
 }
+
+// quic-go checks for these interfaces to increase UDP socket buffers.
+// Without them it logs a harmless warning and uses the OS default size.
+// We delegate to the underlying socket; if the underlying conn does not
+// support them (e.g. in tests), this is a no-op.
+type udpSetReadBuffer interface {
+	SetReadBuffer(int) error
+}
+type udpSetSendBuffer interface {
+	SetSendBuffer(int) error
+}
+type udpSetWriteBuffer interface {
+	SetWriteBuffer(int) error
+}
+
+func (c *muxedConn) SetReadBuffer(n int) error {
+	if sb, ok := c.mux.conn.(udpSetReadBuffer); ok {
+		return sb.SetReadBuffer(n)
+	}
+	return nil
+}
+
+func (c *muxedConn) SetSendBuffer(n int) error {
+	if sb, ok := c.mux.conn.(udpSetSendBuffer); ok {
+		return sb.SetSendBuffer(n)
+	}
+	return nil
+}
+
+func (c *muxedConn) SetWriteBuffer(n int) error {
+	if sb, ok := c.mux.conn.(udpSetWriteBuffer); ok {
+		return sb.SetWriteBuffer(n)
+	}
+	return nil
+}
 func (c *muxedConn) SetDeadline(t time.Time) error {
 	c.mu.Lock()
 	c.readDeadline = t
@@ -160,6 +194,11 @@ func (c *muxedConn) SetWriteDeadline(t time.Time) error {
 
 // BindUDP binds a UDP socket on the given address (":0" for OS-assigned port).
 // SO_REUSEADDR/SO_REUSEPORT are set via udpControl (platform-specific file).
+// The receive buffer is increased to 2 MiB so that quic-go does not log a
+// warning about the default OS buffer size. If the type assertion to
+// *net.UDPConn fails (very unlikely with stdlib sockets), the buffer stays
+// at the OS default — the connection still works, just potentially slower
+// on high-bandwidth links.
 func BindUDP(addr string) (net.PacketConn, error) {
 	lc := &net.ListenConfig{
 		Control: udpControl,
@@ -167,6 +206,12 @@ func BindUDP(addr string) (net.PacketConn, error) {
 	conn, err := lc.ListenPacket(context.Background(), "udp", addr)
 	if err != nil {
 		return nil, fmt.Errorf("bind UDP socket on %s: %w", addr, err)
+	}
+	if udpConn, ok := conn.(*net.UDPConn); ok {
+		// Ignore errors — the OS may enforce a system-wide maximum that is
+		// lower than 2 MiB (e.g. `net.core.rmem_max` sysctl on Linux).
+		_ = udpConn.SetReadBuffer(2 << 20)  // 2 MiB
+		_ = udpConn.SetWriteBuffer(2 << 20) // 2 MiB
 	}
 	return conn, nil
 }
@@ -251,25 +296,29 @@ func HolePunch(ctx context.Context, probeCtx context.Context, mux *packetMux, ca
 	}
 }
 
-// RaceQUIC races dial and accept on the same muxed connection, returning whichever
-// QUIC handshake succeeds first. This enables bidirectional QUIC initiation so the
-// connection succeeds even when only one direction traverses the NAT.
-//
-// The accept goroutine starts immediately (no delay). The dial goroutine adds a
-// random jitter (0-100ms) before starting, so on low-latency links (loopback)
-// one side's dial arrives before the other's, preventing two separate QUIC
-// connections from being established simultaneously.
-//
-// TLS config is set up internally:
-//   - Certificates from the cert parameter
-//   - ClientAuth = tls.RequireAnyClientCert (mutual TLS)
-//   - InsecureSkipVerify = true (peer pinned via VerifyPeerCertificate)
-//   - VerifyPeerCertificate pins peerCertHash
-//   - NextProtos = []string{"hermod-p2p"}
-//
-// QUIC config: MaxIdleTimeout 30s, KeepAlivePeriod 5s.
-// The losing goroutine is cancelled via context when the winner returns.
-func RaceQUIC(ctx context.Context, mux *packetMux, peerAddr *net.UDPAddr, baseTLS *tls.Config, cert tls.Certificate, peerCertHash string) (*quic.Conn, error) {
+// DialQUIC establishes a QUIC connection to peerAddr using the muxed conn.
+// peerCertHash is the expected SHA-256 fingerprint (hex) of the peer's TLS certificate.
+func DialQUIC(ctx context.Context, mux *packetMux, peerAddr *net.UDPAddr, baseTLS *tls.Config, peerCertHash string) (*quic.Conn, error) {
+	tlsCfg := baseTLS.Clone()
+	tlsCfg.InsecureSkipVerify = true
+	tlsCfg.VerifyPeerCertificate = makeCertPinner(peerCertHash)
+	tlsCfg.NextProtos = []string{"hermod-p2p"}
+
+	transport := &quic.Transport{
+		Conn: &muxedConn{mux: mux},
+	}
+	conn, err := transport.Dial(ctx, peerAddr, tlsCfg, &quic.Config{
+		MaxIdleTimeout:  30 * time.Second,
+		KeepAlivePeriod: 5 * time.Second,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("QUIC dial: %w", err)
+	}
+	return conn, nil
+}
+
+// ListenQUIC starts a QUIC listener on the muxed conn.
+func ListenQUIC(mux *packetMux, cert tls.Certificate, baseTLS *tls.Config, peerCertHash string) (*quic.Listener, error) {
 	tlsCfg := baseTLS.Clone()
 	tlsCfg.Certificates = []tls.Certificate{cert}
 	tlsCfg.ClientAuth = tls.RequireAnyClientCert
@@ -277,65 +326,17 @@ func RaceQUIC(ctx context.Context, mux *packetMux, peerAddr *net.UDPAddr, baseTL
 	tlsCfg.VerifyPeerCertificate = makeCertPinner(peerCertHash)
 	tlsCfg.NextProtos = []string{"hermod-p2p"}
 
-	quicCfg := &quic.Config{
-		MaxIdleTimeout:  30 * time.Second,
-		KeepAlivePeriod: 5 * time.Second,
-	}
-
 	transport := &quic.Transport{
 		Conn: &muxedConn{mux: mux},
 	}
-
-	ln, err := transport.Listen(tlsCfg, quicCfg)
+	ln, err := transport.Listen(tlsCfg, &quic.Config{
+		MaxIdleTimeout:  30 * time.Second,
+		KeepAlivePeriod: 5 * time.Second,
+	})
 	if err != nil {
-		return nil, fmt.Errorf("QUIC race listen: %w", err)
+		return nil, fmt.Errorf("QUIC listen: %w", err)
 	}
-
-	// Sub-context so we can cancel the losing goroutine.
-	raceCtx, raceCancel := context.WithCancel(ctx)
-	defer raceCancel()
-
-	type quicResult struct {
-		conn *quic.Conn
-		err  error
-	}
-	resultCh := make(chan quicResult, 2)
-
-	// Accept goroutine — starts immediately so the listener is always ready.
-	go func() {
-		conn, err := ln.Accept(raceCtx)
-		resultCh <- quicResult{conn: conn, err: err}
-	}()
-
-	// Dial goroutine — adds random jitter (0-100ms) to break symmetry on
-	// low-latency links, preventing simultaneous dial collisions that would
-	// create two separate QUIC connections.
-	go func() {
-		// crypto/rand jitter — negligible delay in real NAT scenarios.
-		jitterBuf := make([]byte, 1)
-		rand.Read(jitterBuf) //nolint:errcheck
-		jitter := time.Duration(jitterBuf[0]) * time.Millisecond
-
-		select {
-		case <-raceCtx.Done():
-			resultCh <- quicResult{err: raceCtx.Err()}
-			return
-		case <-time.After(jitter):
-		}
-
-		conn, err := transport.Dial(raceCtx, peerAddr, tlsCfg, quicCfg)
-		resultCh <- quicResult{conn: conn, err: err}
-	}()
-
-	// Wait for whichever succeeds first.
-	result := <-resultCh
-	raceCancel() // cancel the loser
-	ln.Close()
-
-	if result.err != nil {
-		return nil, fmt.Errorf("QUIC race: %w", result.err)
-	}
-	return result.conn, nil
+	return ln, nil
 }
 
 // HolePunchDual performs two-phase NAT hole punching: IPv6 first (preferred),

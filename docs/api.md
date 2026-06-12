@@ -182,12 +182,24 @@ func LocalUDPAddr(conn net.PacketConn) (*net.UDPAddr, error)
 ```
 Returns the local address of a bound UDP connection.
 
+### External address discovery (CGNAT)
+
+```go
+func ServerUDPAddr(serverURL string) (string, error)
+```
+Extracts the UDP `host:port` from a `wss://` server URL, used for the server's UDP reflection endpoint.
+
+```go
+func DiscoverViaReflector(conn net.PacketConn, serverAddr string, timeout time.Duration) (*net.UDPAddr, error)
+```
+Discovers the external UDP address using the signaling server's UDP reflection port. Uses a two-phase HMAC cookie handshake to prevent amplification attacks. Called by `tx` and `rx` before the packet mux is created. If discovery fails (no UDP route, timeout), the caller falls back to the server-reported WebSocket IP + local port.
+
 ### Packet mux
 
 ```go
 func NewPacketMux(conn net.PacketConn) *packetMux
 ```
-Wraps a UDP socket and demultiplexes incoming packets into two channels: one for probe packets (first byte `0x01`) and one for QUIC packets (everything else). The returned `*packetMux` is passed to `HolePunch` and `RaceQUIC`.
+Wraps a UDP socket and demultiplexes incoming packets into two channels: one for probe packets (first byte `0x01`) and one for QUIC packets (everything else). The returned `*packetMux` is passed to `HolePunch`, `DialQUIC`, and `ListenQUIC`.
 
 ```go
 func (m *packetMux) Close()
@@ -237,9 +249,14 @@ Classifies a bare IP string into a `"host:port"` string for the correct address 
 ### QUIC
 
 ```go
-func RaceQUIC(ctx context.Context, mux *packetMux, peerAddr *net.UDPAddr, baseTLS *tls.Config, cert tls.Certificate, peerCertHash string) (*quic.Conn, error)
+func DialQUIC(ctx context.Context, mux *packetMux, peerAddr *net.UDPAddr, baseTLS *tls.Config, peerCertHash string) (*quic.Conn, error)
 ```
-Races a QUIC dial and accept on the same muxed UDP socket. Returns the first connection that completes the handshake. Sets up mutual TLS (`RequireAnyClientCert`), pins the peer certificate to `peerCertHash`, and uses ALPN `hermod-p2p`. The losing goroutine is cancelled via context. This is the only QUIC connection function — both `tx` and `rx` use it.
+Establishes a QUIC connection to `peerAddr`. Pins the peer certificate to `peerCertHash`, uses ALPN `hermod-p2p`. The caller must set `baseTLS.Certificates` before calling. Used by `tx` (sender = QUIC client).
+
+```go
+func ListenQUIC(mux *packetMux, cert tls.Certificate, baseTLS *tls.Config, peerCertHash string) (*quic.Listener, error)
+```
+Starts a QUIC listener on the muxed socket. Sets up mutual TLS (`RequireAnyClientCert`), presents `cert` to the dialing peer, pins the peer certificate to `peerCertHash`, and uses ALPN `hermod-p2p`. Used by `rx` (receiver = QUIC server).
 
 ```go
 func CertFingerprint(certDER []byte) string
@@ -376,6 +393,25 @@ func NewMemoryStore() *MemoryStore
 ```
 `MemoryStore` is the default store. It holds all state in memory and is suitable for single-process deployments.
 
+### UDP reflection (CGNAT)
+
+The signaling server opens a UDP socket on the same port as the TLS listener to provide address discovery for peers behind CGNAT. The endpoint uses a two-phase HMAC cookie handshake to prevent UDP reflection amplification attacks.
+
+```go
+func DecodeExternalAddress(data []byte) (*net.UDPAddr, error)
+```
+Decodes a binary-encoded external address produced by the server's UDP reflection endpoint. Format: `[family(1)][IP(variable)][port(2)]` — 7 bytes for IPv4, 19 bytes for IPv6.
+
+The UDP reflector is started automatically inside `Server.Serve()` when the server binds its TLS listener. If the UDP bind fails (e.g. port unavailable), the server runs without reflection and clients fall back to the WebSocket IP + local port.
+
+Protocol:
+- Phase 1 (cookie request): client sends `[0x10]` (1 byte)
+- Server responds: `[0x10][HMAC-SHA256(secret, clientIP)[:8]]` (9 bytes)
+- Phase 2 (cookie echo): client sends `[0x10][cookie]` (9 bytes)
+- Server verifies HMAC, responds with external address (7-19 bytes)
+
+The HMAC secret key is 32 bytes generated at startup and rotated every UTC day. The previous key is accepted during a 5-minute grace period.
+
 ### GC
 
 ```go
@@ -418,7 +454,7 @@ Parses the PEM certificate and key stored in `cfg`.
 ```go
 func BuildTLSConfig(cfg *Config) *tls.Config
 ```
-Returns a `*tls.Config` with TLS 1.3 minimum version and curve/cipher preferences from `cfg`. ALPN (`hermod-p2p`) is set separately by `RaceQUIC` in `internal/network`.
+Returns a `*tls.Config` with TLS 1.3 minimum version and curve/cipher preferences from `cfg`. ALPN (`hermod-p2p`) is set separately by `DialQUIC` and `ListenQUIC` in `internal/network`.
 
 ```go
 func CertFingerprint(certDER []byte) string
