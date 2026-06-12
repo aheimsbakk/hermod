@@ -3,6 +3,7 @@
 /hermod-arm
 /hermod-arm64
 /hermod-amd64
+/hermod-linux-*
 /dist/
 
 # Test coverage artifacts
