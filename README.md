@@ -127,7 +127,7 @@ hermod serve [flags]
 
 | Flag | Short | Default | Description |
 |---|---|---|---|
-| `--listen` | `-l` | `:4376` | Bind address (default is dual-stack — both IPv4 and IPv6) |
+| `--listen` | `-l` | `:4376` | Bind address for TCP (TLS/WebSocket) and UDP (NAT reflection). Both protocols use the same port number. |
 | `--ttl` | `-T` | `600` | Channel TTL in seconds |
 | `--rate-limit` | | `5` | Requests per second per IP prefix (applies to both the WebSocket `/ws` and the `/cert` endpoint) |
 | `--rate-burst` | | `15` | Burst capacity per IP prefix (applies to both the WebSocket `/ws` and the `/cert` endpoint) |
@@ -139,6 +139,14 @@ Global flags `--verbose`, `--quiet`, `--ipv4`, and `--ipv6` also apply.
 The server generates a self-signed TLS certificate on first run and saves it to the config directory (`~/.config/hermod/` on Linux).
 
 You can also set the bind address via the `HERMOD_LISTEN` environment variable.
+
+**Firewall:** The server listens on both TCP and UDP on the same port.
+TCP carries the TLS/WebSocket signaling; UDP carries the NAT reflection
+endpoint for CGNAT address discovery. Open both protocols in your
+firewall: for the default port 4376, allow `tcp/4376` and `udp/4376`.
+If the UDP port is blocked, peers behind CGNAT will fall back to
+WebSocket-based address detection, which reduces hole-punch success
+rates but does not prevent transfers on symmetric NATs.
 
 ### trust — pin a server certificate
 
@@ -200,7 +208,7 @@ No environment variables are required for normal use. Supported env vars:
 | Variable | Commands | Description |
 |---|---|---|
 | `HERMOD_SERVER` | `tx`, `rx` | Default signaling server URL |
-| `HERMOD_LISTEN` | `tx`, `rx`, `serve` | Default UDP / TCP bind address |
+| `HERMOD_LISTEN` | `tx`, `rx`, `serve` | Default bind address. For `serve`: both TCP and UDP on this port. For `tx`/`rx`: UDP only. |
 | `HERMOD_DEST_DIR` | `rx` | Default output directory |
 
 ## How it works
