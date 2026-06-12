@@ -99,9 +99,9 @@ func runRx(code, destination, serverURL string, verify bool, listenUDP string, s
 	// Connect to signaling server
 	sigFamily := network.IPFamilyAny
 	switch {
-	case ipv4Only:
+	case ipv4Only.Load():
 		sigFamily = network.IPFamilyV4
-	case ipv6Only:
+	case ipv6Only.Load():
 		sigFamily = network.IPFamilyV6
 	}
 	logInfo("Connecting to signaling server", "server", serverURL)
@@ -124,9 +124,9 @@ func runRx(code, destination, serverURL string, verify bool, listenUDP string, s
 	// Bind UDP socket
 	// Override the listen address to enforce strict IP family when -4/-6 is set.
 	bindAddr := listenUDP
-	if ipv4Only && listenUDP == ":0" {
+	if ipv4Only.Load() && listenUDP == ":0" {
 		bindAddr = "0.0.0.0:0"
-	} else if ipv6Only && listenUDP == ":0" {
+	} else if ipv6Only.Load() && listenUDP == ":0" {
 		bindAddr = "[::]:0"
 	}
 	logDebug("binding UDP socket", "addr", bindAddr)
@@ -260,9 +260,9 @@ func runRx(code, destination, serverURL string, verify bool, listenUDP string, s
 	// Send our bundle (dual-stack)
 	ipFamily := network.IPFamilyAny
 	switch {
-	case ipv4Only:
+	case ipv4Only.Load():
 		ipFamily = network.IPFamilyV4
-	case ipv6Only:
+	case ipv6Only.Load():
 		ipFamily = network.IPFamilyV6
 	}
 	localV4, localV6, err := network.LocalEndpoints(localAddr.Port, ipFamily)

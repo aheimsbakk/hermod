@@ -169,11 +169,11 @@ func cmdTxBackground(ts *testscript.TestScript, neg bool, args []string) {
 	os.Stdout = stdoutW
 	os.Stderr = stdoutW
 	go func() {
-		txErr := cli.ExecuteArgs(txArgs)
+		err := cli.ExecuteArgs(txArgs)
 		stdoutW.Close()
 		os.Stdout = oldStdout
 		os.Stderr = oldStderr
-		errCh <- txErr
+		errCh <- err
 	}()
 
 	select {

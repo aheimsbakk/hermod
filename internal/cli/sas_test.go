@@ -11,6 +11,7 @@ import (
 	"net"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -24,6 +25,7 @@ type mockStream struct {
 
 // syncBuffer is a goroutine-safe, blocking bytes.Buffer.
 type syncBuffer struct {
+	mu   sync.Mutex
 	buf  bytes.Buffer
 	done chan struct{}
 }
@@ -33,7 +35,9 @@ func newSyncBuffer() *syncBuffer {
 }
 
 func (s *syncBuffer) Write(p []byte) (int, error) {
+	s.mu.Lock()
 	n, err := s.buf.Write(p)
+	s.mu.Unlock()
 	// Signal that data is available.
 	select {
 	case s.done <- struct{}{}:
@@ -43,10 +47,19 @@ func (s *syncBuffer) Write(p []byte) (int, error) {
 }
 
 func (s *syncBuffer) Read(p []byte) (int, error) {
-	for s.buf.Len() == 0 {
+	for {
+		s.mu.Lock()
+		empty := s.buf.Len() == 0
+		s.mu.Unlock()
+		if !empty {
+			break
+		}
 		<-s.done
 	}
-	return s.buf.Read(p)
+	s.mu.Lock()
+	n, err := s.buf.Read(p)
+	s.mu.Unlock()
+	return n, err
 }
 
 func (m *mockStream) Write(p []byte) (int, error) { return m.writeBuf.Write(p) }
