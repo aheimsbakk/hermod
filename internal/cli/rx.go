@@ -407,22 +407,32 @@ func runRx(code, destination, serverURL string, verify bool, listenUDP string, s
 	defer payloadStream.Close()
 
 	logInfo("Receiving payload", "kind", meta.Kind, "size_bytes", meta.Size)
+	// Determine whether the last output line is already terminated. The
+	// progress bar (hash bar) uses \r without \n, so the cancel handler
+	// must print a \n to terminate it. For no-bar transfers the last
+	// output line already ends with \n and no further \n is needed.
+	rxIsTTY := isatty.IsTerminal(os.Stderr.Fd())
+	lineTerminated := true
+	if rxIsTTY && !quietMode && meta.Size > 0 {
+		lineTerminated = false // saveToFile renders a \r-based hash bar
+	}
 	computedHash, bytesReceived, tmpFile, destFile, err := receivePayload(ctx, meta, payloadStream, destination, isatty.IsTerminal(os.Stdout.Fd()))
 	if err != nil {
 		if peerErr := cancelledByPeer(err); peerErr != nil {
-			if !quietMode {
+			if !quietMode && !lineTerminated {
 				fmt.Fprint(os.Stderr, "\n")
 			}
 			return peerErr
 		}
 		if ctx.Err() != nil {
-			if !quietMode {
+			if !quietMode && !lineTerminated {
 				fmt.Fprint(os.Stderr, "\n")
 			}
 			return fmt.Errorf("You cancelled the transfer.")
 		}
 		return err
 	}
+	lineTerminated = true // payload receive succeeded, bar completed
 
 	// removeSavedFile removes the temp file if one was saved.
 	removeSavedFile := func() {
