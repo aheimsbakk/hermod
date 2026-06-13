@@ -129,7 +129,7 @@ hermod serve [flags]
 | Flag | Short | Default | Description |
 |---|---|---|---|
 | `--listen` | `-l` | `:4376` | Bind address for TCP (TLS/WebSocket) and UDP (NAT reflection). Both protocols use the same port number. |
-| `--ttl` | `-T` | `600` | Channel TTL in seconds |
+| `--ttl` | `-T` | `600` | Idle timeout and channel TTL in seconds |
 | `--rate-limit` | | `5` | Requests per second per IP prefix (applies to both the WebSocket `/ws` and the `/cert` endpoint) |
 | `--rate-burst` | | `15` | Burst capacity per IP prefix (applies to both the WebSocket `/ws` and the `/cert` endpoint) |
 | `--max-blobs-per-channel` | | `10` | Hard cap on relayed blobs per channel |

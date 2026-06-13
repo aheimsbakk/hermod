@@ -277,6 +277,83 @@ func TestRunGC(t *testing.T) {
 	}
 }
 
+// TestServerTTLControlsWSIdleTimeout verifies that the --ttl flag controls the
+// WebSocket idle timeout, not just the channel store TTL. A sender that allocates
+// a channel without a receiver joining should be disconnected after approximately
+// the TTL duration, not a hardcoded 120s.
+func TestServerTTLControlsWSIdleTimeout(t *testing.T) {
+	shortTTL := 200 * time.Millisecond
+	addr, cancel := startTestServerWithTTL(t, shortTTL)
+	defer cancel()
+
+	sender := dialTestWS(t, addr)
+	defer sender.Close()
+
+	sender.WriteJSON(server.Message{Type: server.MsgAllocate, ChannelID: 42})
+	var allocResp server.Message
+	if err := sender.ReadJSON(&allocResp); err != nil {
+		t.Fatalf("allocate read: %v", err)
+	}
+	if allocResp.Type != server.MsgOK {
+		t.Fatalf("expected MsgOK, got %s (error: %s)", allocResp.Type, allocResp.Error)
+	}
+
+	// Wait for the idle timeout to fire (plus a small margin for jitter).
+	// If the timeout were the old hardcoded 120s, this read would block for
+	// minutes. With the TTL-driven timeout, it should fail within ~400ms.
+	time.Sleep(shortTTL + 200*time.Millisecond)
+
+	// The connection should now be closed by the server. Try to read — it must fail.
+	sender.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
+	var msg server.Message
+	if err := sender.ReadJSON(&msg); err == nil {
+		t.Fatal("expected read error after idle timeout, but got a message")
+	}
+}
+
+// startTestServerWithTTL starts a test signaling server with a custom TTL.
+func startTestServerWithTTL(t *testing.T, ttl time.Duration) (string, func()) {
+	t.Helper()
+	cfg := config.Default()
+	if err := config.GenerateServerCert(cfg); err != nil {
+		t.Fatalf("generate cert: %v", err)
+	}
+	tlsCert, err := config.LoadServerTLSCert(cfg)
+	if err != nil {
+		t.Fatalf("load cert: %v", err)
+	}
+	tlsCfg := config.BuildTLSConfig(cfg)
+	tlsCfg.Certificates = []tls.Certificate{tlsCert}
+
+	store := server.NewMemoryStore(0)
+	logger := slog.Default()
+	certDER := tlsCert.Certificate[0]
+	rl := server.NewRateLimiter(100, 1000)
+	srv := server.NewServer(store, rl, rl, rl, ttl, server.DefaultMaxBlobsPerChannel, server.DefaultMaxCPaceFailures, certDER, logger)
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("find port: %v", err)
+	}
+	addr := ln.Addr().String()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		srv.Serve(ctx, ln, tlsCfg) //nolint:errcheck
+	}()
+	// Wait for the server to start listening
+	for i := 0; i < 20; i++ {
+		time.Sleep(50 * time.Millisecond)
+		conn, err := net.Dial("tcp", addr)
+		if err == nil {
+			conn.Close()
+			break
+		}
+	}
+
+	return addr, cancel
+}
+
 // TestServerBlobLimitEnforced verifies that the server rejects a MsgBlob once
 // the per-channel hard cap is reached.
 func TestServerBlobLimitEnforced(t *testing.T) {

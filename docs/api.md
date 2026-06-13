@@ -374,7 +374,7 @@ const DefaultMaxCPaceFailures   = 3
 
 func NewServer(store SignalingStore, certRL, wsRL, joinRL *RateLimiter, ttl time.Duration, maxBlobsPerChannel, maxCPaceFailures int, certDER []byte, logger *slog.Logger) *Server
 ```
-Creates a new signaling server with separate rate limiters: `certRL` for the `/cert` HTTP endpoint, `wsRL` for WebSocket upgrades, and `joinRL` for join attempts (channel enumeration protection). `store` holds channel state. `ttl` is how long an allocated channel lives before the server expires it. `maxBlobsPerChannel` caps the total number of relayed blobs per channel; use `DefaultMaxBlobsPerChannel`. `maxCPaceFailures` caps CPace protocol violations before the channel is dropped and all peers are disconnected; use `DefaultMaxCPaceFailures`. `certDER` is the DER-encoded server certificate served via the `/cert` endpoint (pass nil to disable it).
+Creates a new signaling server with separate rate limiters: `certRL` for the `/cert` HTTP endpoint, `wsRL` for WebSocket upgrades, and `joinRL` for join attempts (channel enumeration protection). `store` holds channel state. `ttl` controls both the WebSocket idle timeout (how long the server waits for activity before closing a connection) and the channel record TTL (how long an allocated channel lives before GC cleanup). `maxBlobsPerChannel` caps the total number of relayed blobs per channel; use `DefaultMaxBlobsPerChannel`. `maxCPaceFailures` caps CPace protocol violations before the channel is dropped and all peers are disconnected; use `DefaultMaxCPaceFailures`. `certDER` is the DER-encoded server certificate served via the `/cert` endpoint (pass nil to disable it).
 
 ```go
 func (s *Server) ListenAndServe(ctx context.Context, addr string, tlsCfg *tls.Config) error
