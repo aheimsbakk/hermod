@@ -1,0 +1,1 @@
+2026-06-13 Make UDP reflection protocol symmetric +cgnat +tech-debug ref:tasks/symmetric-udp-reflection.md
