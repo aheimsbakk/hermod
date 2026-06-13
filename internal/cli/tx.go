@@ -474,34 +474,43 @@ func runTx(input, serverURL string, numWords int, verify bool, listenUDP string,
 	logInfo("Sending payload", "kind", meta.Kind, "size_bytes", meta.Size)
 	isTTY := isatty.IsTerminal(os.Stderr.Fd())
 	var payloadHash string
+	// lineTerminated tracks whether the last output line already has a trailing
+	// \n. When true, the cancel handler must NOT print another \n to avoid
+	// creating a blank line before the error message.
+	lineTerminated := true
 	if isTTY && !quietMode && size > 0 {
 		bar := newHashBar(size, "sending")
 		dest := io.MultiWriter(payloadStream, bar)
 		payloadHash, _, err = transfer.HashStream(reader, dest)
+		lineTerminated = false // hash bar uses \r, needs \n on cancel
 	} else if isTTY && !quietMode && size < 0 {
 		// Unknown size (stream): bouncing "###" bar that resizes with the terminal.
 		bar := newStreamBar()
 		dest := io.MultiWriter(payloadStream, bar)
 		payloadHash, _, err = transfer.HashStream(reader, dest)
-		bar.Finish()
+		bar.Finish() // prints \n, terminating the bar line
+		lineTerminated = true
 	} else {
 		payloadHash, _, err = transfer.HashStream(reader, payloadStream)
 	}
 	if err != nil {
 		if peerErr := cancelledByPeer(err); peerErr != nil {
-			if !quietMode {
+			if !quietMode && !lineTerminated {
 				fmt.Fprint(os.Stderr, "\n")
 			}
 			return peerErr
 		}
 		if ctx.Err() != nil {
-			if !quietMode {
+			if !quietMode && !lineTerminated {
 				fmt.Fprint(os.Stderr, "\n")
 			}
 			return fmt.Errorf("You cancelled the transfer.")
 		}
 		return fmt.Errorf("send payload: %w", err)
 	}
+	// Payload send succeeded — bar line is terminated (OnCompletion for hash
+	// bar, bar.Finish() for stream bar, or no bar at all).
+	lineTerminated = true
 	payloadStream.Close()
 	logDebug("payload stream closed — all bytes sent", "sha256", payloadHash)
 
@@ -527,7 +536,7 @@ func runTx(input, serverURL string, numWords int, verify bool, listenUDP string,
 		logDebug("acknowledgement received from receiver")
 	} else {
 		if peerErr := cancelledByPeer(err); peerErr != nil {
-			if !quietMode {
+			if !quietMode && !lineTerminated {
 				fmt.Fprint(os.Stderr, "\n")
 			}
 			return peerErr
