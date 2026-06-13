@@ -5,6 +5,22 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v1.0.1] - 2026-06-13
+
+- **why:** Remove blank lines before error on transfer cancel
+- **model:** opencode/deepseek-v4-flash-free
+- **tags:** fix, ux, cancel
+
+### Fixed
+
+- Stream bar and no-bar transfers no longer print a blank line before the cancel error message — `bar.Finish()` and the cancel handler produced two consecutive newlines (`internal/cli/tx.go`, `internal/cli/rx.go`)
+- Added `TestCancelBlankLine` unit test covering stream bar, no-bar, and hash bar cancel output (`internal/cli/cancel_blank_line_test.go`)
+
+### Changed
+
+- Moved completed `sas-refactor-to-eff-wordlist` task to `tasks/done/`
+- Added `symmetric-udp-reflection` task description with 4 protocol alternatives
+
 ## [v1.0.0] - 2026-06-12
 
 - **why:** Address security audit findings — add per-IP channel cap, improve SAS verification logging, fix race-detector flakiness, remove stale docs. Bump to 1.0.0 for stable release.
