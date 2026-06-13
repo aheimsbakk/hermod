@@ -24,11 +24,6 @@ const (
 	DefaultMaxBlobsPerChannel = 10
 	// DefaultMaxCPaceFailures is the default limit on CPace handshake failures per channel.
 	DefaultMaxCPaceFailures = 3
-
-	// wsIdleTimeout is the read deadline for idle WebSocket connections.
-	// If no data (including pong) is received within this period the connection
-	// is closed, preventing stale waiters from blocking channel reuse.
-	wsIdleTimeout = 2 * time.Minute
 )
 
 // MsgType identifies signaling message types.
@@ -69,6 +64,12 @@ type Server struct {
 	mu         sync.Mutex
 	waiters    map[uint16][]*wsConn // pending peer connections
 	udpReflect *udpReflector        // UDP reflection for CGNAT address discovery; nil if unavailable
+
+	// wsIdleTimeout is the read deadline for idle WebSocket connections.
+	// Set from the --ttl flag. If no data (including pong) is received within
+	// this period the connection is closed, preventing stale waiters from
+	// blocking channel reuse.
+	wsIdleTimeout time.Duration
 }
 
 type wsConn struct {
@@ -93,6 +94,7 @@ func NewServer(store SignalingStore, certRL, wsRL, joinRL *RateLimiter, ttl time
 		wsRL:               wsRL,
 		joinRL:             joinRL,
 		ttl:                ttl,
+		wsIdleTimeout:      ttl,
 		maxBlobsPerChannel: maxBlobsPerChannel,
 		maxCPaceFailures:   maxCPaceFailures,
 		certDER:            certDER,
@@ -247,9 +249,10 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	conn.SetReadLimit(maxMessageSize)
 	// Enforce an idle timeout so stale connections cannot block channel reuse.
 	// The deadline is extended on every pong from the client.
-	conn.SetReadDeadline(time.Now().Add(wsIdleTimeout))
+	// The timeout is set from the --ttl flag (default 600s).
+	conn.SetReadDeadline(time.Now().Add(s.wsIdleTimeout))
 	conn.SetPongHandler(func(string) error {
-		conn.SetReadDeadline(time.Now().Add(wsIdleTimeout))
+		conn.SetReadDeadline(time.Now().Add(s.wsIdleTimeout))
 		return nil
 	})
 
