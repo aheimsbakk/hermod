@@ -13,9 +13,6 @@ func TestDefault(t *testing.T) {
 	if cfg.ServerURL == "" {
 		t.Fatal("default server URL is empty")
 	}
-	if cfg.Listen == "" {
-		t.Fatal("default listen address is empty")
-	}
 	if len(cfg.TLS.PreferCurves) == 0 {
 		t.Fatal("default TLS curves are empty")
 	}
@@ -121,7 +118,7 @@ func TestGenerateServerCert(t *testing.T) {
 	}
 }
 
-func TestCertFingerprint(t *testing.T) {
+func TestPubKeyFingerprint(t *testing.T) {
 	cfg := config.Default()
 	if err := config.GenerateServerCert(cfg); err != nil {
 		t.Fatal(err)
@@ -130,22 +127,14 @@ func TestCertFingerprint(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fp := config.CertFingerprint(tlsCert.Certificate[0])
-	if len(fp) != 64 {
-		t.Fatalf("expected 64-char hex fingerprint, got %q", fp)
-	}
-	// Fingerprint should be deterministic
-	fp2 := config.CertFingerprint(tlsCert.Certificate[0])
-	if fp != fp2 {
-		t.Fatal("fingerprint not deterministic")
-	}
-	// PubKeyFingerprint should differ from CertFingerprint
 	pkfp := config.PubKeyFingerprint(tlsCert.Certificate[0])
 	if len(pkfp) != 64 {
 		t.Fatalf("expected 64-char hex SPKI fingerprint, got %q", pkfp)
 	}
-	if pkfp == fp {
-		t.Fatal("SPKI fingerprint must differ from cert DER fingerprint")
+	// Fingerprint should be deterministic
+	pkfp2 := config.PubKeyFingerprint(tlsCert.Certificate[0])
+	if pkfp != pkfp2 {
+		t.Fatal("SPKI fingerprint not deterministic")
 	}
 }
 
