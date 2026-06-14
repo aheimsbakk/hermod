@@ -293,7 +293,7 @@ Within each phase, probe packets are sent to all candidate addresses of that fam
 Probe and ack packet format (8 bytes each):
 ```
 byte 0:    0x01        (probe/ack marker)
-bytes 1–7: hash[0:7]  (probe) or hash[8:14]  (ack) — 7 bytes of SHA-256(hybridKey + "hermod-holepunch-v1")
+bytes 1–7: hash[0:7]  (probe) or hash[8:15]  (ack) — 7 bytes of SHA-256(hybridKey + "hermod-holepunch-v1")
 ```
 
 The hash is session-specific (derived from the HybridBlobKey — CPace + X25519 ECDH + ML-KEM-768). Each side uses bytes [0:7] of the hash as the probe identifier and bytes [8:15] as the ack identifier, giving 64 bits of entropy per packet — practically unguessable by an off-path attacker.
