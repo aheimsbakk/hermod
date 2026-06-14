@@ -105,11 +105,6 @@ func dialSignaling(ctx context.Context, serverURL string, pinnedFingerprint stri
 	return &SignalingClient{conn: conn, ctx: ctx, done: make(chan struct{})}, nil
 }
 
-// DialSignaling opens a WebSocket to serverURL with optional cert pinning.
-func DialSignaling(ctx context.Context, serverURL, pinnedFingerprint string) (*SignalingClient, error) {
-	return dialSignaling(ctx, serverURL, pinnedFingerprint, IPFamilyAny)
-}
-
 // DialSignalingWithFamily opens a WebSocket to serverURL with optional cert pinning
 // and restricts DNS resolution and TCP connections to the given IP family.
 func DialSignalingWithFamily(ctx context.Context, serverURL, pinnedFingerprint string, family IPFamily) (*SignalingClient, error) {

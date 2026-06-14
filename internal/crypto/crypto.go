@@ -293,12 +293,6 @@ func DeriveHybridBlobKey(kClassical, ssX25519, ssMLKEM []byte) []byte {
 
 // --- AES-256-GCM ---
 
-// Seal encrypts plaintext with key (must be 32 bytes) using AES-256-GCM.
-// Returns nonce || ciphertext || tag.
-func Seal(key, plaintext []byte) ([]byte, error) {
-	return SealAAD(key, nil, plaintext)
-}
-
 // SealAAD encrypts plaintext with key (must be 32 bytes) using AES-256-GCM,
 // binding aad as Additional Authenticated Data. The AAD is authenticated but
 // not included in the ciphertext. Pass nil for no AAD.
@@ -318,11 +312,6 @@ func SealAAD(key, aad, plaintext []byte) ([]byte, error) {
 	}
 	ct := gcm.Seal(nonce, nonce, plaintext, aad)
 	return ct, nil
-}
-
-// Open decrypts a blob produced by Seal.
-func Open(key, blob []byte) ([]byte, error) {
-	return OpenAAD(key, nil, blob)
 }
 
 // OpenAAD decrypts a blob produced by SealAAD, verifying the provided AAD.
@@ -754,13 +743,4 @@ func ParseTransferCode(code string) (uint16, []string, error) {
 		return 0, nil, errors.New("transfer code must contain at least 3 words")
 	}
 	return id, words, nil
-}
-
-// TransferCodePassword returns the password string from a transfer code.
-func TransferCodePassword(code string) (string, error) {
-	_, words, err := ParseTransferCode(code)
-	if err != nil {
-		return "", err
-	}
-	return strings.Join(words, "-"), nil
 }

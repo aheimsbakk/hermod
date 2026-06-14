@@ -415,9 +415,3 @@ func makeCertPinner(expectedHex string) func(rawCerts [][]byte, verifiedChains [
 		return nil
 	}
 }
-
-// CertFingerprint computes the SHA-256 fingerprint of a DER certificate.
-func CertFingerprint(certDER []byte) string {
-	sum := sha256.Sum256(certDER)
-	return hex.EncodeToString(sum[:])
-}

@@ -797,17 +797,6 @@ func performSASCoordinatedWith(ctx context.Context, conn sasStreamConn, tlsState
 	return nil
 }
 
-// promptSASVerification shows the SAS + identicon and returns true if the user confirms.
-// It reads user input from /dev/tty to avoid interference from piped stdin.
-func promptSASVerification(ctx context.Context, tlsState tls.ConnectionState, sasContext []byte) (bool, error) {
-	tty, err := openTTYFunc()
-	if err != nil {
-		return false, fmt.Errorf("open tty for SAS prompt: %w", err)
-	}
-	defer tty.Close()
-	return promptSASVerificationFrom(ctx, tlsState, tty, sasContext)
-}
-
 // promptSASVerificationFrom shows the SAS + identicon and reads the answer from r.
 // sasContext is bound into TLS ExportKeyingMaterial to couple the SAS to the
 // specific session (L-01). Pass the channel ID bytes; nil is accepted.

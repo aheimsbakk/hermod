@@ -30,7 +30,6 @@ type TLSConfig struct {
 // Config is the top-level application configuration.
 type Config struct {
 	ServerURL      string            `yaml:"server_url"`
-	Listen         string            `yaml:"listen"`
 	TLS            TLSConfig         `yaml:"tls_configuration"`
 	ServerCertPEM  string            `yaml:"server_cert_pem,omitempty"`
 	ServerKeyPEM   string            `yaml:"server_key_pem,omitempty"`
@@ -41,7 +40,6 @@ type Config struct {
 func Default() *Config {
 	return &Config{
 		ServerURL: "wss://localhost:4376",
-		Listen:    ":0",
 		TLS: TLSConfig{
 			PreferCurves: []string{"X25519MLKEM768"},
 			CipherSuites: []string{"TLS_AES_256_GCM_SHA384", "TLS_CHACHA20_POLY1305_SHA256"},
@@ -214,18 +212,10 @@ func RenewServerCert(cfg *Config) error {
 	return nil
 }
 
-// CertFingerprint computes the SHA-256 fingerprint of a DER-encoded certificate
-// and returns it as a lowercase hex string.
-// Note: this fingerprint changes on every certificate renewal. For a persistent
-// identifier that survives key-renewal, use PubKeyFingerprint.
-func CertFingerprint(certDER []byte) string {
-	sum := sha256.Sum256(certDER)
-	return hex.EncodeToString(sum[:])
-}
-
 // PubKeyFingerprint computes the SHA-256 fingerprint of the Subject Public Key
-// Info (SPKI) of a DER-encoded X.509 certificate. Unlike CertFingerprint, this
-// value stays the same when the certificate is renewed with the same key pair.
+// Info (SPKI) of a DER-encoded X.509 certificate. Unlike the certificate DER
+// fingerprint, this value stays the same when the certificate is renewed with
+// the same key pair.
 func PubKeyFingerprint(certDER []byte) string {
 	cert, err := x509.ParseCertificate(certDER)
 	if err != nil {

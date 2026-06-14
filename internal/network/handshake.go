@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"strings"
 )
 
 // IPFamily restricts address collection to a single IP protocol family.
@@ -61,33 +60,6 @@ func (b *EndpointBundle) CandidatesV6() []string {
 		c = append(c, b.PublicEndpointV6)
 	}
 	return append(c, b.LocalEndpointsV6...)
-}
-
-// SplitPublicIP classifies a server-reported public IP into v4 and v6 host:port
-// strings. The caller provides the port to use. When publicIP is empty, both
-// return values are empty strings.
-//
-// Zone/scope IDs in IPv6 addresses (e.g. "fe80::1%eth0") are handled by
-// stripping the zone before IP family detection, since net.ParseIP does not
-// support zone IDs.
-func SplitPublicIP(publicIP, port string) (v4, v6 string) {
-	if publicIP == "" {
-		return "", ""
-	}
-	// Strip IPv6 zone ID since net.ParseIP does not handle zones.
-	clean := publicIP
-	if idx := strings.IndexByte(publicIP, '%'); idx >= 0 {
-		clean = publicIP[:idx]
-	}
-	ip := net.ParseIP(clean)
-	if ip == nil {
-		// Not a valid IP — return as-is (legacy hostname or error).
-		return net.JoinHostPort(publicIP, port), ""
-	}
-	if ip.To4() != nil {
-		return net.JoinHostPort(publicIP, port), ""
-	}
-	return "", net.JoinHostPort(publicIP, port)
 }
 
 // --- Hybrid KEM blob sizes (fixed-length fields for binary serialization) ---
