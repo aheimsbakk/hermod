@@ -5,6 +5,27 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v1.0.3] - 2026-06-14
+
+- **why:** Remove dead code accumulated during refactors — unused wrappers, legacy helpers, and superseded functions
+- **model:** opencode/deepseek-v4-flash
+- **tags:** refactor, cleanup, dead-code
+
+### Removed
+
+- `promptSASVerification` — unused wrapper; callers use `performSASCoordinated` directly (`internal/cli/tx.go`)
+- `crypto.Seal` / `crypto.Open` — unused wrappers around `SealAAD`/`OpenAAD` (`internal/crypto/crypto.go`)
+- `crypto.TransferCodePassword` — unused; callers use `ParseTransferCode` directly (`internal/crypto/crypto.go`)
+- `network.SplitPublicIP` — unused; IP family classification done inline (`internal/network/handshake.go`)
+- `network.CertFingerprint` — unused; replaced by `PubKeyFingerprint` (`internal/network/network.go`)
+- `network.DialSignaling` — unused; callers use `DialSignalingWithFamily` (`internal/network/signaling.go`)
+- `certFingerprint` dead field removal and unused `CertFingerprint` function from config cleanup (`internal/config/config.go`)
+
+### Changed
+
+- All callers and tests updated to use replacement functions (`e2e/`, `internal/cli/`, `internal/crypto/`, `internal/network/`)
+- Test names and assertions updated to match renamed functions (`Seal`→`SealAAD`, `Open`→`OpenAAD`, `TransferCodePassword`→`ParseTransferCode`)
+
 ## [v1.0.2] - 2026-06-13
 
 - **why:** The `--ttl` flag now controls both the WebSocket idle timeout and the channel TTL, fixing a 120-second hardcoded timeout that made the flag misleading
