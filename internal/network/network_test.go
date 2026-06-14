@@ -4,8 +4,10 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/hex"
 	"encoding/json"
 	"math/big"
 	"net"
@@ -104,11 +106,12 @@ func TestPubKeyFingerprint(t *testing.T) {
 	if len(got) != 64 {
 		t.Fatalf("expected 64-char SPKI fingerprint, got %d", len(got))
 	}
-	// For the same cert, CertFingerprint (cert DER hash) and PubKeyFingerprint
-	// (SPKI hash) must differ because they hash different data.
-	certFP := network.CertFingerprint(certDER)
-	if got == certFP {
-		t.Fatal("SPKI fingerprint must differ from cert fingerprint")
+	// PubKeyFingerprint (SPKI hash) must differ from the raw DER hash
+	// because they hash different data.
+	h := sha256.Sum256(certDER)
+	derHash := hex.EncodeToString(h[:])
+	if got == derHash {
+		t.Fatal("SPKI fingerprint must differ from cert DER hash")
 	}
 }
 
@@ -251,66 +254,6 @@ func TestEndpointBundle_RoundTripDual(t *testing.T) {
 	}
 	if !decoded.RequireVerify {
 		t.Fatal("RequireVerify should be true")
-	}
-}
-
-func TestSplitPublicIP_V4(t *testing.T) {
-	v4, v6 := network.SplitPublicIP("1.2.3.4", "4376")
-	if v4 != "1.2.3.4:4376" {
-		t.Fatalf("unexpected v4: %q", v4)
-	}
-	if v6 != "" {
-		t.Fatalf("expected empty v6, got %q", v6)
-	}
-}
-
-func TestSplitPublicIP_V6(t *testing.T) {
-	v4, v6 := network.SplitPublicIP("2001:db8::1", "4376")
-	if v4 != "" {
-		t.Fatalf("expected empty v4, got %q", v4)
-	}
-	if v6 != "[2001:db8::1]:4376" {
-		t.Fatalf("unexpected v6: %q", v6)
-	}
-}
-
-func TestSplitPublicIP_Empty(t *testing.T) {
-	v4, v6 := network.SplitPublicIP("", "4376")
-	if v4 != "" || v6 != "" {
-		t.Fatalf("expected both empty, got v4=%q v6=%q", v4, v6)
-	}
-}
-
-func TestSplitPublicIP_Hostname(t *testing.T) {
-	// Hostname is not a valid IP — returned as v4.
-	v4, v6 := network.SplitPublicIP("example.com", "4376")
-	if v4 != "example.com:4376" {
-		t.Fatalf("expected hostname in v4, got %q", v4)
-	}
-	if v6 != "" {
-		t.Fatalf("expected empty v6, got %q", v6)
-	}
-}
-
-func TestSplitPublicIP_V6_ZoneID(t *testing.T) {
-	// IPv6 with zone/scope ID — net.ParseIP alone would fail,
-	// but SplitPublicIP strips the zone before classifying.
-	v4, v6 := network.SplitPublicIP("fe80::1%eth0", "4376")
-	if v4 != "" {
-		t.Fatalf("expected empty v4, got %q", v4)
-	}
-	if v6 != "[fe80::1%eth0]:4376" {
-		t.Fatalf("unexpected v6: %q", v6)
-	}
-}
-
-func TestSplitPublicIP_V6_ZoneIDWithPort(t *testing.T) {
-	v4, v6 := network.SplitPublicIP("fe80::aabb:ccff:fe01:2345%wlan0", "9000")
-	if v4 != "" {
-		t.Fatalf("expected empty v4, got %q", v4)
-	}
-	if v6 != "[fe80::aabb:ccff:fe01:2345%wlan0]:9000" {
-		t.Fatalf("unexpected v6: %q", v6)
 	}
 }
 

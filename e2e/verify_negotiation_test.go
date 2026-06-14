@@ -51,7 +51,7 @@ func runSenderVerify(serverURL string, channelID uint16, password string, payloa
 	}
 	myFP := network.PubKeyFingerprint(epCertDER)
 
-	sig, err := network.DialSignaling(context.Background(), serverURL, "")
+	sig, err := network.DialSignalingWithFamily(context.Background(), serverURL, "", network.IPFamilyAny)
 	if err != nil {
 		return verifyResult{err: fmt.Errorf("dial: %w", err)}
 	}
@@ -236,7 +236,7 @@ func runReceiverVerify(serverURL, code string, requireVerify bool) verifyResult 
 	}
 	myFP := network.PubKeyFingerprint(epCertDER)
 
-	sig, err := network.DialSignaling(context.Background(), serverURL, "")
+	sig, err := network.DialSignalingWithFamily(context.Background(), serverURL, "", network.IPFamilyAny)
 	if err != nil {
 		return verifyResult{err: err}
 	}

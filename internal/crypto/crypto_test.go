@@ -3,6 +3,7 @@ package crypto_test
 import (
 	"bytes"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/hermod/hermod/internal/crypto"
@@ -82,25 +83,26 @@ func TestParseTransferCodeInvalid(t *testing.T) {
 	}
 }
 
-func TestTransferCodePassword(t *testing.T) {
+func TestParseTransferCodePassword(t *testing.T) {
 	_, code, _ := crypto.GenerateTransferCode(3)
-	pw, err := crypto.TransferCodePassword(code)
+	_, words, err := crypto.ParseTransferCode(code)
 	if err != nil {
-		t.Fatalf("password: %v", err)
+		t.Fatalf("parse: %v", err)
 	}
+	pw := strings.Join(words, "-")
 	if pw == "" {
 		t.Fatal("empty password")
 	}
 }
 
-func TestSealOpen(t *testing.T) {
+func TestSealOpenAAD(t *testing.T) {
 	key := make([]byte, 32)
 	for i := range key {
 		key[i] = byte(i)
 	}
 	plaintext := []byte("hello, world!")
 
-	ct, err := crypto.Seal(key, plaintext)
+	ct, err := crypto.SealAAD(key, nil, plaintext)
 	if err != nil {
 		t.Fatalf("seal: %v", err)
 	}
@@ -108,7 +110,7 @@ func TestSealOpen(t *testing.T) {
 		t.Fatal("ciphertext too short")
 	}
 
-	pt, err := crypto.Open(key, ct)
+	pt, err := crypto.OpenAAD(key, nil, ct)
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -117,19 +119,19 @@ func TestSealOpen(t *testing.T) {
 	}
 }
 
-func TestOpenTamperedCiphertext(t *testing.T) {
+func TestOpenAADTamperedCiphertext(t *testing.T) {
 	key := make([]byte, 32)
-	ct, _ := crypto.Seal(key, []byte("data"))
+	ct, _ := crypto.SealAAD(key, nil, []byte("data"))
 	ct[len(ct)-1] ^= 0xFF
-	_, err := crypto.Open(key, ct)
+	_, err := crypto.OpenAAD(key, nil, ct)
 	if err == nil {
 		t.Fatal("expected error for tampered ciphertext")
 	}
 }
 
-func TestOpenTooShort(t *testing.T) {
+func TestOpenAADTooShort(t *testing.T) {
 	key := make([]byte, 32)
-	_, err := crypto.Open(key, []byte{0x01, 0x02})
+	_, err := crypto.OpenAAD(key, nil, []byte{0x01, 0x02})
 	if err == nil {
 		t.Fatal("expected error for too-short blob")
 	}

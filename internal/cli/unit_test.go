@@ -788,11 +788,12 @@ func TestConfigServerURL_FromConfig(t *testing.T) {
 	}
 }
 
-// --- promptSASVerification ---
+// --- performSASCoordinated TTY error ---
 
-// TestPromptSASVerification_TTYError covers the openTTYFunc error path in
-// promptSASVerification (the thin wrapper around promptSASVerificationFrom).
-func TestPromptSASVerification_TTYError(t *testing.T) {
+// TestPerformSASCoordinated_TTYError covers the openTTYFunc error path in
+// performSASCoordinated (the production SAS coordination function).
+// openTTYFunc is called before the QUIC connection is used, so nil conn is safe.
+func TestPerformSASCoordinated_TTYError(t *testing.T) {
 	origFn := openTTYFunc
 	defer func() { openTTYFunc = origFn }()
 
@@ -800,9 +801,9 @@ func TestPromptSASVerification_TTYError(t *testing.T) {
 		return nil, fmt.Errorf("no tty in test")
 	}
 
-	_, err := promptSASVerification(context.Background(), tls.ConnectionState{}, nil)
+	err := performSASCoordinated(context.Background(), nil, tls.ConnectionState{}, false, nil)
 	if err == nil {
-		t.Fatal("expected error from promptSASVerification when openTTYFunc fails")
+		t.Fatal("expected error from performSASCoordinated when openTTYFunc fails")
 	}
 	if !strings.Contains(err.Error(), "open tty for SAS prompt") {
 		t.Errorf("unexpected error message: %v", err)
