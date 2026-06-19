@@ -7,7 +7,7 @@ tmux kill-session -t $SESSION_NAME 2>/dev/null
 # --- Layout ---
 # --- Layout ---
 tmux new-session -d -s $SESSION_NAME
-tmux split-window -v -b -l 5 -t $SESSION_NAME
+tmux split-window -v -b -l 6 -t $SESSION_NAME
 tmux split-window -h -t $SESSION_NAME:.2
 
 # --- Per-pane command lists ---
