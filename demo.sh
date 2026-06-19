@@ -1,40 +1,76 @@
 #!/bin/bash
 
-SESSION_NAME="hermod_demo"
+SESSION_NAME="demo"
 
-# Kill the session if it already exists to prevent duplication errors
 tmux kill-session -t $SESSION_NAME 2>/dev/null
 
-# 1. Start a new detached tmux session (Initial full-screen window, Pane index starts at 1)
+# --- Layout ---
+# --- Layout ---
 tmux new-session -d -s $SESSION_NAME
+tmux split-window -v -b -l 5 -t $SESSION_NAME
+tmux split-window -h -t $SESSION_NAME:.2
 
-# 2. Split the window vertically to create the bottom pane (Creates Pane 2)
-# The -l 5 parameter forces the new bottom pane to be 5 lines high.
-tmux split-window -v -l 5 -t $SESSION_NAME
+# --- Per-pane command lists ---
+# Use array syntax. Each entry is one command sent with Enter.
+# Add, remove, or reorder entries freely per pane.
 
-# 3. Target the top pane (Pane 1) and split it horizontally (-h)
-# This divides the top half into two equal left and right panes (Pane 1 and Pane 3).
-tmux split-window -h -t $SESSION_NAME:.1
+pane1_commands=(
+	"ssh -lroot 192.168.122.11"
+	"reset"
+    "# Download latest hermod for your architecture"
+	"#curl -sSLO https://github.com/aheimsbakk/hermod/releases/download/v1.0.3/hermod-linux-amd64"
+    "# Make it executable"
+    "chmod +x ./hermod-linux-amd64"
+	"./hermod-linux-amd64 serve"
+)
 
-# Send commands to Pane 1 (Top Left)
-tmux send-keys -t $SESSION_NAME:.1 "ssh -lroot 192.168.122.12" C-m
-tmux send-keys -t $SESSION_NAME:.1 "reset" C-m
-tmux send-keys -t $SESSION_NAME:.1 "curl -sSLO https://github.com/aheimsbakk/hermod/releases/download/v1.0.3/hermod-linux-amd64" C-m
+pane2_commands=(
+	"ssh -lroot 192.168.122.12"
+	"reset"
+    "# Download latest hermod for your architecture"
+	"#curl -sSLO https://github.com/aheimsbakk/hermod/releases/download/v1.0.3/hermod-linux-amd64"
+    "# Make it executable"
+    "chmod +x ./hermod-linux-amd64"
+    "# Wait 1 second for signal server to start"
+    "sleep 1"
+    "# TOFU trust in the demo"
+    "# Use option --fingerprint to verify server"
+    "./hermod-linux-amd64 trust 192.168.122.11"
+)
 
-# Send commands to Pane 3 (Top Right)
-tmux send-keys -t $SESSION_NAME:.2 "ssh -lroot 192.168.122.13" C-m
-tmux send-keys -t $SESSION_NAME:.2 "reset" C-m
-tmux send-keys -t $SESSION_NAME:.2 "curl -sSLO https://github.com/aheimsbakk/hermod/releases/download/v1.0.3/hermod-linux-amd64" C-m
+pane3_commands=(
+	"ssh -lroot 192.168.122.13"
+	"reset"
+    "# Download latest hermod for your architecture"
+	"#curl -sSLO https://github.com/aheimsbakk/hermod/releases/download/v1.0.3/hermod-linux-amd64"
+    "# Make it executable"
+    "chmod +x ./hermod-linux-amd64"
+    "# Wait 1 second for signal server to start"
+    "sleep 1"
+    "# TOFU trust in the demo"
+    "# Use option --fingerprint to verify server"
+    "./hermod-linux-amd64 trust 192.168.122.11"
+)
 
-# Send commands to Pane 2 (Bottom Full-Width, 5 lines high)
-# Uses corrected 'ip -br a' syntax.
-tmux send-keys -t $SESSION_NAME:.3 "ssh -lroot 192.168.122.11" C-m
-tmux send-keys -t $SESSION_NAME:.3 "reset" C-m
-tmux send-keys -t $SESSION_NAME:.3 "curl -sSLO https://github.com/aheimsbakk/hermod/releases/download/v1.0.3/hermod-linux-amd64" C-m
-#tmux send-keys -t $SESSION_NAME:.3 
+# --- Helper ---
+# Iterates over a command array and sends each line as a keystroke sequence.
+send_to_pane() {
+	local pane_id=$1
+	shift
+	for cmd in "$@"; do
+		tmux send-keys -t "$SESSION_NAME:.${pane_id}" "$cmd" C-m
+	done
+}
 
-# Attach to the session to display it
+# --- Execute ---
+send_to_pane 1 "${pane1_commands[@]}"
+send_to_pane 2 "${pane2_commands[@]}"
+send_to_pane 3 "${pane3_commands[@]}"
+
+# --- End of Script Timing Control ---
+(
+    sleep 10
+    tmux kill-session -t "$SESSION_NAME" 2>/dev/null
+) &
+
 tmux attach-session -t $SESSION_NAME
-
-sleep 10
-tmux kill-server -t $SESSION_NAME
