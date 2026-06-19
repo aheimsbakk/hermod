@@ -18,7 +18,8 @@ pane1_commands=(
 	"ssh -lroot 192.168.122.11"
 	"reset"
 	"# Download latest hermod for your architecture"
-	"#curl -sSLO https://github.com/aheimsbakk/hermod/releases/download/v1.0.3/hermod-linux-amd64"
+	"curl -sSLO https://github.com/aheimsbakk/hermod/releases/download/v1.0.3/hermod-linux-amd64"
+    ""
 	"# Make it executable"
 	"chmod +x ./hermod-linux-amd64"
     "reset"
@@ -30,31 +31,34 @@ pane2_commands=(
 	"ssh -lroot 192.168.122.12"
 	"reset"
 	"# Download latest hermod for your architecture"
-	"#curl -sSLO https://github.com/aheimsbakk/hermod/releases/download/v1.0.3/hermod-linux-amd64"
+	"curl -sSLO https://github.com/aheimsbakk/hermod/releases/download/v1.0.3/hermod-linux-amd64"
+    ""
 	"# Make it executable"
 	"chmod +x ./hermod-linux-amd64"
 	"reset"
 	"# First trust server (once)"
 	"# TOFU trust in the demo"
-	"# Option for verify --fingerprint"
+	"# Option for verify with --fingerprint"
 	"./hermod-linux-amd64 trust 192.168.122.11"
-    "reset"
-    "./hermod-linux-amd64 send \"Text sent with quantum safe encryption\""
+    ""
+    "# Send text"
+    "./hermod-linux-amd64 send \"Sent with quantum safe encryption\""
 )
 
 pane3_commands=(
 	"ssh -lroot 192.168.122.13"
 	"reset"
 	"# Download latest hermod for your architecture"
-	"#curl -sSLO https://github.com/aheimsbakk/hermod/releases/download/v1.0.3/hermod-linux-amd64"
+	"curl -sSLO https://github.com/aheimsbakk/hermod/releases/download/v1.0.3/hermod-linux-amd64"
+    ""
 	"# Make it executable"
 	"chmod +x ./hermod-linux-amd64"
 	"reset"
 	"# First trust server (once)"
     "# TOFU trust in the demo"
-	"# Option for verify --fingerprint"
+	"# Option for verify with --fingerprint"
 	"./hermod-linux-amd64 trust 192.168.122.11"
-    "reset"
+    ""
 )
 
 # --- Helper ---
@@ -67,7 +71,7 @@ send_to_pane() {
 		local len=${#cmd}
 		for ((i = 0; i < len; i++)); do
 			tmux send-keys -t "$SESSION_NAME:.${pane_id}" "${cmd:$i:1}"
-			sleep 0.05
+			sleep 0.1
 		done
 		tmux send-keys -t "$SESSION_NAME:.${pane_id}" C-m
 	done
@@ -86,5 +90,4 @@ send_to_pane 3 "${pane3_commands[@]}" &
 
 tmux attach-session -t $SESSION_NAME
 
-# Wait for all typing to finish, then keep session alive for 15 more seconds
 wait

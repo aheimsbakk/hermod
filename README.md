@@ -6,6 +6,10 @@ The project is named after Hermod, the messenger god in Norse mythology — the 
 
 Hermod was inspired by [Magic Wormhole](https://github.com/magic-wormhole/magic-wormhole), a Python tool that transfers files between computers using short, human-readable codes.
 
+<p align="center">
+  <img src="demo.gif" alt="Animated GIF demo hermod text, file and pipe send." />
+</p>
+
 ## What it does
 
 - End-to-end encrypted transfer using QUIC + TLS 1.3
