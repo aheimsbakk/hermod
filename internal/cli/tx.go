@@ -343,6 +343,8 @@ func runTx(input, serverURL string, numWords int, verify bool, listenUDP string,
 	if err != nil {
 		return fmt.Errorf("receive endpoint bundle blob 4 from peer: %w", err)
 	}
+	// Signaling work is done — close the WebSocket to free server resources.
+	sigRaw.Close()
 	peerBundleBytes, err := crypto.OpenAAD(hybridKey, channelIDAad(channelID), encPeerBundle)
 	if err != nil {
 		return fmt.Errorf("decrypt peer endpoint bundle: %w", err)

@@ -5,6 +5,17 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v1.0.4] - 2026-06-20
+
+- **why:** Close the signaling WebSocket connection immediately after the last blob exchange instead of keeping it open for the entire UDP hole punch, QUIC handshake, and payload transfer
+- **model:** opencode/deepseek-v4-flash-free
+- **tags:** performance, signaling, websocket, resource-usage
+
+### Changed
+
+- Signaling WebSocket closed early after blob 4 in tx (`internal/cli/tx.go`) and rx (`internal/cli/rx.go`) — frees server TCP socket, goroutine, and channel state minutes earlier than before
+- Existing `defer sigRaw.Close()` retained as safety net for error paths that never reach blob 4
+
 ## [v1.0.3] - 2026-06-14
 
 - **why:** Remove dead code accumulated during refactors — unused wrappers, legacy helpers, and superseded functions
