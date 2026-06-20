@@ -310,6 +310,8 @@ func runRx(code, destination, serverURL string, verify bool, listenUDP string, s
 	if err := sig.SendBlob(channelID, encMyBundle); err != nil {
 		return fmt.Errorf("send endpoint bundle blob 4: %w", err)
 	}
+	// Signaling work is done — close the WebSocket to free server resources.
+	sigRaw.Close()
 
 	// Build candidate lists from sender's bundle, split by address family.
 	candidatesV4, err := network.ParseCandidates(senderBundle.CandidatesV4())
