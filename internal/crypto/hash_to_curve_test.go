@@ -3,6 +3,7 @@ package crypto
 import (
 	"bytes"
 	"crypto/elliptic"
+	"crypto/sha256"
 	"math/big"
 	"testing"
 )
@@ -151,5 +152,43 @@ func TestP256DSTEncoding(t *testing.T) {
 	}
 	if bytes.Equal(d1, d3) {
 		t.Error("different passwords produced the same DST")
+	}
+}
+
+// TestP256DSTOversize verifies that DSTs exceeding 255 bytes are compressed
+// using SHA-256("H2C-OVERSIZE-DST-" || DST) per RFC 9380 §5.3.3, and that
+// the result is exactly 32 bytes (SHA-256 output length).
+func TestP256DSTOversize(t *testing.T) {
+	t.Parallel()
+
+	// A password of 237 bytes produces a DST of 19 + 237 = 256 bytes,
+	// which exceeds the 255-byte limit and triggers the compression branch.
+	longPW := string(bytes.Repeat([]byte("a"), 237))
+	dst := p256DST(longPW, 1)
+
+	// The compressed DST must be exactly 32 bytes (SHA-256 output).
+	if len(dst) != 32 {
+		t.Errorf("oversize DST not compressed to 32 bytes, got %d", len(dst))
+	}
+
+	// Manually compute the expected SHA-256 compression.
+	rawDST := append([]byte("hermod-cpace-v1:"),
+		[]byte{0x00, 0x01}...) // channelID 1, big-endian
+	rawDST = append(rawDST, ':')
+	rawDST = append(rawDST, []byte(longPW)...)
+
+	h := sha256.New()
+	h.Write([]byte("H2C-OVERSIZE-DST-"))
+	h.Write(rawDST)
+	expected := h.Sum(nil)
+
+	if !bytes.Equal(dst, expected) {
+		t.Errorf("oversize DST mismatch\n got:  %x\n want: %x", dst, expected)
+	}
+
+	// A short password must NOT trigger compression.
+	shortDST := p256DST("short", 1)
+	if len(shortDST) > 255 {
+		t.Error("short DST incorrectly triggered compression")
 	}
 }
