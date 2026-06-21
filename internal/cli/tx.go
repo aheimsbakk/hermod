@@ -51,6 +51,7 @@ func newHashBar(size int64, description string) *progressbar.ProgressBar {
 		progressbar.OptionSetRenderBlankState(true),
 		progressbar.OptionSetTheme(progressbar.Theme{
 			Saucer:        "=",
+			SaucerHead:    ">",
 			SaucerPadding: "-",
 			BarStart:      "[",
 			BarEnd:        "]",

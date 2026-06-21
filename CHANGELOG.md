@@ -5,6 +5,16 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v1.0.5] - 2026-06-21
+
+- **why:** Progress bar for file transfer was missing the arrowhead indicator, making it hard to see progress direction
+- **model:** opencode/deepseek-v4-flash-free
+- **tags:** fix, progress-bar, ux
+
+### Fixed
+
+- Added `SaucerHead: ">"` to the progress bar theme in `internal/cli/tx.go` so the bar shows an arrowhead instead of a flat end
+
 ## [v1.0.4] - 2026-06-20
 
 - **why:** Close the signaling WebSocket connection immediately after the last blob exchange instead of keeping it open for the entire UDP hole punch, QUIC handshake, and payload transfer
