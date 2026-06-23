@@ -1,21 +1,28 @@
 # Master Rules
+- **Dependency:** Co-read `.opencode/RULES.md`.
+- **Workflow:** architecture -> implementation -> testing -> synchronization -> zero problems -> wrap-up.
 
-- ALWAYS read `.opencode/RULES.md` alongside this file. Both are required.
+## General Constraints
+- **CI/CD:** No `.github` workflows.
+- **Commits:** Conventional Commits (`<type>(<scope>): <summary>`). Use `docs(sync):` for documentation updates.
 
-Coding workflows: architecture -> implementation -> testing -> zero problems -> wrap-up.
+## Blueprint Generation (Architecture)
+Create a deterministic, language-agnostic specification.
+- **Core:** Define System Goals, Component Hierarchy, Data Flow, and State Management.
+- **Contracts:** Specify entry points, strict payload schemas, and error boundaries.
+- **Persistence:** Define abstract schemas, memory layouts, and state trees.
+- **External:** Detail env configs, auth flows, and hardware/service dependencies.
+- **Prohibited:** No executable code, framework configs, or language-specific structures/pseudocode. Allow generic state machine logic.
 
-## General Rules
+## Codebase Generation (Mapping)
+Map abstract architecture to concrete physical files.
+- **Structure:** Annotated directory tree and physical path mappings for Blueprint components.
+- **Specs:** Declare target languages, frameworks, dependency managers, and naming conventions.
+- **Entry Points:** Provide exact paths for main loops, servers, or CLI scripts.
+- **Prohibited:** No abstract design rationale. Strict physical implementation mapping only.
 
-- **No CI/CD:** Do not create GitHub Actions or any CI/CD under `.github`.
-- **Commit Messages:** Use Conventional Commits format for all commits: `<type>(<scope>): <short summary>`. Types: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`, `perf`. Reference the version when bumping (e.g. `chore(release): bump to v1.2.0`).
-
-## BLUEPRINT.md Generation Directives
-
-Generate a language-agnostic, domain-agnostic architecture document providing deterministic specifications for downstream implementation.
-
-- **Required Sections:** Define System Goals, Logical Component Hierarchy, Data Flow Sequences, and State/Memory Management strategy.
-- **Interface Contracts:** Specify system entry points (e.g., Network API, CLI args, IPC, UI events) with strict input/output payload schemas and error boundaries.
-- **Data & Persistence:** Define abstract schemas (relational entities, file structures, memory layouts), constraints, and state tree configurations.
-- **Dependencies & Security:** Specify environment configuration requirements, authorization flows, and external hardware/service integrations.
-- **Prohibited Elements:** NO executable source code. NO framework-specific configurations. NO language-tied directory structures.
-- **Allowed Logic:** Utilize abstract state machine rules or generic sequential steps. Do not use language-specific pseudocode.
+## Synchronization Protocol
+- **Trigger:** Code changes altering system goals, hierarchy, state, or directory structure.
+- **Action:** Update Blueprint architecture/contracts and Codebase repository maps/paths. Remove orphaned paths.
+- **Verification:** Execute `verify_codebase_sync.sh` to validate `codebase.md` physical paths.
+- **Requirement:** Synchronization commits must precede final feature/fix commits.

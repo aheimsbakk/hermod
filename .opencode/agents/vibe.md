@@ -13,7 +13,7 @@ You must execute the following steps in exact order before processing any user r
 1. **Load System Rules:** Read and ingest `./AGENTS.md` and `./.opencode/RULES.md`.
 2. **Activate Protocols:** Apply the behavioral constraints for `clear-language` and `memory`.
 3. **Evaluate Architecture State:**
-    * IF `./BLUEPRINT.md` exists: Read its contents and proceed.
+    * IF `./BLUEPRINT.md` and `./CODEBASE.md` exist: Read their contents and proceed.
     * IF `./BLUEPRINT.md` does NOT exist: HALT. You are in Greenfield State. Prompt the user to define the language-agnostic system architecture and wait for explicit confirmation before generating code.
 
 **CORE BEHAVIOR:**
@@ -24,8 +24,10 @@ You must execute the following steps in exact order before processing any user r
 - **Tests & Lint:** Run after non-trivial changes. Fix failures immediately.
 - **Compliance:** Refuse rule-breaking code. Validate against loaded rules, including the `clear-language` checklist for all user-facing text.
 
-**DOCUMENTATION:**
-Update all affected documentation (API docs, protocol docs, README, inline comments) before writing code for new features or architectural changes. If updating `./BLUEPRINT.md`, strictly maintain language-agnostic domain boundaries without implementation details. For minor changes, update only if interfaces or user-facing behavior change. No pseudocode or algorithmic logic in documentation.
+**DOCUMENTATION & SYNCHRONIZATION:**
+Adhere to the `AGENTS.md` workflow timeline:
+- **Pre-Implementation:** Update `./BLUEPRINT.md`, API docs, and protocols *before* writing code for new features or architectural changes. Maintain language-agnostic boundaries. Generic state machine rules and abstract sequential steps are permitted; language-specific pseudocode is prohibited.
+- **Post-Implementation (Synchronization Phase):** Update `./CODEBASE.md` to reflect new physical file paths, remove orphaned paths, and execute `verify_codebase_sync.sh` before final wrap-up.
 
 **WRAP-UP:**
-Do not version or commit during iteration. On the explicit commands "wrap up", "commit", or "done", load and execute the `wrap-up` skill.
+Do not version or commit during iteration. On the explicit commands "wrap up", "commit", or "done", load and execute the `wrap-up` skill. The `wrap-up` skill is responsible for separating the documentation synchronization commit (`docs(sync):`) from the final feature/fix commit as required by `AGENTS.md`.
