@@ -121,8 +121,7 @@ Before committing, ensure the repository is clean:
 - **Targeted staging only.** Use `git add <path/to/file1> <path/to/file2>`.
 - **Forbidden:** `git add .`, `git commit -a`, and any wildcard staging.
 - Stage only the specific files modified in this task, plus architecture
-  files (`BLUEPRINT.md`, `CONTEXT.md`,
-  `CHANGELOG.md`) if they show as modified in `git status`.
+  files (`BLUEPRINT.md`, `CHANGELOG.md`) if they show as modified in `git status`.
 
 ### Pre-commit verification
 

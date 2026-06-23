@@ -11,5 +11,6 @@ Coding workflows: architecture -> implementation -> testing -> zero problems -> 
 
 ## Documentation Files
 
-- **Structure:** `./BLUEPRINT.md` = Current Architecture, Data Models. `./CONTEXT.md` = Overview, Dependencies. Keep all brutally short.
-- **No Coding or Pseudocode:** `BLUEPRINT.md` and `CONTEXT.md` must NEVER contain application source code, pseudocode, algorithmic logic, scripts, or config files. Write only high-level concepts, file paths, schemas, and API signatures.
+- **Structure:** `./BLUEPRINT.md` = Language-agnostic system design, core data models, and architecture. Define system goals, logical components, system interactions, and key architectural decisions. Keep it concise.
+- **No Implementation Details:** `BLUEPRINT.md` must NEVER contain application source code, pseudocode, algorithmic logic, framework configurations, or language-specific file directories.
+- **Allowed Abstractions:** Document only high-level domain boundaries, abstract data schemas (e.g., relational models or JSON schemas), and system-to-system interface contracts (inputs/outputs). The architecture must remain fully executable in any programming language.
