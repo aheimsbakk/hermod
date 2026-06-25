@@ -23,7 +23,7 @@
 14. **Bounded Caches & Memory:** Never use unbounded in-memory caches or endlessly append to global collections. Always enforce size limits or TTLs (Time-To-Live) on caches and buffers.
 15. **State Management:** Manage state mutations unidirectionally and defensively. Implement concurrency controls and race-condition guards for rapid asynchronous events (user inputs, network requests, background jobs).
 16. **Presentation & Logic Separation:** Isolate presentation/I/O handling from core business logic. Keep them in separate modules.
-17. **Modular File Structure:** Entry files should be used strictly for configuration and bootstrapping. If any file approaches 200-250 lines or takes on a second distinct responsibility, break it into smaller, focused modules with proper imports/exports. Exception: data schemas, test suites, and configuration files that are inherently cohesive may exceed this threshold.
+17. **Modular File Structure:** If a file reaches 200 lines, it MUST be reviewed for splitting into smaller focused modules with proper imports/exports before further changes are made. Any file that exceeds 300 lines MUST be split immediately. Exception: data schemas, test suites, and configuration files.
 18. **DRY & Reusability:** If the same logic appears twice, extract it into a reusable helper, utility module, or shared component. Do not copy-paste blocks of code across files.
 
 ## IV. Development & Maintenance

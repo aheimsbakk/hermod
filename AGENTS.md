@@ -19,7 +19,8 @@ Map abstract architecture to concrete physical files.
 - **Structure:** Annotated directory tree and physical path mappings for Blueprint components.
 - **Specs:** Declare target languages, frameworks, dependency managers, and naming conventions.
 - **Entry Points:** Provide exact paths for main loops, servers, or CLI scripts.
-- **Prohibited:** No abstract design rationale. Strict physical implementation mapping only.
+- **Language Rationale:** Document specific implementation choices, idioms, or structural adaptations required by the chosen language or framework.
+- **Prohibited:** No abstract architectural design rationale. Limit rationale strictly to language/framework implementation mapping.
 
 ## Synchronization Protocol
 - **Trigger:** Code changes altering system goals, hierarchy, state, or directory structure.
