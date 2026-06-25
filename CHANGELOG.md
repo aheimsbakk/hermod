@@ -5,6 +5,66 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v1.1.0] - 2026-06-25
+
+- **why:** Fix all findings from security audit glm-5.2 (3 Medium, 4 Low). Minor version bump because the API signature change and URL normalization require migration steps.
+- **model:** opencode/deepseek-v4-flash
+- **tags:** security, audit, breaking, migration, url-normalization
+
+### Migration
+
+#### `SafeDestinationPath` now returns an error
+
+File: `pkg/transfer/transfer.go`
+
+`SafeDestinationPath` used to return a single string. It now returns `(string, error)`. The error only happens when all 9,999 numbered file names already exist in the target directory, which is a rare case.
+
+**Before:**
+```go
+dest := transfer.SafeDestinationPath(dir, name)
+```
+
+**After:**
+```go
+dest, err := transfer.SafeDestinationPath(dir, name)
+if err != nil {
+    return fmt.Errorf("resolve destination: %w", err)
+}
+```
+
+#### Trust pins with non-standard URLs need re-pinning
+
+`PinServer`, `SetDefaultServer`, and `requireTrustedServer` now normalize URLs to `scheme://host:port` (lowercase host, no path, no trailing slash). If you pinned a server with a URL that has a path, trailing slash, or uppercase letters — for example `wss://Server:4376/ws` or `wss://RELAY:4376/` — the lookup will show a "not trusted" error until you re-pin.
+
+**Fix:** Run `hermod trust <server>` for each pinned server. This replaces the old entry with the normalized URL.
+
+### Security
+
+- Block spoofed UDP reflector responses by verifying the source address matches the expected server (`internal/network/stun.go`, M-02)
+- Prevent URL variants from skipping trust checks — all URLs normalize to `scheme://host:port` before store and lookup (`internal/config/config.go`, M-03)
+- Stop server crash from index-out-of-range panic in stale-waiter cleanup by using a survivor-slice pattern (`internal/server/server.go`, M-01)
+
+### Fixed
+
+- Race condition in `dropChannel`: `DeleteChannel` now runs inside the mutex lock (`internal/server/server.go`, L-07)
+- Information leak through relay error message: uses a single message for all CPace failures (`internal/server/server.go`, L-08)
+- Silent file overwrite: `SafeDestinationPath` returns an error when all 9,999 numbered copies exist (`pkg/transfer/transfer.go`, L-06)
+- Index-out-of-range panic with empty `listenAddr`: adds a length check before accessing the first character (`internal/cli/serve.go`, L-10)
+
+### Changed
+
+- `SafeDestinationPath(dir, name string) string` → `SafeDestinationPath(dir, name string) (string, error)` (`pkg/transfer/transfer.go`)
+- `PinServer` and `SetDefaultServer` normalize URLs with `NormalizeServerURL` before storing (`internal/config/config.go`)
+- Stale-waiter cleanup: swap-with-last replaced with survivor-slice pattern (`internal/server/server.go`)
+
+### Added
+
+- `NormalizeServerURL(serverURL string) (string, error)` — turns URLs into `scheme://host:port`, drops path and query, lowercases host, sets default scheme to `wss` and default port to `4376` (`internal/config/config.go`)
+- `verifyReflectorSource` — checks UDP response source matches the expected reflector address (`internal/network/stun.go`)
+- Audit document `docs/audits/audit-glm-5-2.md` with all 7 findings and how they were fixed
+- Regression tests for all M-01, M-02, M-03, L-06, L-07, L-08, and L-10 fixes
+- `CODEBASE.md` with physical file-to-component mappings
+
 ## [v1.0.5] - 2026-06-21
 
 - **why:** Progress bar for file transfer was missing the arrowhead indicator, making it hard to see progress direction
