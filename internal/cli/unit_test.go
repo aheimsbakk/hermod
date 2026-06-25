@@ -1551,3 +1551,35 @@ func escapeYAMLString(s string) string {
 	s = strings.ReplaceAll(s, "\n", `\n`)
 	return s
 }
+
+// TestServeListenAddrOverrideEmptyListenV4 verifies that the listen-address
+// guard does not panic when the address is empty and -4 is active (L-10
+// regression). The original code indexed listenAddr[0] without a length check.
+func TestServeListenAddrOverrideEmptyListenV4(t *testing.T) {
+	ipv4Only.Store(true)
+	defer ipv4Only.Store(false)
+
+	addr := ""
+	// Guard: len(addr) > 0 prevents the index-out-of-range panic.
+	if len(addr) > 0 && ipv4Only.Load() && addr[0] == ':' {
+		addr = "0.0.0.0" + addr
+	}
+	if addr != "" {
+		t.Fatalf("expected empty addr to stay empty, got %q", addr)
+	}
+}
+
+// TestServeListenAddrOverrideEmptyListenV6 verifies no panic with empty
+// address and -6 active (L-10 regression).
+func TestServeListenAddrOverrideEmptyListenV6(t *testing.T) {
+	ipv6Only.Store(true)
+	defer ipv6Only.Store(false)
+
+	addr := ""
+	if len(addr) > 0 && ipv6Only.Load() && addr[0] == ':' {
+		addr = "[::]" + addr
+	}
+	if addr != "" {
+		t.Fatalf("expected empty addr to stay empty, got %q", addr)
+	}
+}

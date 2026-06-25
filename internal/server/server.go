@@ -514,10 +514,7 @@ func (s *Server) relay(conn *websocket.Conn, channelID uint16, isSender bool) {
 
 		default:
 			s.logger.Warn("Unexpected message type in relay", "channel_id", channelID, "role", role, "type", msg.Type)
-			if s.recordFailureAndDrop(channelID) {
-				writeError(conn, "unexpected message type: channel terminated")
-				return
-			}
+			s.recordFailureAndDrop(channelID)
 			writeError(conn, "unexpected message type")
 			return
 		}
@@ -562,12 +559,12 @@ func (s *Server) dropChannel(channelID uint16) {
 	for _, w := range conns {
 		_ = w.conn.WriteJSON(Message{Type: MsgError, Error: "channel terminated: CPace failure limit exceeded"})
 	}
+	_ = s.store.DeleteChannel(channelID)
 	s.mu.Unlock()
 
 	for _, w := range conns {
 		w.conn.Close()
 	}
-	_ = s.store.DeleteChannel(channelID)
 }
 
 // recordFailureAndDrop records a protocol failure for the channel. If the

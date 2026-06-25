@@ -57,9 +57,9 @@ func runServe(listenAddr string, ttl time.Duration, rateLimit, rateBurst float64
 	// Only override when bind addr has no explicit IP (e.g. ":4376"), which means
 	// net.Listen would bind dual-stack. Explicit addresses like "10.0.0.1:4376" are
 	// left alone — the user knows what they want.
-	if ipv4Only.Load() && listenAddr[0] == ':' {
+	if len(listenAddr) > 0 && ipv4Only.Load() && listenAddr[0] == ':' {
 		listenAddr = "0.0.0.0" + listenAddr
-	} else if ipv6Only.Load() && listenAddr[0] == ':' {
+	} else if len(listenAddr) > 0 && ipv6Only.Load() && listenAddr[0] == ':' {
 		listenAddr = "[::]" + listenAddr
 	}
 

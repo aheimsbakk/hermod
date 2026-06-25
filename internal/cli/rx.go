@@ -575,7 +575,11 @@ func saveToFile(ctx context.Context, r io.Reader, meta *transfer.Metadata, desti
 	fi, err := os.Stat(destination)
 	var destPath string
 	if err == nil && fi.IsDir() {
-		destPath = transfer.SafeDestinationPath(destination, name)
+		var sdpErr error
+		destPath, sdpErr = transfer.SafeDestinationPath(destination, name)
+		if sdpErr != nil {
+			return "", "", "", 0, fmt.Errorf("resolve destination path: %w", sdpErr)
+		}
 	} else {
 		destPath = destination
 	}

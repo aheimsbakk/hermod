@@ -80,7 +80,7 @@ func DecodeMetadata(data []byte) (*Metadata, error) {
 // SafeDestinationPath resolves the output file path, appending an integer
 // suffix to avoid overwriting existing files. E.g., document(1).pdf.
 // It strips all directory components from name to prevent path traversal.
-func SafeDestinationPath(dir, name string) string {
+func SafeDestinationPath(dir, name string) (string, error) {
 	// Strip directory components supplied by an untrusted remote peer.
 	name = filepath.Base(name)
 	if name == "" || name == "." || name == ".." {
@@ -88,17 +88,21 @@ func SafeDestinationPath(dir, name string) string {
 	}
 	candidate := filepath.Join(dir, name)
 	if _, err := os.Stat(candidate); os.IsNotExist(err) {
-		return candidate
+		return candidate, nil
 	}
 	ext := filepath.Ext(name)
 	base := strings.TrimSuffix(name, ext)
 	for i := 1; i <= 9999; i++ {
 		candidate = filepath.Join(dir, base+"("+strconv.Itoa(i)+")"+ext)
 		if _, err := os.Stat(candidate); os.IsNotExist(err) {
-			return candidate
+			return candidate, nil
 		}
 	}
-	return candidate
+	// All 9,999 numbered candidates exist — give up to avoid silent overwrite.
+	if _, err := os.Stat(candidate); err == nil {
+		return "", fmt.Errorf("all 9,999 numbered copies of %q already exist in %q; delete some files or choose a different destination", name, dir)
+	}
+	return candidate, nil
 }
 
 // TempPath returns the temporary download path for a given destination.

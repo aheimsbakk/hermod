@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"math/big"
 	"net"
+	"strings"
 	"testing"
 	"time"
 
@@ -264,5 +265,92 @@ func TestStaleWaiterCleanupThreeStale(t *testing.T) {
 
 	if len(waiters) != 1 {
 		t.Fatalf("expected 1 waiter after cleaning 3 stale entries, got %d", len(waiters))
+	}
+}
+
+// TestDropChannelReleasesStoreEntry verifies that dropChannel deletes the
+// channel from the store while holding s.mu, preventing a race where a new
+// allocation with the same ID could be deleted by a deferred DeleteChannel
+// (L-07 / SUM-09 regression test).
+func TestDropChannelReleasesStoreEntry(t *testing.T) {
+	_, srv, cancel := startInternalTestServer(t)
+	defer cancel()
+
+	// Allocate a channel through the store directly.
+	if err := srv.store.AllocateChannel(99, 60*time.Second, ""); err != nil {
+		t.Fatalf("allocate channel in store: %v", err)
+	}
+
+	// Verify the channel exists.
+	if !srv.store.ChannelExists(99) {
+		t.Fatal("expected channel 99 to exist before dropChannel")
+	}
+
+	// Call dropChannel — this must delete from both waiters and store.
+	// No waiter connections to clean up; we just care about the store.
+	srv.dropChannel(99)
+
+	// Verify the channel is removed from the store.
+	if srv.store.ChannelExists(99) {
+		t.Fatal("expected channel 99 to be removed from store after dropChannel")
+	}
+
+	// Verify the channel can be re-allocated (no stale deletion race).
+	if err := srv.store.AllocateChannel(99, 60*time.Second, ""); err != nil {
+		t.Fatalf("re-allocate channel 99 after dropChannel: %v", err)
+	}
+}
+
+// TestRelayErrorGenericMessage verifies that the relay loop sends the same
+// generic error message regardless of whether the CPace failure limit has
+// been reached. This prevents the server from leaking failure-counter state
+// through error text (L-08 / SUM-05).
+func TestRelayErrorGenericMessage(t *testing.T) {
+	addr, _, cancel := startInternalTestServer(t)
+	defer cancel()
+
+	dialer := &websocket.Dialer{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}
+
+	// Open a sender connection and allocate a channel.
+	sender, _, err := dialer.Dial("wss://"+addr+"/ws", nil)
+	if err != nil {
+		t.Fatalf("dial sender: %v", err)
+	}
+	defer sender.Close()
+
+	if err := sender.WriteJSON(Message{Type: MsgAllocate, ChannelID: 44}); err != nil {
+		t.Fatalf("write allocate: %v", err)
+	}
+	sender.SetReadDeadline(time.Now().Add(3 * time.Second))
+	var resp Message
+	if err := sender.ReadJSON(&resp); err != nil {
+		t.Fatalf("read allocate response: %v", err)
+	}
+	if resp.Type != MsgOK {
+		t.Fatalf("expected MsgOK, got %s (error: %s)", resp.Type, resp.Error)
+	}
+
+	// Send an unexpected message type. The relay processes messages in a
+	// goroutine started by handleAllocate. We send MsgJoin (invalid for
+	// a sender) and expect a generic error.
+	if err := sender.WriteJSON(Message{Type: MsgJoin, ChannelID: 44}); err != nil {
+		t.Fatalf("write unexpected message: %v", err)
+	}
+
+	sender.SetReadDeadline(time.Now().Add(3 * time.Second))
+	var errResp Message
+	if err := sender.ReadJSON(&errResp); err != nil {
+		t.Fatalf("read error response: %v", err)
+	}
+	if errResp.Type != MsgError {
+		t.Fatalf("expected MsgError, got %s", errResp.Type)
+	}
+	if errResp.Error == "" {
+		t.Fatal("expected non-empty error message")
+	}
+	// The error must NOT contain "channel terminated" which would reveal
+	// that the failure limit was reached.
+	if strings.Contains(errResp.Error, "channel terminated") {
+		t.Fatalf("error message must not leak failure state, got: %q", errResp.Error)
 	}
 }

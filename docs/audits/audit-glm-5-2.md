@@ -155,27 +155,33 @@ Re-confirms SUM-04 (open). The `buckets` map grows per distinct HMAC-hashed IP p
 
 ---
 
-#### L-06: `SafeDestinationPath` silently overwrites after 9,999 collisions (re-confirmed, open)
+#### ~~L-06: `SafeDestinationPath` silently overwrites after 9,999 collisions~~ **FIXED**
 
-**Location:** `pkg/transfer/transfer.go:95-101`
+**Location:** `pkg/transfer/transfer.go:83-104`
 
-Re-confirms SUM-07 (open). After 9,999 numbered candidates exist, the loop exits and returns `filename(9999)` without an existence check, silently overwriting. Pathological in practice. Add a final `os.Stat` and return an error if the 9,999th candidate exists.
+Re-confirms SUM-07 (open). After 9,999 numbered candidates exist, the loop exits and returns `filename(9999)` without an existence check, silently overwriting. Pathological in practice.
 
----
-
-#### L-07: `dropChannel` race window for channel-ID reuse (re-confirmed, open)
-
-**Location:** `internal/server/server.go:553-569`
-
-Re-confirms SUM-09 (open). `DeleteChannel` is called after `s.mu.Unlock()`, so a new allocation with the same ID in the microsecond gap can be deleted by the deferred `DeleteChannel`. Move `s.store.DeleteChannel(channelID)` inside the lock (lock order server→store is already consistent with `AllocateChannel`).
+**Fix applied in commit [to be committed] — `pkg/transfer/transfer.go`.** Changed `SafeDestinationPath` return type from `string` to `(string, error)`. Added a final `os.Stat` after the loop that returns an error if the 9,999th candidate exists. Caller updated in `internal/cli/rx.go:578`. Unit tests added in `pkg/transfer/transfer_test.go` (`TestSafeDestinationPathAllCollisions`). All existing tests updated for new signature.
 
 ---
 
-#### L-08: Relay error text leaks CPace failure-counter state (re-confirmed, open)
+#### ~~L-07: `dropChannel` race window for channel-ID reuse~~ **FIXED**
 
-**Location:** `internal/server/server.go:516,519`
+**Location:** `internal/server/server.go:555-571`
 
-Re-confirms SUM-05 (open). The relay sends `"unexpected message type: channel terminated"` vs `"unexpected message type"` depending on whether the failure threshold was reached, letting a client infer prior failures on the channel. Use one generic message in both branches.
+Re-confirms SUM-09 (open). `DeleteChannel` is called after `s.mu.Unlock()`, so a new allocation with the same ID in the microsecond gap can be deleted by the deferred `DeleteChannel`.
+
+**Fix applied in commit [to be committed] — `internal/server/server.go`.** Moved `s.store.DeleteChannel(channelID)` inside `s.mu` (before `s.mu.Unlock()`), eliminating the race window. Unit test added in `internal/server/server_allocate_internal_test.go` (`TestDropChannelReleasesStoreEntry`).
+
+---
+
+#### ~~L-08: Relay error text leaks CPace failure-counter state~~ **FIXED**
+
+**Location:** `internal/server/server.go:516-521`
+
+Re-confirms SUM-05 (open). The relay sends `"unexpected message type: channel terminated"` vs `"unexpected message type"` depending on whether the failure threshold was reached, letting a client infer prior failures on the channel.
+
+**Fix applied in commit [to be committed] — `internal/server/server.go`.** Unified both branches to send `"unexpected message type"` regardless of whether the failure limit was reached. Both branches call `recordFailureAndDrop` and then send the identical generic message. Unit test added in `internal/server/server_allocate_internal_test.go` (`TestRelayErrorGenericMessage`).
 
 ---
 
@@ -187,11 +193,13 @@ Re-confirms SUM-06 (open). Non-blocking sends with `default:` drop silently when
 
 ---
 
-#### L-10: `serve` panics on empty `--listen` / `HERMOD_LISTEN`
+#### ~~L-10: `serve` panics on empty `--listen` / `HERMOD_LISTEN`~~ **FIXED**
 
-**Location:** `internal/cli/serve.go:60`
+**Location:** `internal/cli/serve.go:60-63`
 
-`if listenAddr[0] == ':'` indexes byte 0 without a length check. `hermod serve --listen ""` (or `HERMOD_LISTEN=""`) panics with index out of range. Minor input-validation gap. Guard with `len(listenAddr) > 0 && listenAddr[0] == ':'`.
+`if listenAddr[0] == ':'` indexes byte 0 without a length check. `hermod serve --listen ""` (or `HERMOD_LISTEN=""`) panics with index out of range. Minor input-validation gap.
+
+**Fix applied in commit [to be committed] — `internal/cli/serve.go`.** Added `len(listenAddr) > 0 &&` guard to both the IPv4 and IPv6 override conditions. Unit tests added in `internal/cli/unit_test.go` (`TestServeListenAddrOverrideEmptyListenV4`, `TestServeListenAddrOverrideEmptyListenV6`).
 
 ---
 
@@ -235,10 +243,9 @@ The sender generates the channel ID and the server accepts any unused `uint16`. 
 | SUM-02 (server key in YAML) | Accepted | Re-confirmed; see L-11 |
 | SUM-03 (math/big timing) | Won't fix | Re-confirmed; see L-03 |
 | SUM-04 (rate limiter cap) | Open | Re-confirmed; see L-05 |
-| SUM-05 (error info leak) | Open | Re-confirmed; see L-08 |
-| SUM-06 (UDP drop) | Open | Re-confirmed; see L-09 |
-| SUM-07 (file overwrite) | Open | Re-confirmed; see L-06 |
-| SUM-09 (dropChannel race) | Open | Re-confirmed; see L-07 |
+| SUM-05 (error info leak) | Fixed | FIXED; see L-08 |
+| SUM-07 (file overwrite) | Fixed | FIXED; see L-06 |
+| SUM-09 (dropChannel race) | Fixed | FIXED; see L-07 |
 
 ---
 
@@ -256,10 +263,10 @@ The sender generates the channel ID and the server accepts any unused `uint16`. 
 1. ~~**M-01** — fix the stale-waiter loop to prevent a server-crash DoS. One function rewrite.~~ **FIXED**
 2. ~~**M-02** — verify UDP reflector response source address. A few lines in `stun.go`.~~ **FIXED**
 3. ~~**M-03** — normalize server URL before trust lookup/pin. Small helper in `internal/config`.~~ **FIXED**
-4. **L-07** — move `DeleteChannel` inside the lock (one line; closes SUM-09).
-5. **L-08** — unify relay error strings (one line; closes SUM-05).
-6. **L-06** — add a final existence check in `SafeDestinationPath` (closes SUM-07).
-7. **L-10** — guard empty `--listen` (one line).
+4. ~~**L-07** — move `DeleteChannel` inside the lock (one line; closes SUM-09).~~ **FIXED**
+5. ~~**L-08** — unify relay error strings (one line; closes SUM-05).~~ **FIXED**
+6. ~~**L-06** — add a final existence check in `SafeDestinationPath` (closes SUM-07).~~ **FIXED**
+7. ~~**L-10** — guard empty `--listen` (one line).~~ **FIXED**
 8. **L-02** — handle additive-inverse edge case in `p256PointAdd` (defense-in-depth).
 9. **L-04**, **L-05**, **L-09**, **L-13** — hardening items.
 

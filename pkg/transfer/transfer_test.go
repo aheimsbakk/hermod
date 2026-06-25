@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	"github.com/hermod/hermod/pkg/transfer"
@@ -145,7 +146,10 @@ func TestSafeDestinationPathTraversal(t *testing.T) {
 		"../../.ssh/authorized_keys",
 	}
 	for _, malicious := range cases {
-		result := transfer.SafeDestinationPath(dir, malicious)
+		result, err := transfer.SafeDestinationPath(dir, malicious)
+		if err != nil {
+			t.Fatalf("SafeDestinationPath returned error for %q: %v", malicious, err)
+		}
 		// Result must not escape the destination directory.
 		rel, err := filepath.Rel(dir, result)
 		if err != nil {
@@ -162,7 +166,10 @@ func TestSafeDestinationPath(t *testing.T) {
 	name := "file.txt"
 
 	// First time: no collision
-	p1 := transfer.SafeDestinationPath(dir, name)
+	p1, err := transfer.SafeDestinationPath(dir, name)
+	if err != nil {
+		t.Fatalf("SafeDestinationPath error: %v", err)
+	}
 	expected := filepath.Join(dir, name)
 	if p1 != expected {
 		t.Fatalf("expected %s, got %s", expected, p1)
@@ -172,7 +179,10 @@ func TestSafeDestinationPath(t *testing.T) {
 	os.WriteFile(p1, []byte("data"), 0o644)
 
 	// Second time: collision -> file(1).txt
-	p2 := transfer.SafeDestinationPath(dir, name)
+	p2, err := transfer.SafeDestinationPath(dir, name)
+	if err != nil {
+		t.Fatalf("SafeDestinationPath error: %v", err)
+	}
 	if p2 == p1 {
 		t.Fatal("expected different path on collision")
 	}
@@ -181,9 +191,37 @@ func TestSafeDestinationPath(t *testing.T) {
 	os.WriteFile(p2, []byte("data"), 0o644)
 
 	// Third time: file(2).txt
-	p3 := transfer.SafeDestinationPath(dir, name)
+	p3, err := transfer.SafeDestinationPath(dir, name)
+	if err != nil {
+		t.Fatalf("SafeDestinationPath error: %v", err)
+	}
 	if p3 == p1 || p3 == p2 {
 		t.Fatal("expected unique path")
+	}
+}
+
+func TestSafeDestinationPathAllCollisions(t *testing.T) {
+	dir := t.TempDir()
+	name := "file.txt"
+
+	// Create the base file and 9,999 numbered variants so all slots are taken.
+	base, err := transfer.SafeDestinationPath(dir, name)
+	if err != nil {
+		t.Fatalf("SafeDestinationPath error: %v", err)
+	}
+	os.WriteFile(base, []byte("data"), 0o644)
+
+	ext := filepath.Ext(name)
+	stem := name[:len(name)-len(ext)]
+	for i := 1; i <= 9999; i++ {
+		p := filepath.Join(dir, stem+"("+strconv.Itoa(i)+")"+ext)
+		os.WriteFile(p, []byte("data"), 0o644)
+	}
+
+	// All 9,999 numbered copies exist — expect an error.
+	_, err = transfer.SafeDestinationPath(dir, name)
+	if err == nil {
+		t.Fatal("expected error when all 9,999 numbered variants exist")
 	}
 }
 
