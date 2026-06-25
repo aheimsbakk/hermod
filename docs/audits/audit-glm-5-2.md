@@ -97,7 +97,7 @@ Note: the `defer s.mu.Unlock()` change should be applied to every `s.mu.Lock()` 
 
 ---
 
-#### M-03: Server trust lookup keyed by exact URL string — variant mismatch defeats enforcement
+#### ~~M-03: Server trust lookup keyed by exact URL string — variant mismatch defeats enforcement~~ **FIXED**
 
 **Location:** `internal/cli/server_trust.go:14`, `internal/config/config.go:238`
 
@@ -106,6 +106,8 @@ Note: the `defer s.mu.Unlock()` change should be applied to every `s.mu.Lock()` 
 **Recommendation:** Normalize to `scheme://host:port` (drop path, default port 4376, lowercase host) before both pinning and lookup. Re-pin on the canonical form so existing pins keep working after normalization.
 
 **Severity:** Medium (reliability / UX that undermines a security control).
+
+**Fix applied in commit [to be committed] — `internal/config/config.go`, `internal/cli/server_trust.go`, `internal/cli/trust.go`.** Added `NormalizeServerURL` in `config.go` that canonicalizes URLs to `scheme://host:port` (drops path/query, lowercases host, defaults scheme to `wss` and port to `4376`). Both `PinServer` and `SetDefaultServer` call `NormalizeServerURL` before storing; `requireTrustedServer` normalizes before lookup. `runTrust` uses the canonical form for pinning and display. Unit tests added in `internal/config/config_test.go` (`TestNormalizeServerURL_*`, `TestPinServer_NormalizesURL`, `TestSetDefaultServer_NormalizesURL`) and `internal/cli/unit_test.go` (`TestRequireTrustedServer_NormalizedLookup_*`). Existing pins created before this fix are automatically re-normalized when the user runs `hermod trust` again (re-pins on canonical key). Manually edited config.yaml entries with variant URLs will produce a "not trusted" error; re-running `hermod trust` fixes them.
 
 ---
 
@@ -253,7 +255,7 @@ The sender generates the channel ID and the server accepts any unused `uint16`. 
 
 1. ~~**M-01** — fix the stale-waiter loop to prevent a server-crash DoS. One function rewrite.~~ **FIXED**
 2. ~~**M-02** — verify UDP reflector response source address. A few lines in `stun.go`.~~ **FIXED**
-3. **M-03** — normalize server URL before trust lookup/pin. Small helper in `internal/config`.
+3. ~~**M-03** — normalize server URL before trust lookup/pin. Small helper in `internal/config`.~~ **FIXED**
 4. **L-07** — move `DeleteChannel` inside the lock (one line; closes SUM-09).
 5. **L-08** — unify relay error strings (one line; closes SUM-05).
 6. **L-06** — add a final existence check in `SafeDestinationPath` (closes SUM-07).

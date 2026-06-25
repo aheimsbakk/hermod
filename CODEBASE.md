@@ -160,7 +160,7 @@
 | Version string | `internal/cli/version.go` | Generated version constant (synced by `scripts/bump-version.sh`) |
 | Verbosity/logging | `internal/cli/verbosity.go` | Log level parsing, slog configuration, `logInfo`/`logWarn`/`logError`/`logDebug` helpers |
 | Cancellation | `internal/cli/cancel.go` | QUIC application error codes and peer-cancel detection |
-| Server trust enforcement | `internal/cli/server_trust.go` | `requireTrustedServer()` — aborts if server not pinned |
+| Server trust enforcement | `internal/cli/server_trust.go` | `requireTrustedServer()` — aborts if server not pinned (normalizes URL before lookup) |
 | Progress bars | `internal/cli/stream_bar.go` | Bouncing shuttle bar for unknown-size (stream) transfers |
 | TTY helpers | `internal/cli/tty_unix.go`, `internal/cli/tty_windows.go` | `/dev/tty` opening for SAS prompts |
 | Entry point | `cmd/hermod/main.go` | Calls `cli.Execute()` |
@@ -174,7 +174,8 @@
 | Server cert renewal | `internal/config/config.go` | `RenewServerCert()` — same key, new cert (SPKI preserved) |
 | SPKI fingerprint | `internal/config/config.go` | `PubKeyFingerprint()` — SHA-256 of Subject Public Key Info |
 | Certificate expiry warnings | `internal/config/config.go` | `LogCertExpiry()` — 90/30/7 day thresholds |
-| Server pinning | `internal/config/config.go` | `PinServer()` — store SPKI fingerprint per server URL |
+| Server pinning | `internal/config/config.go` | `PinServer()` — store SPKI fingerprint per server URL (URL normalized by `NormalizeServerURL` before storing) |
+| URL normalization | `internal/config/config.go` | `NormalizeServerURL()` — canonicalize to `scheme://host:port`, drop path, lowercase host |
 
 ### 3. Cryptographic Engine
 | Blueprint Component | Physical File(s) | Responsibility |

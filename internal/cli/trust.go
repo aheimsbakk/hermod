@@ -49,24 +49,32 @@ func runTrust(serverArg, knownFingerprint string) error {
 	defer stop()
 
 	// Normalize: if no scheme, prepend wss://
-	serverURL := serverArg
-	if len(serverURL) < 4 || serverURL[:4] != "wss:" && serverURL[:3] != "ws:" {
-		serverURL = "wss://" + serverURL
+	connectURL := serverArg
+	if len(connectURL) < 4 || connectURL[:4] != "wss:" && connectURL[:3] != "ws:" {
+		connectURL = "wss://" + connectURL
 	}
 
-	// Default to port 4376 when no port is specified
-	u, err := url.Parse(serverURL)
+	// Reject plaintext WebSocket
+	u, err := url.Parse(connectURL)
 	if err != nil {
 		return fmt.Errorf("parse server URL: %w", err)
 	}
 	if u.Scheme == "ws" {
 		return fmt.Errorf("plaintext WebSocket (ws://) is not allowed by default; use wss://")
 	}
+
+	// Default to port 4376 when no port is specified
 	if u.Port() == "" {
-		serverURL = "wss://" + u.Host + ":4376" + u.Path
+		connectURL = "wss://" + u.Host + ":4376" + u.Path
 	}
 
-	printStatus("Connecting to %s to fetch certificate...", serverURL)
+	// Normalize for pinning key (scheme://host:port, drop path)
+	canonical, err := config.NormalizeServerURL(serverArg)
+	if err != nil {
+		return fmt.Errorf("parse server URL: %w", err)
+	}
+
+	printStatus("Connecting to %s to fetch certificate...", connectURL)
 
 	sigFamily := network.IPFamilyAny
 	switch {
@@ -75,7 +83,7 @@ func runTrust(serverArg, knownFingerprint string) error {
 	case ipv6Only.Load():
 		sigFamily = network.IPFamilyV6
 	}
-	fp, err := network.FetchServerFingerprint(ctx, serverURL, knownFingerprint, sigFamily)
+	fp, err := network.FetchServerFingerprint(ctx, connectURL, knownFingerprint, sigFamily)
 	if err != nil {
 		return fmt.Errorf("fetch fingerprint: %w", err)
 	}
@@ -85,13 +93,13 @@ func runTrust(serverArg, knownFingerprint string) error {
 		return fmt.Errorf("load config: %w", err)
 	}
 
-	config.PinServer(cfg, serverURL, fp)
-	config.SetDefaultServer(cfg, serverURL)
+	config.PinServer(cfg, canonical, fp)
+	config.SetDefaultServer(cfg, canonical)
 
 	if err := config.Save(cfg); err != nil {
 		return fmt.Errorf("save config: %w", err)
 	}
 
-	printStatus("Pinned %s\n  fingerprint: %s\n  set as default server", serverURL, fp)
+	printStatus("Pinned %s\n  fingerprint: %s\n  set as default server", canonical, fp)
 	return nil
 }

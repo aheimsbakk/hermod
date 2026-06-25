@@ -900,6 +900,96 @@ func TestRequireTrustedServer_EmptyFingerprint(t *testing.T) {
 	}
 }
 
+// TestRequireTrustedServer_NormalizedLookup_PathVariant verifies that a server
+// pinned as "wss://relay:4376" is found when looked up as "wss://relay:4376/ws".
+func TestRequireTrustedServer_NormalizedLookup_PathVariant(t *testing.T) {
+	cfg := config.Default()
+	config.PinServer(cfg, "wss://relay:4376", strings.Repeat("b", 64))
+
+	got, err := requireTrustedServer(cfg, "wss://relay:4376/ws")
+	if err != nil {
+		t.Fatalf("expected lookup to succeed with normalized path variant: %v", err)
+	}
+	if len(got) != 64 {
+		t.Fatalf("expected 64-char fingerprint, got %q", got)
+	}
+}
+
+// TestRequireTrustedServer_NormalizedLookup_TrailingSlash verifies that a server
+// pinned as "wss://relay:4376" is found when looked up with a trailing slash.
+func TestRequireTrustedServer_NormalizedLookup_TrailingSlash(t *testing.T) {
+	cfg := config.Default()
+	config.PinServer(cfg, "wss://relay:4376", strings.Repeat("c", 64))
+
+	got, err := requireTrustedServer(cfg, "wss://relay:4376/")
+	if err != nil {
+		t.Fatalf("expected lookup to succeed with trailing slash: %v", err)
+	}
+	if len(got) != 64 {
+		t.Fatalf("expected 64-char fingerprint, got %q", got)
+	}
+}
+
+// TestRequireTrustedServer_NormalizedLookup_CaseInsensitive verifies that a server
+// pinned as "wss://relay:4376" is found when looked up with uppercase host.
+func TestRequireTrustedServer_NormalizedLookup_CaseInsensitive(t *testing.T) {
+	cfg := config.Default()
+	config.PinServer(cfg, "wss://relay:4376", strings.Repeat("d", 64))
+
+	got, err := requireTrustedServer(cfg, "wss://RELAY:4376")
+	if err != nil {
+		t.Fatalf("expected lookup to succeed with uppercase host: %v", err)
+	}
+	if len(got) != 64 {
+		t.Fatalf("expected 64-char fingerprint, got %q", got)
+	}
+}
+
+// TestRequireTrustedServer_NormalizedLookup_DefaultPort verifies that a server
+// pinned as "wss://relay:4376" is found when looked up without an explicit port.
+func TestRequireTrustedServer_NormalizedLookup_DefaultPort(t *testing.T) {
+	cfg := config.Default()
+	config.PinServer(cfg, "wss://relay:4376", strings.Repeat("e", 64))
+
+	got, err := requireTrustedServer(cfg, "wss://relay")
+	if err != nil {
+		t.Fatalf("expected lookup to succeed with default port: %v", err)
+	}
+	if len(got) != 64 {
+		t.Fatalf("expected 64-char fingerprint, got %q", got)
+	}
+}
+
+// TestRequireTrustedServer_NormalizedLookup_QueryString verifies that a server
+// pinned as "wss://relay:4376" is found when looked up with a query string.
+func TestRequireTrustedServer_NormalizedLookup_QueryString(t *testing.T) {
+	cfg := config.Default()
+	config.PinServer(cfg, "wss://relay:4376", strings.Repeat("f", 64))
+
+	got, err := requireTrustedServer(cfg, "wss://relay:4376?foo=bar")
+	if err != nil {
+		t.Fatalf("expected lookup to succeed with query string: %v", err)
+	}
+	if len(got) != 64 {
+		t.Fatalf("expected 64-char fingerprint, got %q", got)
+	}
+}
+
+// TestRequireTrustedServer_NormalizedLookup_Reverse verifies that a server
+// pinned with a path variant ("/ws") is found when looked up bare.
+func TestRequireTrustedServer_NormalizedLookup_Reverse(t *testing.T) {
+	cfg := config.Default()
+	config.PinServer(cfg, "wss://relay:4376/ws", strings.Repeat("g", 64))
+
+	got, err := requireTrustedServer(cfg, "wss://relay:4376")
+	if err != nil {
+		t.Fatalf("expected lookup to succeed when pin had path and lookup is bare: %v", err)
+	}
+	if len(got) != 64 {
+		t.Fatalf("expected 64-char fingerprint, got %q", got)
+	}
+}
+
 // --- server trust enforcement ---
 
 // TestRunTx_UntrustedServerAborts verifies that tx returns a "not trusted"
