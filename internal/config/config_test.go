@@ -3,6 +3,7 @@ package config_test
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/hermod/hermod/internal/config"
@@ -181,5 +182,180 @@ func TestTrustSetsDefaultServer(t *testing.T) {
 	config.SetDefaultServer(cfg, "wss://example.com:4376")
 	if cfg.ServerURL != "wss://example.com:4376" {
 		t.Fatalf("expected server URL to be set, got %q", cfg.ServerURL)
+	}
+}
+
+// --- NormalizeServerURL ---
+
+func TestNormalizeServerURL_StripsPath(t *testing.T) {
+	got, err := config.NormalizeServerURL("wss://relay:4376/ws")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := "wss://relay:4376"
+	if got != want {
+		t.Fatalf("expected %q, got %q", want, got)
+	}
+}
+
+func TestNormalizeServerURL_StripsTrailingSlash(t *testing.T) {
+	got, err := config.NormalizeServerURL("wss://relay:4376/")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := "wss://relay:4376"
+	if got != want {
+		t.Fatalf("expected %q, got %q", want, got)
+	}
+}
+
+func TestNormalizeServerURL_LowercasesHost(t *testing.T) {
+	got, err := config.NormalizeServerURL("wss://RELAY:4376")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := "wss://relay:4376"
+	if got != want {
+		t.Fatalf("expected %q, got %q", want, got)
+	}
+}
+
+func TestNormalizeServerURL_DefaultsPort(t *testing.T) {
+	got, err := config.NormalizeServerURL("wss://relay")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := "wss://relay:4376"
+	if got != want {
+		t.Fatalf("expected %q, got %q", want, got)
+	}
+}
+
+func TestNormalizeServerURL_DefaultsSchemeAndPort(t *testing.T) {
+	got, err := config.NormalizeServerURL("relay")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := "wss://relay:4376"
+	if got != want {
+		t.Fatalf("expected %q, got %q", want, got)
+	}
+}
+
+func TestNormalizeServerURL_StripsQueryString(t *testing.T) {
+	got, err := config.NormalizeServerURL("wss://relay:4376?token=abc")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := "wss://relay:4376"
+	if got != want {
+		t.Fatalf("expected %q, got %q", want, got)
+	}
+}
+
+func TestNormalizeServerURL_KeepsNonDefaultPort(t *testing.T) {
+	got, err := config.NormalizeServerURL("wss://relay:9090")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := "wss://relay:9090"
+	if got != want {
+		t.Fatalf("expected %q, got %q", want, got)
+	}
+}
+
+func TestNormalizeServerURL_KeepsWSScheme(t *testing.T) {
+	got, err := config.NormalizeServerURL("ws://relay:4376")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := "ws://relay:4376"
+	if got != want {
+		t.Fatalf("expected %q, got %q", want, got)
+	}
+}
+
+func TestNormalizeServerURL_IPv6Preserved(t *testing.T) {
+	got, err := config.NormalizeServerURL("wss://[::1]:4376")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := "wss://[::1]:4376"
+	if got != want {
+		t.Fatalf("expected %q, got %q", want, got)
+	}
+}
+
+func TestNormalizeServerURL_IPv4Preserved(t *testing.T) {
+	got, err := config.NormalizeServerURL("wss://192.168.1.1:4376")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := "wss://192.168.1.1:4376"
+	if got != want {
+		t.Fatalf("expected %q, got %q", want, got)
+	}
+}
+
+func TestNormalizeServerURL_EmptyReturnsError(t *testing.T) {
+	_, err := config.NormalizeServerURL("")
+	if err == nil {
+		t.Fatal("expected error for empty URL, got nil")
+	}
+	if !strings.Contains(err.Error(), "empty") {
+		t.Errorf("expected 'empty' in error, got: %v", err)
+	}
+}
+
+func TestNormalizeServerURL_NoHostReturnsError(t *testing.T) {
+	_, err := config.NormalizeServerURL("wss:///path")
+	if err == nil {
+		t.Fatal("expected error for URL with no host, got nil")
+	}
+	if !strings.Contains(err.Error(), "no host") {
+		t.Errorf("expected 'no host' in error, got: %v", err)
+	}
+}
+
+// --- PinServer normalization ---
+
+func TestPinServer_NormalizesURL(t *testing.T) {
+	cfg := config.Default()
+	config.PinServer(cfg, "wss://RELAY:4376/ws", "fingerprint")
+	if got := cfg.TrustedServers["wss://relay:4376"]; got != "fingerprint" {
+		t.Fatalf("expected pinned key 'wss://relay:4376', got %q (map: %v)", got, cfg.TrustedServers)
+	}
+}
+
+func TestPinServer_RawVariantAccessible(t *testing.T) {
+	cfg := config.Default()
+	config.PinServer(cfg, "wss://relay:4376/ws", "path-variant")
+	config.PinServer(cfg, "wss://relay:4376", "clean-variant")
+	// Both variants should map to the same normalized key — the second pin overwrites the first.
+	if len(cfg.TrustedServers) != 1 {
+		t.Fatalf("expected 1 entry in TrustedServers (both URLs normalize to same), got %d", len(cfg.TrustedServers))
+	}
+	if cfg.TrustedServers["wss://relay:4376"] != "clean-variant" {
+		t.Fatalf("expected 'clean-variant', got %q", cfg.TrustedServers["wss://relay:4376"])
+	}
+}
+
+// --- SetDefaultServer normalization ---
+
+func TestSetDefaultServer_NormalizesURL(t *testing.T) {
+	cfg := config.Default()
+	config.SetDefaultServer(cfg, "wss://Relay:4376/ws")
+	want := "wss://relay:4376"
+	if cfg.ServerURL != want {
+		t.Fatalf("expected %q, got %q", want, cfg.ServerURL)
+	}
+}
+
+func TestSetDefaultServer_InvalidURL(t *testing.T) {
+	cfg := config.Default()
+	cfg.ServerURL = "wss://existing:4376"
+	config.SetDefaultServer(cfg, "://bad")
+	if cfg.ServerURL != "wss://existing:4376" {
+		t.Fatalf("expected existing server URL to be preserved, got %q", cfg.ServerURL)
 	}
 }

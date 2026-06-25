@@ -62,9 +62,16 @@ func DiscoverViaReflector(conn net.PacketConn, serverAddr string, timeout time.D
 	defer conn.SetReadDeadline(time.Time{})
 
 	buf := make([]byte, 1500)
-	n, _, err := conn.ReadFrom(buf)
+	n, addr, err := conn.ReadFrom(buf)
 	if err != nil {
 		return nil, fmt.Errorf("read probe response: %w", err)
+	}
+
+	// Verify that the phase-1 response comes from the expected reflector
+	// address. This prevents on-path attackers from injecting spoofed
+	// cookie responses (see audit M-02).
+	if err := verifyReflectorSource(addr, udpAddr); err != nil {
+		return nil, err
 	}
 
 	// Cookie response: first byte matches the magic, should be 9 bytes.
@@ -80,10 +87,30 @@ func DiscoverViaReflector(conn net.PacketConn, serverAddr string, timeout time.D
 		return nil, fmt.Errorf("send cookie echo: %w", err)
 	}
 
-	n, _, err = conn.ReadFrom(buf)
+	n, addr, err = conn.ReadFrom(buf)
 	if err != nil {
 		return nil, fmt.Errorf("read address response: %w", err)
 	}
 
+	// Verify that the phase-2 (address) response comes from the expected
+	// reflector address (see audit M-02).
+	if err := verifyReflectorSource(addr, udpAddr); err != nil {
+		return nil, err
+	}
+
 	return server.DecodeExternalAddress(buf[:n])
+}
+
+// verifyReflectorSource checks that the response source matches the expected
+// reflector address. An on-path attacker could observe the cleartext cookie
+// and inject spoofed responses; verifying the source address prevents this.
+func verifyReflectorSource(addr net.Addr, expected *net.UDPAddr) error {
+	got, ok := addr.(*net.UDPAddr)
+	if !ok {
+		return fmt.Errorf("response from unexpected address type %T", addr)
+	}
+	if !got.IP.Equal(expected.IP) || got.Port != expected.Port {
+		return fmt.Errorf("response from unexpected source %s", got.String())
+	}
+	return nil
 }

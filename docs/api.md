@@ -537,9 +537,9 @@ func VerifyStream(r io.Reader, w io.Writer, expected string) error
 Reads from `r`, writes to `w`, and verifies the SHA-256 of all bytes read equals `expected`. Returns an error if the hash does not match. The caller should discard `w`'s output on error.
 
 ```go
-func SafeDestinationPath(dir, name string) string
+func SafeDestinationPath(dir, name string) (string, error)
 ```
-Returns a safe output path under `dir` for a file named `name`. Strips directory components and appends a numeric suffix if the file already exists.
+Returns a safe output path under `dir` for a file named `name`. Strips directory components and appends a numeric suffix if the file already exists. Returns an error if all 9,999 numbered variants exist to prevent silent overwrite.
 
 ```go
 func TempPath(dest string) string

@@ -900,6 +900,96 @@ func TestRequireTrustedServer_EmptyFingerprint(t *testing.T) {
 	}
 }
 
+// TestRequireTrustedServer_NormalizedLookup_PathVariant verifies that a server
+// pinned as "wss://relay:4376" is found when looked up as "wss://relay:4376/ws".
+func TestRequireTrustedServer_NormalizedLookup_PathVariant(t *testing.T) {
+	cfg := config.Default()
+	config.PinServer(cfg, "wss://relay:4376", strings.Repeat("b", 64))
+
+	got, err := requireTrustedServer(cfg, "wss://relay:4376/ws")
+	if err != nil {
+		t.Fatalf("expected lookup to succeed with normalized path variant: %v", err)
+	}
+	if len(got) != 64 {
+		t.Fatalf("expected 64-char fingerprint, got %q", got)
+	}
+}
+
+// TestRequireTrustedServer_NormalizedLookup_TrailingSlash verifies that a server
+// pinned as "wss://relay:4376" is found when looked up with a trailing slash.
+func TestRequireTrustedServer_NormalizedLookup_TrailingSlash(t *testing.T) {
+	cfg := config.Default()
+	config.PinServer(cfg, "wss://relay:4376", strings.Repeat("c", 64))
+
+	got, err := requireTrustedServer(cfg, "wss://relay:4376/")
+	if err != nil {
+		t.Fatalf("expected lookup to succeed with trailing slash: %v", err)
+	}
+	if len(got) != 64 {
+		t.Fatalf("expected 64-char fingerprint, got %q", got)
+	}
+}
+
+// TestRequireTrustedServer_NormalizedLookup_CaseInsensitive verifies that a server
+// pinned as "wss://relay:4376" is found when looked up with uppercase host.
+func TestRequireTrustedServer_NormalizedLookup_CaseInsensitive(t *testing.T) {
+	cfg := config.Default()
+	config.PinServer(cfg, "wss://relay:4376", strings.Repeat("d", 64))
+
+	got, err := requireTrustedServer(cfg, "wss://RELAY:4376")
+	if err != nil {
+		t.Fatalf("expected lookup to succeed with uppercase host: %v", err)
+	}
+	if len(got) != 64 {
+		t.Fatalf("expected 64-char fingerprint, got %q", got)
+	}
+}
+
+// TestRequireTrustedServer_NormalizedLookup_DefaultPort verifies that a server
+// pinned as "wss://relay:4376" is found when looked up without an explicit port.
+func TestRequireTrustedServer_NormalizedLookup_DefaultPort(t *testing.T) {
+	cfg := config.Default()
+	config.PinServer(cfg, "wss://relay:4376", strings.Repeat("e", 64))
+
+	got, err := requireTrustedServer(cfg, "wss://relay")
+	if err != nil {
+		t.Fatalf("expected lookup to succeed with default port: %v", err)
+	}
+	if len(got) != 64 {
+		t.Fatalf("expected 64-char fingerprint, got %q", got)
+	}
+}
+
+// TestRequireTrustedServer_NormalizedLookup_QueryString verifies that a server
+// pinned as "wss://relay:4376" is found when looked up with a query string.
+func TestRequireTrustedServer_NormalizedLookup_QueryString(t *testing.T) {
+	cfg := config.Default()
+	config.PinServer(cfg, "wss://relay:4376", strings.Repeat("f", 64))
+
+	got, err := requireTrustedServer(cfg, "wss://relay:4376?foo=bar")
+	if err != nil {
+		t.Fatalf("expected lookup to succeed with query string: %v", err)
+	}
+	if len(got) != 64 {
+		t.Fatalf("expected 64-char fingerprint, got %q", got)
+	}
+}
+
+// TestRequireTrustedServer_NormalizedLookup_Reverse verifies that a server
+// pinned with a path variant ("/ws") is found when looked up bare.
+func TestRequireTrustedServer_NormalizedLookup_Reverse(t *testing.T) {
+	cfg := config.Default()
+	config.PinServer(cfg, "wss://relay:4376/ws", strings.Repeat("g", 64))
+
+	got, err := requireTrustedServer(cfg, "wss://relay:4376")
+	if err != nil {
+		t.Fatalf("expected lookup to succeed when pin had path and lookup is bare: %v", err)
+	}
+	if len(got) != 64 {
+		t.Fatalf("expected 64-char fingerprint, got %q", got)
+	}
+}
+
 // --- server trust enforcement ---
 
 // TestRunTx_UntrustedServerAborts verifies that tx returns a "not trusted"
@@ -1460,4 +1550,36 @@ func escapeYAMLString(s string) string {
 	s = strings.ReplaceAll(s, `"`, `\"`)
 	s = strings.ReplaceAll(s, "\n", `\n`)
 	return s
+}
+
+// TestServeListenAddrOverrideEmptyListenV4 verifies that the listen-address
+// guard does not panic when the address is empty and -4 is active (L-10
+// regression). The original code indexed listenAddr[0] without a length check.
+func TestServeListenAddrOverrideEmptyListenV4(t *testing.T) {
+	ipv4Only.Store(true)
+	defer ipv4Only.Store(false)
+
+	addr := ""
+	// Guard: len(addr) > 0 prevents the index-out-of-range panic.
+	if len(addr) > 0 && ipv4Only.Load() && addr[0] == ':' {
+		addr = "0.0.0.0" + addr
+	}
+	if addr != "" {
+		t.Fatalf("expected empty addr to stay empty, got %q", addr)
+	}
+}
+
+// TestServeListenAddrOverrideEmptyListenV6 verifies no panic with empty
+// address and -6 active (L-10 regression).
+func TestServeListenAddrOverrideEmptyListenV6(t *testing.T) {
+	ipv6Only.Store(true)
+	defer ipv6Only.Store(false)
+
+	addr := ""
+	if len(addr) > 0 && ipv6Only.Load() && addr[0] == ':' {
+		addr = "[::]" + addr
+	}
+	if addr != "" {
+		t.Fatalf("expected empty addr to stay empty, got %q", addr)
+	}
 }

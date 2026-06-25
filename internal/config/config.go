@@ -13,9 +13,12 @@ import (
 	"encoding/pem"
 	"fmt"
 	"math/big"
+	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -229,19 +232,60 @@ func PubKeyFingerprint(certDER []byte) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// NormalizeServerURL canonicalizes a server URL to scheme://host:port form.
+// It drops the path, query, and fragment components, lowercases the host,
+// defaults the scheme to "wss" and the port to 4376.
+// Returns an error if the input is empty or cannot be parsed as a URL.
+// Examples:
+//
+//	wss://Relay:4376/ws  →  wss://relay:4376
+//	relay                →  wss://relay:4376
+//	ws://relay:9090      →  ws://relay:9090
+func NormalizeServerURL(serverURL string) (string, error) {
+	if serverURL == "" {
+		return "", fmt.Errorf("server URL is empty")
+	}
+	if !strings.HasPrefix(serverURL, "wss://") && !strings.HasPrefix(serverURL, "ws://") {
+		serverURL = "wss://" + serverURL
+	}
+	u, err := url.Parse(serverURL)
+	if err != nil {
+		return "", fmt.Errorf("parse server URL: %w", err)
+	}
+	host := strings.ToLower(u.Hostname())
+	if host == "" {
+		return "", fmt.Errorf("server URL %q has no host component", serverURL)
+	}
+	port := u.Port()
+	if port == "" {
+		port = "4376"
+	}
+	return u.Scheme + "://" + net.JoinHostPort(host, port), nil
+}
+
 // PinServer stores the server's SPKI fingerprint in cfg.
 // Use PubKeyFingerprint to compute this value.
+// The serverURL is normalized to scheme://host:port before storing (see NormalizeServerURL).
 func PinServer(cfg *Config, serverURL, fingerprint string) {
+	normalized, err := NormalizeServerURL(serverURL)
+	if err != nil {
+		return // silent skip; invalid URLs produce no entry
+	}
 	if cfg.TrustedServers == nil {
 		cfg.TrustedServers = map[string]string{}
 	}
-	cfg.TrustedServers[serverURL] = fingerprint
+	cfg.TrustedServers[normalized] = fingerprint
 }
 
 // SetDefaultServer sets cfg.ServerURL to serverURL.
+// The URL is normalized to scheme://host:port before storing (see NormalizeServerURL).
 // Call Save after to persist the change.
 func SetDefaultServer(cfg *Config, serverURL string) {
-	cfg.ServerURL = serverURL
+	normalized, err := NormalizeServerURL(serverURL)
+	if err != nil {
+		return // silent skip; invalid URLs leave the current value
+	}
+	cfg.ServerURL = normalized
 }
 
 // CertExpiryInfo returns the expiry time of the server certificate stored in

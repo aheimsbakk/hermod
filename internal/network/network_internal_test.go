@@ -765,3 +765,89 @@ func TestDialAndListenQUIC(t *testing.T) {
 		t.Fatalf("listener Accept: %v", err)
 	}
 }
+
+// --- DiscoverViaReflector (M-02 audit fix) ---
+
+// TestDiscoverViaReflector_WrongSourcePhase1 verifies that a phase-1 cookie
+// response from an unexpected source address is rejected, preventing an
+// on-path attacker from injecting a spoofed cookie response (audit M-02).
+func TestDiscoverViaReflector_WrongSourcePhase1(t *testing.T) {
+	stub := newStubPacketConn()
+	serverAddr := "127.0.0.1:12345"
+	wrongAddr := &net.UDPAddr{IP: net.IPv4(10, 0, 0, 1), Port: 9999}
+
+	// Inject a phase-1 cookie response (9 bytes, magic + 8 cookie bytes)
+	// from a source that does not match the expected reflector address.
+	stub.readCh <- udpDatagram{
+		data: []byte{reflectCookieMagic, 1, 2, 3, 4, 5, 6, 7, 8},
+		addr: wrongAddr,
+	}
+
+	_, err := DiscoverViaReflector(stub, serverAddr, time.Second)
+	if err == nil {
+		t.Fatal("expected error for phase-1 response from wrong source")
+	}
+	if !strings.Contains(err.Error(), "unexpected source") {
+		t.Errorf("expected 'unexpected source' error, got: %v", err)
+	}
+}
+
+// TestDiscoverViaReflector_WrongSourcePhase2 verifies that a phase-2 address
+// response from an unexpected source is rejected. An attacker who observed the
+// cleartext cookie in phase 1 could forge a phase-2 response; source-address
+// verification prevents this (audit M-02).
+func TestDiscoverViaReflector_WrongSourcePhase2(t *testing.T) {
+	stub := newStubPacketConn()
+	serverAddr := "127.0.0.1:12345"
+	correctAddr := &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 12345}
+	wrongAddr := &net.UDPAddr{IP: net.IPv4(10, 0, 0, 1), Port: 9999}
+
+	// Phase-1 response from correct source passes verification.
+	stub.readCh <- udpDatagram{
+		data: []byte{reflectCookieMagic, 1, 2, 3, 4, 5, 6, 7, 8},
+		addr: correctAddr,
+	}
+	// Phase-2 address response from wrong source should be rejected.
+	stub.readCh <- udpDatagram{
+		data: []byte{0x04, 192, 168, 1, 1, 0x11, 0x5c},
+		addr: wrongAddr,
+	}
+
+	_, err := DiscoverViaReflector(stub, serverAddr, time.Second)
+	if err == nil {
+		t.Fatal("expected error for phase-2 response from wrong source")
+	}
+	if !strings.Contains(err.Error(), "unexpected source") {
+		t.Errorf("expected 'unexpected source' error, got: %v", err)
+	}
+}
+
+// TestDiscoverViaReflector_Success verifies that responses from the correct
+// reflector source address are accepted and the external address is decoded.
+func TestDiscoverViaReflector_Success(t *testing.T) {
+	stub := newStubPacketConn()
+	serverAddr := "127.0.0.1:12345"
+	correctAddr := &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 12345}
+
+	// Phase-1 cookie response from correct source.
+	stub.readCh <- udpDatagram{
+		data: []byte{reflectCookieMagic, 1, 2, 3, 4, 5, 6, 7, 8},
+		addr: correctAddr,
+	}
+	// Phase-2 IPv4 address response (0x04 + IP + port) from correct source.
+	stub.readCh <- udpDatagram{
+		data: []byte{0x04, 192, 168, 1, 1, 0x11, 0x5c},
+		addr: correctAddr,
+	}
+
+	result, err := DiscoverViaReflector(stub, serverAddr, time.Second)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.IP.Equal(net.IPv4(192, 168, 1, 1)) {
+		t.Errorf("expected IP 192.168.1.1, got %s", result.IP)
+	}
+	if result.Port != 4444 {
+		t.Errorf("expected port 4444, got %d", result.Port)
+	}
+}
