@@ -81,7 +81,7 @@ Note: the `defer s.mu.Unlock()` change should be applied to every `s.mu.Lock()` 
 
 ---
 
-#### M-02: UDP reflector client does not verify the response source address
+#### ~~M-02: UDP reflector client does not verify the response source address~~ **FIXED**
 
 **Location:** `internal/network/stun.go:65,83`
 
@@ -90,6 +90,8 @@ Note: the `defer s.mu.Unlock()` change should be applied to every `s.mu.Lock()` 
 **Impact:** The endpoint bundle is encrypted with the hybrid key (which the attacker does not know), and the QUIC handshake is SPKI-pinned to the peer's ephemeral cert. The attacker therefore cannot MITM the QUIC connection; the worst outcome is that hole-punching is misdirected to an attacker-controlled address, causing the QUIC dial/listen to fail. This is a **DoS / traffic-misdirection** vector, not a confidentiality or integrity breach. Off-path attackers cannot perform it (they cannot see the cookie).
 
 **Recommendation:** Verify that each response's source `net.Addr` resolves to the same IP:port as the resolved `udpAddr` (compare `addr.(*net.UDPAddr).IP` and `.Port` against `udpAddr.IP`/`udpAddr.Port`). Drop mismatches silently.
+
+**Fix applied in commit [to be committed] — `internal/network/stun.go`.** Added `verifyReflectorSource` helper that compares the response source address against the expected reflector IP:port. Both `ReadFrom` call sites now capture and verify the source address before processing the response body. Responses from unexpected sources return an error, and both callers (`tx.go`, `rx.go`) already handle discovery errors gracefully by falling back to the server-reported IP. Unit tests added in `internal/network/network_internal_test.go` (`TestDiscoverViaReflector_WrongSourcePhase1`, `TestDiscoverViaReflector_WrongSourcePhase2`, `TestDiscoverViaReflector_Success`).
 
 **Severity:** Medium (on-path DoS; mitigated by endpoint-bundle encryption and SPKI pinning).
 
@@ -250,7 +252,7 @@ The sender generates the channel ID and the server accepts any unused `uint16`. 
 ## Recommended remediation priority
 
 1. ~~**M-01** — fix the stale-waiter loop to prevent a server-crash DoS. One function rewrite.~~ **FIXED**
-2. **M-02** — verify UDP reflector response source address. A few lines in `stun.go`.
+2. ~~**M-02** — verify UDP reflector response source address. A few lines in `stun.go`.~~ **FIXED**
 3. **M-03** — normalize server URL before trust lookup/pin. Small helper in `internal/config`.
 4. **L-07** — move `DeleteChannel` inside the lock (one line; closes SUM-09).
 5. **L-08** — unify relay error strings (one line; closes SUM-05).
