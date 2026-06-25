@@ -36,7 +36,7 @@ No Critical or High severity issues were found. The report identifies **3 Medium
 
 ---
 
-#### M-01: Stale-waiter cleanup loop can panic and crash the server (DoS)
+#### ~~M-01: Stale-waiter cleanup loop can panic and crash the server (DoS)~~ **FIXED**
 
 **Location:** `internal/server/server.go:295-306`
 
@@ -74,6 +74,8 @@ s.waiters[channelID] = survivors
 ```
 
 Note: the `defer s.mu.Unlock()` change should be applied to every `s.mu.Lock()` site in `server.go` so that no future panic in a critical section can deadlock the server. Audit all Lock/Unlock pairs in `internal/server/server.go` and convert to `defer` where the lock scope ends at the function's end or where a panic-safe unlock is desired.
+
+**Fix applied in commit [to be committed] — `internal/server/server.go:292-308`.** Replaced the in-place swap-with-last mutation with a survivor-slice append loop. The `s.mu.Unlock()` call remains explicit (not deferred) because the lock scope does not span the entire function — a second critical section immediately follows. Survivor-slice construction is inherently panic-free: it never writes past the slice boundary and handles any number of stale entries. Regression tests added in `internal/server/server_allocate_internal_test.go` (`TestStaleWaiterCleanupNoPanic`, `TestStaleWaiterCleanupNoStaleEntries`, `TestStaleWaiterCleanupThreeStale`).
 
 **Severity:** Medium (latent trigger, but impact is a permanent server-wide deadlock — no crash/restart).
 
@@ -247,7 +249,7 @@ The sender generates the channel ID and the server accepts any unused `uint16`. 
 
 ## Recommended remediation priority
 
-1. **M-01** — fix the stale-waiter loop to prevent a server-crash DoS. One function rewrite.
+1. ~~**M-01** — fix the stale-waiter loop to prevent a server-crash DoS. One function rewrite.~~ **FIXED**
 2. **M-02** — verify UDP reflector response source address. A few lines in `stun.go`.
 3. **M-03** — normalize server URL before trust lookup/pin. Small helper in `internal/config`.
 4. **L-07** — move `DeleteChannel` inside the lock (one line; closes SUM-09).

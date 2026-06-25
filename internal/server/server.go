@@ -291,18 +291,20 @@ func (s *Server) handleAllocate(conn *websocket.Conn, remoteAddr string, channel
 	}
 	// Remove any stale waiters that were left behind after the store entry
 	// expired. This prevents a stale sender slot from being matched to a new
-	// receiver.
+	// receiver. Build a survivor slice instead of mutating in place — the
+	// old swap-with-last pattern panics when two or more entries are removed
+	// because the range iterator advances past the shrinking slice (M-01).
 	s.mu.Lock()
-	for i, w := range s.waiters[channelID] {
+	survivors := make([]*wsConn, 0, len(s.waiters[channelID]))
+	for _, w := range s.waiters[channelID] {
 		if w.conn == conn {
+			survivors = append(survivors, w)
 			continue
 		}
 		s.logger.Warn("Removing stale waiter for channel", "channel_id", channelID, "sender", w.sender)
 		w.conn.Close()
-		// Remove stale entry by swapping with the last element.
-		s.waiters[channelID][i] = s.waiters[channelID][len(s.waiters[channelID])-1]
-		s.waiters[channelID] = s.waiters[channelID][:len(s.waiters[channelID])-1]
 	}
+	s.waiters[channelID] = survivors
 	s.mu.Unlock()
 
 	host, _, _ := net.SplitHostPort(remoteAddr)
