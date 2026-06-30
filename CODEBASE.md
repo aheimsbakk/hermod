@@ -16,7 +16,7 @@
 ├── BLUEPRINT.md                       # Language-agnostic architecture specification
 ├── CHANGELOG.md                       # User-facing release notes
 ├── CODEBASE.md                        # This file — physical implementation mapping
-├── VERSION                            # Current version string (1.0.5)
+├── VERSION                            # Current version string (1.1.0)
 ├── go.mod                             # Go module definition and dependencies
 ├── go.sum                             # Dependency checksums
 ├── .gitignore                         # Ignored build artifacts and temp files
@@ -111,7 +111,8 @@
 │   ├── bump-version.sh                # VERSION file and version.go sync script
 │   ├── check-coverage.sh              # Test coverage check script
 │   ├── extract-changelog-entry.sh     # Extract changelog entry by version
-│   └── validate-changelog.sh          # Changelog format validation script
+│   ├── validate-changelog.sh          # Changelog format validation script
+│   └── verify_codebase_sync.sh        # CODEBASE.md physical-path sync check
 │
 ├── docs/
 │   ├── api.md                         # API documentation
@@ -119,6 +120,7 @@
 │   └── audits/
 │       ├── 2026-06-07-summary.md      # Security audit summary
 │       ├── audit-deepseek-2026-06-12.md
+│       ├── audit-glm-5-2.md
 │       ├── audit-gpt-5-4-2026-06-11.md
 │       ├── audit-mimo-2-5-2026-06-14.md
 │       ├── audit-sonnet-4-6-2026-06-11.md
@@ -309,9 +311,11 @@ internal/cli/
 | `internal/network/signaling_test.go` | Signaling client tests |
 | `internal/server/server_test.go` | Signaling server tests |
 | `internal/server/server_ws_test.go` | WebSocket-specific server tests |
+| `internal/server/server_allocate_internal_test.go` | Channel allocation internal tests |
 | `internal/server/ratelimit_internal_test.go` | Rate limiter internal tests |
 | `pkg/transfer/transfer_test.go` | Transfer module tests |
 | `e2e/e2e_test.go` | E2E test suite setup |
+| `e2e/helpers_test.go` | Shared E2E test helpers |
 | `e2e/integration_test.go` | Full integration tests |
 | `e2e/cancel_test.go` | E2E cancellation tests |
 | `e2e/cli_transfer_test.go` | CLI-level transfer tests |
