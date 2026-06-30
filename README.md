@@ -287,6 +287,12 @@ go tool cover -html=cover.out
 
 # Bump the version (patch, minor, or major)
 scripts/bump-version.sh patch
+
+# Validate that CODEBASE.md matches the physical repository tree
+scripts/verify_codebase_sync.sh
+
+# Validate CHANGELOG.md format
+scripts/validate-changelog.sh
 ```
 
 All packages target ≥ 80% test coverage. See [docs/api.md](docs/api.md) for the internal package API reference.
