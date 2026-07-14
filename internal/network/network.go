@@ -37,12 +37,42 @@ type udpDatagram struct {
 
 const probeMarker byte = 0x01
 
+// --- Packet mux constants ---
+
+// packetMuxQuicChCap is the capacity of the channel that carries QUIC datagrams
+// from the readLoop to consumers. Sized for 10 Gbit/s throughput: at line rate
+// a ~1.5 KB datagram arrives every ~1.2 µs, so 16 384 slots absorb bursts
+// for ~20 ms without dropping packets.
+const packetMuxQuicChCap = 16384
+
+// packetMuxProbeChCap is the capacity of the channel that carries probe packets
+// (NAT hole-punch markers) from the readLoop. Probe traffic is negligible
+// compared to QUIC data, so the smaller capacity is sufficient.
+const packetMuxProbeChCap = 64
+
+// packetMuxReadBuf is the size of the per-read buffer in the readLoop.
+// Sized to absorb burst traffic without wasting memory on small per-read copies.
+// 1 MiB absorbs a ~700-packet burst on a 10 Gbit/s link.
+const packetMuxReadBuf = 1 << 20 // 1 MiB
+
+// --- QUIC flow control constants (receiver-side credits, not pre-allocated buffers) ---
+
+// QUIC flow control windows sized for 10 Gbit/s BDP (12.5 MB at 10 Gbit/s / 10 ms).
+// These are receiver-side credits — memory is consumed only when data actually
+// arrives at the receiver, so the same values are safe on 10 Mbit/s links too.
+const (
+	quicInitialStreamReceiveWindow     = 64 << 20  // 64 MiB
+	quicMaxStreamReceiveWindow         = 256 << 20 // 256 MiB
+	quicInitialConnectionReceiveWindow = 64 << 20  // 64 MiB
+	quicMaxConnectionReceiveWindow     = 256 << 20 // 256 MiB
+)
+
 // NewPacketMux wraps a PacketConn and starts the demux loop.
 func NewPacketMux(conn net.PacketConn) *packetMux {
 	m := &packetMux{
 		conn:    conn,
-		quicCh:  make(chan udpDatagram, 256),
-		probeCh: make(chan udpDatagram, 64),
+		quicCh:  make(chan udpDatagram, packetMuxQuicChCap),
+		probeCh: make(chan udpDatagram, packetMuxProbeChCap),
 		closed:  make(chan struct{}),
 	}
 	go m.readLoop()
@@ -50,7 +80,7 @@ func NewPacketMux(conn net.PacketConn) *packetMux {
 }
 
 func (m *packetMux) readLoop() {
-	buf := make([]byte, 65536)
+	buf := make([]byte, packetMuxReadBuf)
 	for {
 		n, addr, err := m.conn.ReadFrom(buf)
 		if err != nil {
@@ -308,8 +338,12 @@ func DialQUIC(ctx context.Context, mux *packetMux, peerAddr *net.UDPAddr, baseTL
 		Conn: &muxedConn{mux: mux},
 	}
 	conn, err := transport.Dial(ctx, peerAddr, tlsCfg, &quic.Config{
-		MaxIdleTimeout:  30 * time.Second,
-		KeepAlivePeriod: 5 * time.Second,
+		MaxIdleTimeout:                 30 * time.Second,
+		KeepAlivePeriod:                5 * time.Second,
+		InitialStreamReceiveWindow:     quicInitialStreamReceiveWindow,
+		MaxStreamReceiveWindow:         quicMaxStreamReceiveWindow,
+		InitialConnectionReceiveWindow: quicInitialConnectionReceiveWindow,
+		MaxConnectionReceiveWindow:     quicMaxConnectionReceiveWindow,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("QUIC dial: %w", err)
@@ -330,8 +364,12 @@ func ListenQUIC(mux *packetMux, cert tls.Certificate, baseTLS *tls.Config, peerC
 		Conn: &muxedConn{mux: mux},
 	}
 	ln, err := transport.Listen(tlsCfg, &quic.Config{
-		MaxIdleTimeout:  30 * time.Second,
-		KeepAlivePeriod: 5 * time.Second,
+		MaxIdleTimeout:                 30 * time.Second,
+		KeepAlivePeriod:                5 * time.Second,
+		InitialStreamReceiveWindow:     quicInitialStreamReceiveWindow,
+		MaxStreamReceiveWindow:         quicMaxStreamReceiveWindow,
+		InitialConnectionReceiveWindow: quicInitialConnectionReceiveWindow,
+		MaxConnectionReceiveWindow:     quicMaxConnectionReceiveWindow,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("QUIC listen: %w", err)

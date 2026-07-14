@@ -3,7 +3,7 @@
 > **Conflict resolution:** When rules conflict, prioritize in this order: **Security (II) > Scoping (I.3) > Architecture (III) > Development (IV) > Documentation (V).**
 
 ## I. Workflow & Scoping
-1. **Protocol Alignment:** Project-specific protocols (`AGENTS.md`, `BLUEPRINT.md`) are the absolute source of truth. Read them first and always follow their defined workflows.
+1. **Protocol Alignment:** Project-specific protocols (`.opencode/RULES.md`, `AGENTS.md`) are the absolute source of truth. Read them first and always follow their defined workflows.
 2. **English-Only Artifacts:** All code, variables, comments, commits, and documentation MUST be in professional English, regardless of the chat language used.
 3. **Strict Scoping:** Make surgical edits only. Do NOT perform "drive-by" refactoring or change existing logic outside the immediate scope of the task.
 4. **Verify Before Acting:** Always read a file before editing it. Never import packages, modules, or APIs without first verifying they exist in the project's dependencies. Never fabricate function signatures, class definitions, or assume code structure without reading the source.

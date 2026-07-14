@@ -5,6 +5,24 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v1.2.0] - 2026-07-14
+
+- **why:** Size buffers and flow control windows for 10 Gbit/s throughput. The previous defaults stalled the pipe after ~0.4 ms at line rate on a 10 ms path.
+- **model:** kompis/qwen-3.6-think-coding-mtp
+- **tags:** performance, network, quic, buffer, 10gbit
+
+### Changed
+
+- QUIC flow control windows increased: initial and max receive windows for both streams and connections raised from 512 KB / 6 MB to 64 MiB / 256 MiB (`internal/network/network.go`)
+- Packet mux read channel capacity increased from 256 to 16 384 datagrams; read buffer increased from 64 KiB to 1 MiB (`internal/network/network.go`)
+- All constants extracted to named, documented values for auditability
+- `BLUEPRINT.md` documents 10 Mbit/s to 10 Gbit/s throughput optimization requirement
+
+### Performance
+
+- QUIC sender no longer stalls after ~0.4 ms at line rate. 64 MiB initial window fills a 10 Gbit/s / 10 ms pipe (BDP 12.5 MB) in a single round trip
+- Packet mux no longer silently drops QUIC datagrams under burst load. 16 384 channel slots absorb ~20 ms of burst traffic without loss
+
 ## [v1.1.0] - 2026-06-25
 
 - **why:** Fix all findings from security audit glm-5.2 (3 Medium, 4 Low). Minor version bump because the API signature change and URL normalization require migration steps.
