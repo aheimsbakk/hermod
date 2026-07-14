@@ -1,11 +1,12 @@
 {
   "$schema": "https://opencode.ai/config.json",
+  "instructions": [
+    ".opencode/RULES.md",
+    "AGENTS.md"
+  ],
   "autoupdate": "notify",
   "formatter": true,
   "lsp": true,
   "share": "manual",
-  "snapshot": true,
-  "instructions": [
-    ".opencode/RULES.md"
-  ]
+  "snapshot": true
 }

@@ -4,6 +4,8 @@
 
 Hermod is a secure, peer-to-peer file and text transfer tool. Two parties exchange data directly over an encrypted QUIC connection without any payload passing through a central server. A lightweight signaling server coordinates the rendezvous — channel allocation, key exchange relay, NAT hole-punching — but actual payload flows over a direct peer-to-peer UDP/QUIC connection.
 
+Hermod is designed for throughput-optimized networks ranging from 10 Mbit/s to 10 Gbit/s. Buffer sizes, channel capacities, and QUIC flow control windows are sized to fill the pipe on high-bandwidth links while remaining safe on low-bandwidth links. Flow control windows are receiver-side credits (not pre-allocated buffers), so the same settings work at both ends of the spectrum without tuning.
+
 ## Security Properties
 
 - End-to-end encryption via QUIC + TLS 1.3 with mutual SPKI pinning
