@@ -6,7 +6,6 @@
 - **Workflow:** architecture -> implementation -> testing -> synchronization -> zero problems -> wrap-up
 
 ## General Constraints
-- **CI/CD:** No `.github` workflows.
 - **Commits:** Conventional Commits (`<type>(<scope>): <summary>`). Use `docs(sync):` for documentation updates.
 
 ## Blueprint Generation (Architecture)
