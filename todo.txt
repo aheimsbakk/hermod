@@ -1,1 +1,7 @@
-2026-06-13 Make UDP reflection protocol symmetric +cgnat +tech-debug ref:tasks/symmetric-udp-reflection.md
+x 2026-11-27 2026-11-27 Adopt snake_case naming default; rename kebab scripts and fix references +naming
+x 2026-11-27 2026-11-27 Complete rules audit: empty error blocks, gitignore, sync script +verify
+x 2026-11-27 2026-11-27 Create CONTRIBUTING.md for dev docs and script usage (rules 24/28) +verify
+x 2026-11-27 2026-11-27 Remove .github/workflows (AGENTS.md bans GitHub workflows) +verify
+x 2026-11-27 2026-11-27 Run build, vet, staticcheck, tests; fix failures +verify
+x 2026-11-27 2026-11-27 Split 8 non-test Go files over 300 lines (rule 16) +verify
+x 2026-11-27 2026-11-27 Update CODEBASE.md and run verify_codebase_sync.sh +verify

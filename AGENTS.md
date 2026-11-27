@@ -6,7 +6,8 @@
 - **Workflow:** architecture -> implementation -> testing -> synchronization -> zero problems -> wrap-up
 
 ## General Constraints
-- **CI/CD:** No `.github` workflows.
+- **CI/CD:** No `.github` workflows, with one repository-specific exception: `.github/workflows/release.yml` (the release build and publish pipeline). Do not add any other workflows.
+- **Naming:** `snake_case` file and directory names project-wide. Exceptions: standard top-level document names (`README.md`, `CONTRIBUTING.md`, `CHANGELOG.md`, `AGENTS.md`, `BLUEPRINT.md`, `CODEBASE.md`, `LICENSE`, `VERSION`), `.github/` paths required by GitHub, and pre-existing kebab-case prose documents under `docs/` and `tasks/` (historical; new files use snake_case).
 - **Commits:** Conventional Commits (`<type>(<scope>): <summary>`). Use `docs(sync):` for documentation updates.
 
 ## Blueprint Generation (Architecture)

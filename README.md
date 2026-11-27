@@ -277,22 +277,7 @@ See [docs/protocol.md](docs/protocol.md) for the full protocol specification.
 
 ## Development
 
-```bash
-# Run all tests
-go test ./...
+Development setup, test commands, utility scripts, and the release
+workflow are documented in [CONTRIBUTING.md](CONTRIBUTING.md).
 
-# Run with coverage
-go test -coverprofile=cover.out ./...
-go tool cover -html=cover.out
-
-# Bump the version (patch, minor, or major)
-scripts/bump-version.sh patch
-
-# Validate that CODEBASE.md matches the physical repository tree
-scripts/verify_codebase_sync.sh
-
-# Validate CHANGELOG.md format
-scripts/validate-changelog.sh
-```
-
-All packages target ≥ 80% test coverage. See [docs/api.md](docs/api.md) for the internal package API reference.
+See [docs/api.md](docs/api.md) for the internal package API reference.
