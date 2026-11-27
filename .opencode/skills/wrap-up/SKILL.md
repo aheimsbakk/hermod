@@ -1,6 +1,6 @@
 ---
 name: wrap-up
-description: Apply end-of-task ceremony for changelog, version bumping, and git commits. Use when a task is complete and ready for finalization — after the user says "wrap up", "commit", or "done", or when the Builder hands off to QA.
+description: Apply end-of-task ceremony for changelog, version bumping, and git commits. Use when a task is complete and ready for finalization — after the user says "wrap up", "commit", or "done".
 ---
 
 ## What this skill does
@@ -88,11 +88,11 @@ Every finalized feature or bugfix MUST bump the version exactly once per task.
 
 | Change type | Bump | Example |
 |---|---|---|
-| Bug fix, refactor | Patch (`0.0.x`) | `scripts/bump-version.sh patch` |
-| New feature, enhancement | Minor (`0.x.0`) | `scripts/bump-version.sh minor` |
-| Breaking change | Major (`x.0.0`) | `scripts/bump-version.sh major` |
+| Bug fix, refactor | Patch (`0.0.x`) | `scripts/bump_version.sh patch` |
+| New feature, enhancement | Minor (`0.x.0`) | `scripts/bump_version.sh minor` |
+| Breaking change | Major (`x.0.0`) | `scripts/bump_version.sh major` |
 
-**Tool:** Run `scripts/bump-version.sh [patch|minor|major]`.
+**Tool:** Run `scripts/bump_version.sh [patch|minor|major]`.
 If the script does not exist, the agent is authorized to create it.
 
 **Rule:** Do NOT bump again when fixing QA failures in the same task. Bump
@@ -109,8 +109,7 @@ Before committing, ensure the repository is clean:
 - Add temporary build artifacts, dependency caches, and error logs (e.g.
   `.qa-error.log`) to `.gitignore`.
 - **Never** add source code, configuration files (including `VERSION`), or
-  documentation directories (including `docs/worklogs/` if present) to
-  `.gitignore`. These must remain tracked by Git.
+  documentation directories to `.gitignore`. These must remain tracked by Git.
 
 ---
 
@@ -152,9 +151,9 @@ summary line length, tense, and body format.
 Run these steps in order:
 
 1. Workspace hygiene (update `.gitignore`)
-2. Version bump (`scripts/bump-version.sh`)
+2. Version bump (`scripts/bump_version.sh`)
 3. Prepend the changelog entry to `CHANGELOG.md`
-4. Run validation (`scripts/validate-changelog.sh`). If the script does not
+4. Run validation (`scripts/validate_changelog.sh`). If the script does not
    exist, the agent is authorized to create it.
 5. Stage files explicitly (`git add <file> ...`)
 6. Verify staging (`git status`)

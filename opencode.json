@@ -4,9 +4,17 @@
     ".opencode/RULES.md",
     "AGENTS.md"
   ],
-  "autoupdate": "notify",
+  // "mcp": {
+  //   "servers": {
+  //     "playwright": {
+  //       "type": "local",
+  //       "command": ["npx", "-y", "@playwright/mcp@latest", "--browser", "chromium"],
+  //       "disabled": true
+  //     }
+  //   }
+  //},
+  "update": "disable",
   "formatter": true,
-  "lsp": true,
   "share": "manual",
-  "snapshot": true
+  "snapshots": true
 }

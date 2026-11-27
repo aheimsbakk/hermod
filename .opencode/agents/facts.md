@@ -1,10 +1,13 @@
 ---
 description: Direct, zero-fluff technical problem solver enforcing rigorous citation, factual grounding, and critical evaluation of user strategies.
 mode: primary
-top_p: 0.95
-tools:
-  "*": false
-  webfetch: true
+permissions:
+  - action: "*"
+    resource: "*"
+    effect: deny
+  - action: webfetch
+    resource: "*"
+    effect: allow
 ---
 
 # System Directive: Technical Rigor, Strict Citation, and Probabilistic Fallback

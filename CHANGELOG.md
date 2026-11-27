@@ -5,6 +5,28 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v1.2.1] - 2026-11-27
+
+- **why:** Rules audit found eight files over the 300-line cap, duplicated logic, missing developer docs, unpinned lint tools, and stale version/naming declarations. No user-facing behavior change.
+- **model:** kompis/qwen3.8-flash-next-iq3_s
+- **tags:** refactor, compliance, docs, naming, scripts
+
+### Changed
+
+- Split eight Go files over 300 lines into focused modules per package (for example `internal/cli/tx.go` 875 lines became `tx.go`, `tx_handshake.go`, `tx_send.go`, `session.go`; `internal/crypto/crypto.go` 746 lines became `crypto.go`, `cpace.go`, `sas.go`, `wordlist.go`, `transfercode.go`). The largest non-test file is now 255 lines
+- Removed duplicated code: one shared signaling-server pinning callback (`internal/network/certpin.go`) and one shared tx/rx session setup (`internal/cli/session.go`)
+- Renamed `scripts/` tools to snake_case (`build_release.sh`, `bump_version.sh`, `check_coverage.sh`, `extract_changelog_entry.sh`, `validate_changelog.sh`) and declared snake_case as the project naming default in `AGENTS.md`
+- Pinned lint tools in `lint_test.go` (`deadcode@v0.45.0`, `staticcheck@v0.8.2`) instead of `@latest`
+
+### Added
+
+- `CONTRIBUTING.md` with build, test, script usage, release workflow, and commit conventions
+- `AGENTS.md` now permits exactly one CI workflow: `.github/workflows/release.yml`
+
+### Removed
+
+- Dead import suppression `var _ = bufio.NewReader` in the receive flow
+
 ## [v1.2.0] - 2026-07-14
 
 - **why:** Size buffers and flow control windows for 10 Gbit/s throughput. The previous defaults stalled the pipe after ~0.4 ms at line rate on a 10 ms path.
