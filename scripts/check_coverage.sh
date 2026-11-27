@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# scripts/check-coverage.sh — run per-package coverage and fail if any
+# scripts/check_coverage.sh — run per-package coverage and fail if any
 # required package falls below the 80% threshold.
 #
-# Usage: scripts/check-coverage.sh
+# Usage: scripts/check_coverage.sh
 #   Exits 0 if all required packages meet the threshold.
 #   Exits 1 if any required package is below the threshold or tests fail.
 #

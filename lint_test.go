@@ -52,7 +52,7 @@ func runGoRun(t *testing.T, tool string, args ...string) string {
 // TestDeadCode verifies there are no unreachable functions or unused exports.
 func TestDeadCode(t *testing.T) {
 	skipIfDisabled(t)
-	output := runGoRun(t, "golang.org/x/tools/cmd/deadcode@latest", "-test", "./...")
+	output := runGoRun(t, "golang.org/x/tools/cmd/deadcode@v0.45.0", "-test", "./...")
 	// Filter out Go toolchain version-switch lines (stderr bleeds into CombinedOutput).
 	lines := strings.Split(output, "\n")
 	var findings []string
@@ -71,7 +71,7 @@ func TestDeadCode(t *testing.T) {
 // TestStaticcheckUnused verifies there are no unused symbols (U1000).
 func TestStaticcheckUnused(t *testing.T) {
 	skipIfDisabled(t)
-	output := runGoRun(t, "honnef.co/go/tools/cmd/staticcheck@latest", "./...")
+	output := runGoRun(t, "honnef.co/go/tools/cmd/staticcheck@v0.8.2", "./...")
 	// Filter output for U1000 (unused) diagnostics only.
 	lines := strings.Split(output, "\n")
 	var unused []string

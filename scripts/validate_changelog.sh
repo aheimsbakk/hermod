@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# scripts/validate-changelog.sh — validate CHANGELOG.md format.
+# scripts/validate_changelog.sh — validate CHANGELOG.md format.
 # Checks that the file exists and contains proper Keep a Changelog structure.
-# Usage: scripts/validate-changelog.sh
+# Usage: scripts/validate_changelog.sh
 set -euo pipefail
 
 CHANGELOG="${1:-CHANGELOG.md}"

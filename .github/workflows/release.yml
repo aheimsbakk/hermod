@@ -46,7 +46,7 @@ jobs:
         run: |
           OS="${target%-*}"
           ARCH="${target#*-}"
-          ./scripts/build-release.sh "$OS" "$ARCH"
+          ./scripts/build_release.sh "$OS" "$ARCH"
         env:
           target: ${{ matrix.target }}
 
@@ -68,7 +68,7 @@ jobs:
 
       - name: Write changelog entry to file
         run: |
-          ./scripts/extract-changelog-entry.sh "${GITHUB_REF_NAME}" > /tmp/release-notes.md
+          ./scripts/extract_changelog_entry.sh "${GITHUB_REF_NAME}" > /tmp/release-notes.md
 
       - name: Download all build artifacts
         uses: actions/download-artifact@v8

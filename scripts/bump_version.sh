@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# scripts/bump-version.sh — bump VERSION file by patch, minor, or major.
+# scripts/bump_version.sh — bump VERSION file by patch, minor, or major.
 # Updates all version references: VERSION, BLUEPRINT.md, internal/cli/version.go.
-# Usage: scripts/bump-version.sh [patch|minor|major]
+# Usage: scripts/bump_version.sh [patch|minor|major]
 set -euo pipefail
 
 LEVEL="${1:-patch}"

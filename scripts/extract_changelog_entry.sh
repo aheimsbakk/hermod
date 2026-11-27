@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
-# scripts/extract-changelog-entry.sh — extract a version entry from CHANGELOG.md.
+# scripts/extract_changelog_entry.sh — extract a version entry from CHANGELOG.md.
 # Outputs the full markdown entry for the given version, suitable for GitHub
 # Release notes.
 #
-# Usage: scripts/extract-changelog-entry.sh <version> [changelog_file]
+# Usage: scripts/extract_changelog_entry.sh <version> [changelog_file]
 #   <version>  Version to extract (with or without leading 'v'), e.g. v0.10.3
 #   [changelog_file]  Path to CHANGELOG.md (default: CHANGELOG.md)
 #
 # Examples:
-#   scripts/extract-changelog-entry.sh v0.10.3
-#   scripts/extract-changelog-entry.sh 0.10.2
+#   scripts/extract_changelog_entry.sh v0.10.3
+#   scripts/extract_changelog_entry.sh 0.10.2
 set -euo pipefail
 
 VERSION="${1:?Usage: $0 <version> [changelog_file]}"

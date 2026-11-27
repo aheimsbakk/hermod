@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
-# scripts/build-release.sh — cross-compile hermod for a single OS/arch pair.
+# scripts/build_release.sh — cross-compile hermod for a single OS/arch pair.
 # Output: dist/hermod-<os>-<arch> (or .exe for windows).
 #
-# Usage: scripts/build-release.sh <os> <arch> [output_dir]
+# Usage: scripts/build_release.sh <os> <arch> [output_dir]
 #   <os>    Target OS: linux, windows, darwin
 #   <arch>  Target architecture: amd64, arm64
 #   [output_dir]  Output directory (default: dist/)
 #
 # Examples:
-#   scripts/build-release.sh linux amd64
-#   scripts/build-release.sh windows arm64 ./build-output
+#   scripts/build_release.sh linux amd64
+#   scripts/build_release.sh windows arm64 ./build-output
 set -euo pipefail
 
 OS="${1:?Usage: $0 <os> <arch> [output_dir]}"

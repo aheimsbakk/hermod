@@ -10,7 +10,7 @@ import (
 )
 
 // Version is the application version string. Defaults to appVersion (from
-// version.go, kept in sync by scripts/bump-version.sh). Can be overridden at
+// version.go, kept in sync by scripts/bump_version.sh). Can be overridden at
 // build time via -ldflags "-X github.com/hermod/hermod/internal/cli.Version=x.y.z".
 var Version = appVersion
 
